@@ -44,6 +44,7 @@ constexpr BackendRegNames k_backend_reg_names[] = {
     {BackendType::Vulkan, "vulkan", {"Vulkan", nullptr, nullptr}},
     {BackendType::Metal,  "metal",  {"MTL", nullptr, nullptr}},
     {BackendType::WebGPU, "webgpu", {"WebGPU", nullptr, nullptr}},
+    {BackendType::Hrx,    "hrx",    {"HRX", nullptr, nullptr}},
     {BackendType::Sycl,   "sycl",   {"SYCL", nullptr, nullptr}},
 };
 
@@ -311,7 +312,7 @@ void print_backend_devices(std::ostream & out) {
         }
         out << " [" << device.type << "]\n";
     }
-    out << "select with: --backend <cuda|hip|vulkan|metal|webgpu|sycl|cpu> --device <index>\n";
+    out << "select with: --backend <cuda|hip|vulkan|metal|webgpu|sycl|hrx|cpu> --device <index>\n";
 }
 
 void print_backend_devices_json(std::ostream & out) {
@@ -384,6 +385,8 @@ ggml_backend_t init_backend(const BackendConfig & config) {
             return init_device_backend(BackendType::Metal, "Metal", config);
         case BackendType::WebGPU:
             return init_device_backend(BackendType::WebGPU, "WebGPU", config);
+        case BackendType::Hrx:
+            return init_device_backend(BackendType::Hrx, "HRX", config);
         case BackendType::Sycl:
             return init_device_backend(BackendType::Sycl, "SYCL", config);
         case BackendType::BestAvailable: {
@@ -491,6 +494,9 @@ BackendType backend_type(ggml_backend_t backend) {
     }
     if (backend_handle_matches(backend, BackendType::WebGPU)) {
         return BackendType::WebGPU;
+    }
+    if (backend_handle_matches(backend, BackendType::Hrx)) {
+        return BackendType::Hrx;
     }
     if (backend_handle_matches(backend, BackendType::Sycl)) {
         return BackendType::Sycl;

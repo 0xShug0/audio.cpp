@@ -1,0 +1,202 @@
+// Q4_K x Q8_1 projection kernels for the Qwen attention path.
+template.decl @qwen3_moe.dense.q4k_q8_1_x4.body(%publish_output: i1, %token_count: index, %token0: index, %q8_input: buffer, %weight: buffer, %output: buffer)
+
+template.decl @qwen3_moe.rmsnorm_quantize_q8_1_x4.body(%arg0: i1, %arg1: index, %arg2: index, %arg3: index, %arg4: buffer, %arg5: buffer, %arg6: buffer, %arg7: buffer)
+
+amdgpu.target<gfx11-generic> @qwen3_moe_dense_gfx11_wave32 {subgroup_size = 32}
+
+target.decl @qwen3_moe_attention_prepare_gfx11_wave32
+
+config.decl @qwen3_moe.dense_quantized.input_size : %value: index where [range(%value, 256, 32768), mul(%value, 256)]
+
+config.decl @qwen3_moe.dense_quantized.output_size : %value: index where [range(%value, 1, 262144)]
+
+// Selects whether publication overwrites the output (0) or accumulates the
+// projection into a caller-provided residual (1).
+config.decl @qwen3_moe.dense_quantized.output_accumulation : %value: index where [range(%value, 0, 1)]
+
+config.decl @qwen3_moe.workload.token_capacity : %value: index where [range(%value, 1, 2048)]
+
+// Shared raw-layout Q4_K row contraction primitive. Each lane consumes both
+// nibbles of one packed-code load.
+func.decl @qwen3_moe_q4k_q8_1_x4_paired_row_lane(%input_size: index, %weight: buffer, %weight_row_byte_base: offset, %q8_input: buffer, %q8_row_byte_base: offset, %lane: index) -> (f32)
+
+kernel.decl @ggml_quantize_q8_1_x4_f32(%token_count$63: index, %input_size$64: index) launch(%token_count$65: index, %input_size$66: index, %input: buffer, %output: buffer)
+
+kernel.decl @qwen3_moe_rmsnorm_f32_quantize_q8_1_x4(%token_count$78: index) launch(%token_count$79: index, %input: buffer, %rms_weight: buffer, %normalized_f32_output: buffer, %q8_1_x4_output: buffer)
+
+// Direct decode entry point. This complements the grouped WMMA schedule below:
+// it gives up cross-token weight reuse in exchange for doing no padded matrix
+// work when fewer than 32 tokens are available.
+kernel.def target(@qwen3_moe_dense_gfx11_wave32) @qwen3_moe_dense_linear_q4k_q8_1_x4(%token_count: index) {
+  %output_size = config.get @qwen3_moe.dense_quantized.output_size : index
+  %token_capacity = config.get @qwen3_moe.workload.token_capacity : index
+  %c1 = index.constant 1 : index
+  %c7 = index.constant 7 : index
+  %c8 = index.constant 8 : index
+  %c256 = index.constant 256 : index
+  %padded_output_size = index.add %output_size, %c7 : index
+  %output_tiles = index.div %padded_output_size, %c8 : index
+  kernel.launch.config workgroups(%output_tiles, %token_capacity, %c1) workgroup_size(%c256, %c1, %c1) : index
+} launch(%token_count: index, %q8_input: buffer, %weight: buffer, %output: buffer) {
+  %token_capacity = config.get @qwen3_moe.workload.token_capacity : index
+  %bounded_token_count = index.assume %token_count [range(%token_count, 1, 2048), le(%token_count, %token_capacity)] : index
+  %token0 = kernel.workgroup.id<y> : index
+  %c0 = index.constant 0 : index
+  %valid_token = index.cmp ult, %token0, %bounded_token_count : index
+  %safe_token = scf.select %valid_token, %token0, %c0 : index
+  template.apply<@qwen3_moe.dense.q4k_q8_1_x4.body>(%valid_token, %bounded_token_count, %safe_token, %q8_input, %weight, %output) : (i1, index, index, buffer, buffer, buffer)
+  kernel.return
+}
+
+kernel.decl @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8(%token_count$1: index) launch(%token_count$2: index, %q8_input: buffer, %weight: buffer, %output: buffer, %norm_weight: buffer, %normalized_output: buffer, %completion_counter: buffer, %next_q8_output: buffer)
+
+// A zero projection leaves the nonzero caller-provided residual unchanged.
+// Overwrite publication would instead produce zero, making the accumulation
+// contract observable without coupling this case to another projection kernel.
+check.case public @qwen3_moe_dense_linear_q4k_q8_1_x4_accumulation_case {
+  %token_count = check.literal value(2) : index
+  %input_size = check.literal value(512) : index
+  %input = check.generate.fill value(0.0) : tensor<2x512xf32>
+  %q8_input = check.generate.fill value(1) : tensor<2x576xi8>
+  %weight = check.generate.fill value(34) : tensor<65x2x144xi8>
+  %actual = check.generate.fill value(1.25) : tensor<2x65xf32>
+  %expected = check.generate.fill value(1.25) : tensor<2x65xf32>
+  kernel.launch @ggml_quantize_q8_1_x4_f32[%token_count, %input_size](%token_count, %input_size, %input, %q8_input) : [index, index](index, index, tensor<2x512xf32>, tensor<2x576xi8>)
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4[%token_count](%token_count, %q8_input, %weight, %actual) : [index](index, tensor<2x576xi8>, tensor<65x2x144xi8>, tensor<2x65xf32>)
+  check.expect.close actual(%actual) expected(%expected) atol(0.0) rtol(0.0) nan(same) : tensor<2x65xf32>
+  check.return
+}
+
+// The production output geometry requires all 256 tiles to publish the
+// accumulated hidden row before the final workgroup can normalize and pack it.
+// Reuse each oversized attention-input Q8 allocation in place, invoke the fused
+// kernel twice through one completion word, and compare every semantic output
+// with the ordinary two-dispatch composition.
+check.case public @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8_differential_case {
+  %token_count = check.literal value(1) : index
+  %input_size = check.literal value(4096) : index
+  %input = check.generate.iota offset(-0.5) step(0.000244140625) period(4096) : tensor<1x4096xf32>
+  %expected_q8 = check.generate.fill value(0) : tensor<4608xi8>
+  %actual_q8_0 = check.generate.fill value(0) : tensor<4608xi8>
+  %actual_q8_1 = check.generate.fill value(0) : tensor<4608xi8>
+  %weight = check.generate.fill value(34) : tensor<2048x16x144xi8>
+  %norm_weight = check.generate.iota offset(-1.0) step(0.0009765625) : tensor<2048xf32>
+  %expected_output = check.generate.iota offset(-0.25) step(0.000244140625) period(2048) : tensor<1x2048xf32>
+  %actual_output_0 = check.generate.iota offset(-0.25) step(0.000244140625) period(2048) : tensor<1x2048xf32>
+  %actual_output_1 = check.generate.iota offset(-0.25) step(0.000244140625) period(2048) : tensor<1x2048xf32>
+  %expected_normalized = check.generate.fill value(1.0) : tensor<1x2048xf32>
+  %actual_normalized_0 = check.generate.fill value(1.0) : tensor<1x2048xf32>
+  %actual_normalized_1 = check.generate.fill value(1.0) : tensor<1x2048xf32>
+  %completion_counter = check.generate.fill value(0) : tensor<1xi32>
+  %expected_counter = check.generate.fill value(0) : tensor<1xi32>
+  kernel.launch @ggml_quantize_q8_1_x4_f32[%token_count, %input_size](%token_count, %input_size, %input, %expected_q8) : [index, index](index, index, tensor<1x4096xf32>, tensor<4608xi8>)
+  kernel.launch @ggml_quantize_q8_1_x4_f32[%token_count, %input_size](%token_count, %input_size, %input, %actual_q8_0) : [index, index](index, index, tensor<1x4096xf32>, tensor<4608xi8>)
+  kernel.launch @ggml_quantize_q8_1_x4_f32[%token_count, %input_size](%token_count, %input_size, %input, %actual_q8_1) : [index, index](index, index, tensor<1x4096xf32>, tensor<4608xi8>)
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4[%token_count](%token_count, %expected_q8, %weight, %expected_output) : [index](index, tensor<4608xi8>, tensor<2048x16x144xi8>, tensor<1x2048xf32>)
+  kernel.launch @qwen3_moe_rmsnorm_f32_quantize_q8_1_x4[%token_count](%token_count, %expected_output, %norm_weight, %expected_normalized, %expected_q8) : [index](index, tensor<1x2048xf32>, tensor<2048xf32>, tensor<1x2048xf32>, tensor<4608xi8>)
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8[%token_count](%token_count, %actual_q8_0, %weight, %actual_output_0, %norm_weight, %actual_normalized_0, %completion_counter, %actual_q8_0) : [index](index, tensor<4608xi8>, tensor<2048x16x144xi8>, tensor<1x2048xf32>, tensor<2048xf32>, tensor<1x2048xf32>, tensor<1xi32>, tensor<4608xi8>)
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8[%token_count](%token_count, %actual_q8_1, %weight, %actual_output_1, %norm_weight, %actual_normalized_1, %completion_counter, %actual_q8_1) : [index](index, tensor<4608xi8>, tensor<2048x16x144xi8>, tensor<1x2048xf32>, tensor<2048xf32>, tensor<1x2048xf32>, tensor<1xi32>, tensor<4608xi8>)
+  check.expect.close actual(%actual_output_0) expected(%expected_output) atol(0.0) rtol(0.0) nan(same) : tensor<1x2048xf32>
+  check.expect.close actual(%actual_output_1) expected(%expected_output) atol(0.0) rtol(0.0) nan(same) : tensor<1x2048xf32>
+  check.expect.close actual(%actual_normalized_0) expected(%expected_normalized) atol(0.0) rtol(0.0) nan(same) : tensor<1x2048xf32>
+  check.expect.close actual(%actual_normalized_1) expected(%expected_normalized) atol(0.0) rtol(0.0) nan(same) : tensor<1x2048xf32>
+  check.expect.equal actual(%actual_q8_0) expected(%expected_q8) : tensor<4608xi8>
+  check.expect.equal actual(%actual_q8_1) expected(%expected_q8) : tensor<4608xi8>
+  check.expect.equal actual(%completion_counter) expected(%expected_counter) : tensor<1xi32>
+  check.return
+}
+
+check.case public @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8_benchmark_case {
+  %token_count = check.literal value(1) : index
+  %q8_input_and_output = check.generate.fill value(0) : tensor<4608xi8>
+  %weight = check.generate.fill value(0) : tensor<2048x16x144xi8>
+  %output = check.generate.fill value(1.0) : tensor<1x2048xf32>
+  %norm_weight = check.generate.fill value(1.0) : tensor<2048xf32>
+  %normalized_output = check.generate.fill value(0.0) : tensor<1x2048xf32>
+  %completion_counter = check.generate.fill value(0) : tensor<1xi32>
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8[%token_count](%token_count, %q8_input_and_output, %weight, %output, %norm_weight, %normalized_output, %completion_counter, %q8_input_and_output) : [index](index, tensor<4608xi8>, tensor<2048x16x144xi8>, tensor<1x2048xf32>, tensor<2048xf32>, tensor<1x2048xf32>, tensor<1xi32>, tensor<4608xi8>)
+  check.return
+}
+
+check.case public @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8_composed_benchmark_case {
+  %token_count = check.literal value(1) : index
+  %q8_input_and_output = check.generate.fill value(0) : tensor<4608xi8>
+  %weight = check.generate.fill value(0) : tensor<2048x16x144xi8>
+  %output = check.generate.fill value(1.0) : tensor<1x2048xf32>
+  %norm_weight = check.generate.fill value(1.0) : tensor<2048xf32>
+  %normalized_output = check.generate.fill value(0.0) : tensor<1x2048xf32>
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4[%token_count](%token_count, %q8_input_and_output, %weight, %output) : [index](index, tensor<4608xi8>, tensor<2048x16x144xi8>, tensor<1x2048xf32>)
+  kernel.launch @qwen3_moe_rmsnorm_f32_quantize_q8_1_x4[%token_count](%token_count, %output, %norm_weight, %normalized_output, %q8_input_and_output) : [index](index, tensor<1x2048xf32>, tensor<2048xf32>, tensor<1x2048xf32>, tensor<4608xi8>)
+  check.return
+}
+
+check.case public @qwen3_moe_dense_linear_q4k_q8_1_x4_q_projection_benchmark_case {
+  %token_count = check.param.choice values([1, 17, 32, 63, 128, 129, 512, 1024, 2048]) name("token_count") : index
+  %input_size = check.literal value(2048) : index
+  %input = check.generate.fill value(0.0) : tensor<[%token_count]x2048xf32>
+  %q8_input = check.generate.fill value(1) : tensor<[%token_count]x2304xi8>
+  %weight = check.generate.fill value(0) : tensor<4096x8x144xi8>
+  %output = check.generate.fill value(1.0) : tensor<[%token_count]x4096xf32>
+  %expected = check.generate.fill value(0.0) : tensor<[%token_count]x4096xf32>
+  kernel.launch @ggml_quantize_q8_1_x4_f32[%token_count, %input_size](%token_count, %input_size, %input, %q8_input) : [index, index](index, index, tensor<[%token_count]x2048xf32>, tensor<[%token_count]x2304xi8>)
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4[%token_count](%token_count, %q8_input, %weight, %output) : [index](index, tensor<[%token_count]x2304xi8>, tensor<4096x8x144xi8>, tensor<[%token_count]x4096xf32>)
+  check.expect.close actual(%output) expected(%expected) atol(0.0) rtol(0.0) nan(same) : tensor<[%token_count]x4096xf32>
+  check.return
+}
+
+check.case public @qwen3_moe_dense_linear_q4k_q8_1_x4_k_projection_benchmark_case {
+  %token_count = check.param.choice values([1, 17, 32, 63, 128, 129, 512, 1024, 2048]) name("token_count") : index
+  %input_size = check.literal value(2048) : index
+  %input = check.generate.fill value(0.0) : tensor<[%token_count]x2048xf32>
+  %q8_input = check.generate.fill value(1) : tensor<[%token_count]x2304xi8>
+  %weight = check.generate.fill value(0) : tensor<512x8x144xi8>
+  %output = check.generate.fill value(1.0) : tensor<[%token_count]x512xf32>
+  %expected = check.generate.fill value(0.0) : tensor<[%token_count]x512xf32>
+  kernel.launch @ggml_quantize_q8_1_x4_f32[%token_count, %input_size](%token_count, %input_size, %input, %q8_input) : [index, index](index, index, tensor<[%token_count]x2048xf32>, tensor<[%token_count]x2304xi8>)
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4[%token_count](%token_count, %q8_input, %weight, %output) : [index](index, tensor<[%token_count]x2304xi8>, tensor<512x8x144xi8>, tensor<[%token_count]x512xf32>)
+  check.expect.close actual(%output) expected(%expected) atol(0.0) rtol(0.0) nan(same) : tensor<[%token_count]x512xf32>
+  check.return
+}
+
+check.case public @qwen3_moe_dense_linear_q4k_q8_1_x4_o_projection_benchmark_case {
+  %token_count = check.param.choice values([1, 17, 32, 63, 128, 129, 512, 1024, 2048]) name("token_count") : index
+  %input_size = check.literal value(4096) : index
+  %input = check.generate.fill value(0.0) : tensor<[%token_count]x4096xf32>
+  %q8_input = check.generate.fill value(1) : tensor<[%token_count]x4608xi8>
+  %weight = check.generate.fill value(0) : tensor<2048x16x144xi8>
+  %output = check.generate.fill value(1.0) : tensor<[%token_count]x2048xf32>
+  %expected = check.generate.fill value(1.0) : tensor<[%token_count]x2048xf32>
+  kernel.launch @ggml_quantize_q8_1_x4_f32[%token_count, %input_size](%token_count, %input_size, %input, %q8_input) : [index, index](index, index, tensor<[%token_count]x4096xf32>, tensor<[%token_count]x4608xi8>)
+  kernel.launch @qwen3_moe_dense_linear_q4k_q8_1_x4[%token_count](%token_count, %q8_input, %weight, %output) : [index](index, tensor<[%token_count]x4608xi8>, tensor<2048x16x144xi8>, tensor<[%token_count]x2048xf32>)
+  check.expect.close actual(%output) expected(%expected) atol(0.0) rtol(0.0) nan(same) : tensor<[%token_count]x2048xf32>
+  check.return
+}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8_decode
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8_composed_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_next_q8_composed_decode
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_q_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_q_decode {token_count = 1}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_q_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_q_prefill_32 {token_count = 32}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_q_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_q_prefill_128 {token_count = 128}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_q_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_q_prefill_512 {token_count = 512}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_k_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_k_decode {token_count = 1}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_k_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_k_prefill_32 {token_count = 32}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_k_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_k_prefill_128 {token_count = 128}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_k_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_k_prefill_512 {token_count = 512}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_o_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_o_decode {token_count = 1}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_o_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_o_prefill_32 {token_count = 32}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_o_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_o_prefill_128 {token_count = 128}
+
+check.benchmark<@qwen3_moe_dense_linear_q4k_q8_1_x4_o_projection_benchmark_case> @qwen3_moe_dense_linear_q4k_q8_1_x4_o_prefill_512 {token_count = 512}

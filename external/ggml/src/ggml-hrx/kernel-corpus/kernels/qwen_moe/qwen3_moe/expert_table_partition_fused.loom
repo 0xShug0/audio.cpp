@@ -1,0 +1,75 @@
+// Fuses the Prefill-512 expert assignment table and partition descriptor
+// construction used by grouped routed projections.
+//
+// Each of 128 workgroups retains ownership of one expert row. After publishing
+// its assignment count, lane zero releases a device-scope completion arrival.
+// The last workgroup acquires all counts, compacts them into deterministic
+// 32-row descriptors, and resets the counter so reusable command buffers can
+// issue the kernel again against the same storage.
+target.decl @qwen3_moe_expert_table_partition_gfx11_wave32
+
+kernel.decl @ggml_moe_build_expert_table(%token_count$0: index, %route_count$1: index, %route_stride$2: index, %expert_count$3: index) launch(%token_count$4: index, %route_count$5: index, %route_stride$6: index, %expert_count$7: index, %route_ids: buffer, %expert_table: buffer)
+
+kernel.decl @ggml_moe_build_expert_partition_table(%token_count$10: index, %route_count$11: index, %expert_count$12: index) launch(%token_count$13: index, %route_count$14: index, %expert_count$15: index, %expert_table: buffer, %partition_table: buffer)
+
+kernel.decl @qwen3_moe_build_expert_table_partition_prefill_512(%token_count$20: index, %route_count$21: index, %route_stride$22: index, %expert_count$23: index) launch(%token_count$24: index, %route_count$25: index, %route_stride$26: index, %expert_count$27: index, %route_ids: buffer, %expert_table: buffer, %partition_table: buffer, %completion_counter: buffer)
+
+// Compare both fused outputs against the production composition, then invoke
+// the fused route twice against one counter to make reset correctness visible.
+check.case public @qwen3_moe_expert_table_partition_fused_differential_case {
+  %token_count = check.literal value(512) : index
+  %route_count = check.literal value(8) : index
+  %route_stride = check.literal value(8) : index
+  %expert_count = check.literal value(128) : index
+  %route_ids = check.generate.iota offset(0) step(1) period(128) : tensor<512x8xi32>
+  %expected_expert_table = check.generate.fill value(-1) : tensor<65664xi32>
+  %expected_partition_table = check.generate.fill value(-1) : tensor<257xi32>
+  %actual_expert_table0 = check.generate.fill value(-1) : tensor<65664xi32>
+  %actual_partition_table0 = check.generate.fill value(-1) : tensor<257xi32>
+  %actual_expert_table1 = check.generate.fill value(-1) : tensor<65664xi32>
+  %actual_partition_table1 = check.generate.fill value(-1) : tensor<257xi32>
+  %completion_counter = check.generate.fill value(0) : tensor<1xi32>
+  %expected_counter = check.generate.fill value(0) : tensor<1xi32>
+  kernel.launch @ggml_moe_build_expert_table[%token_count, %route_count, %route_stride, %expert_count](%token_count, %route_count, %route_stride, %expert_count, %route_ids, %expected_expert_table) : [index, index, index, index](index, index, index, index, tensor<512x8xi32>, tensor<65664xi32>)
+  kernel.launch @ggml_moe_build_expert_partition_table[%token_count, %route_count, %expert_count](%token_count, %route_count, %expert_count, %expected_expert_table, %expected_partition_table) : [index, index, index](index, index, index, tensor<65664xi32>, tensor<257xi32>)
+  kernel.launch @qwen3_moe_build_expert_table_partition_prefill_512[%token_count, %route_count, %route_stride, %expert_count](%token_count, %route_count, %route_stride, %expert_count, %route_ids, %actual_expert_table0, %actual_partition_table0, %completion_counter) : [index, index, index, index](index, index, index, index, tensor<512x8xi32>, tensor<65664xi32>, tensor<257xi32>, tensor<1xi32>)
+  kernel.launch @qwen3_moe_build_expert_table_partition_prefill_512[%token_count, %route_count, %route_stride, %expert_count](%token_count, %route_count, %route_stride, %expert_count, %route_ids, %actual_expert_table1, %actual_partition_table1, %completion_counter) : [index, index, index, index](index, index, index, index, tensor<512x8xi32>, tensor<65664xi32>, tensor<257xi32>, tensor<1xi32>)
+  check.expect.equal actual(%actual_expert_table0) expected(%expected_expert_table) : tensor<65664xi32>
+  check.expect.equal actual(%actual_partition_table0) expected(%expected_partition_table) : tensor<257xi32>
+  check.expect.equal actual(%actual_expert_table1) expected(%expected_expert_table) : tensor<65664xi32>
+  check.expect.equal actual(%actual_partition_table1) expected(%expected_partition_table) : tensor<257xi32>
+  check.expect.equal actual(%completion_counter) expected(%expected_counter) : tensor<1xi32>
+  check.return
+}
+
+check.case public @qwen3_moe_expert_table_partition_fused_benchmark_case {
+  %token_count = check.literal value(512) : index
+  %route_count = check.literal value(8) : index
+  %route_stride = check.literal value(8) : index
+  %expert_count = check.literal value(128) : index
+  %route_ids = check.generate.iota offset(0) step(1) period(128) : tensor<512x8xi32>
+  %expert_table = check.generate.fill value(-1) : tensor<65664xi32>
+  %partition_table = check.generate.fill value(-1) : tensor<257xi32>
+  %completion_counter = check.generate.fill value(0) : tensor<1xi32>
+  kernel.launch @qwen3_moe_build_expert_table_partition_prefill_512[%token_count, %route_count, %route_stride, %expert_count](%token_count, %route_count, %route_stride, %expert_count, %route_ids, %expert_table, %partition_table, %completion_counter) : [index, index, index, index](index, index, index, index, tensor<512x8xi32>, tensor<65664xi32>, tensor<257xi32>, tensor<1xi32>)
+  check.return
+}
+
+check.case public @qwen3_moe_expert_table_partition_composed_benchmark_case {
+  %token_count = check.literal value(512) : index
+  %route_count = check.literal value(8) : index
+  %route_stride = check.literal value(8) : index
+  %expert_count = check.literal value(128) : index
+  %route_ids = check.generate.iota offset(0) step(1) period(128) : tensor<512x8xi32>
+  %expert_table = check.generate.fill value(-1) : tensor<65664xi32>
+  %partition_table = check.generate.fill value(-1) : tensor<257xi32>
+  kernel.launch @ggml_moe_build_expert_table[%token_count, %route_count, %route_stride, %expert_count](%token_count, %route_count, %route_stride, %expert_count, %route_ids, %expert_table) : [index, index, index, index](index, index, index, index, tensor<512x8xi32>, tensor<65664xi32>)
+  kernel.launch @ggml_moe_build_expert_partition_table[%token_count, %route_count, %expert_count](%token_count, %route_count, %expert_count, %expert_table, %partition_table) : [index, index, index](index, index, index, tensor<65664xi32>, tensor<257xi32>)
+  check.return
+}
+
+check.benchmark<@qwen3_moe_expert_table_partition_fused_differential_case> @qwen3_moe_expert_table_partition_fused_differential
+
+check.benchmark<@qwen3_moe_expert_table_partition_fused_benchmark_case> @qwen3_moe_expert_table_partition_fused_prefill_512
+
+check.benchmark<@qwen3_moe_expert_table_partition_composed_benchmark_case> @qwen3_moe_expert_table_partition_composed_prefill_512

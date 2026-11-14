@@ -1,0 +1,170 @@
+// Deterministic Qwen MoE routing from F32 expert logits.
+//
+// One wave owns one token row. Lanes load adjacent expert packets, repeatedly
+// select the largest remaining logit, and break equal-logit ties in favor of
+// the lower expert ordinal. Route IDs use an explicit physical row stride so
+// the same kernel can publish either compact `[token][route]` rows or the
+// `[token][expert]` argsort storage exposed by GGML views.
+//
+// Qwen applies a full expert softmax, selects the top-k probabilities, and
+// renormalizes those selected probabilities. The full-softmax denominator
+// cancels during renormalization:
+//
+//   (exp(x_i) / sum_all) / sum_topk(exp(x_j) / sum_all)
+//       = exp(x_i) / sum_topk(exp(x_j))
+//
+// Selection therefore operates directly on logits and only the selected
+// values reach the exponential. This preserves the model contract while
+// avoiding exponentials for experts that cannot contribute to the result.
+template.decl @qwen3_moe.router.top8.row(%valid_token: i1, %token: index, %token_count: index, %route_id_stride: index, %logits: buffer, %route_ids: buffer, %route_weights: buffer)
+
+amdgpu.target<gfx11-generic> @qwen3_moe_router_gfx11_wave64 {subgroup_size = 64}
+
+config.decl @qwen3_moe.router.expert_count : %value: index where [range(%value, 32, 512), mul(%value, 32)]
+
+config.decl @qwen3_moe.router.route_count : %value: index where [range(%value, 1, 32)]
+
+kernel.def target(@qwen3_moe_router_gfx11_wave64) @qwen3_moe_router_top8_f32(%token_count: index, %route_id_stride: index) {
+  %c1 = index.constant 1 : index
+  %c3 = index.constant 3 : index
+  %c4 = index.constant 4 : index
+  %subgroup_size = target.subgroup.size : index
+  %workgroup_size = index.mul %subgroup_size, %c4 : index
+  %padded_token_count = index.add %token_count, %c3 : index
+  %workgroup_count = index.div %padded_token_count, %c4 : index
+  kernel.launch.config workgroups(%workgroup_count, %c1, %c1) workgroup_size(%workgroup_size, %c1, %c1) : index
+} launch(%token_count: index, %route_id_stride: index, %logits: buffer, %route_ids: buffer, %route_weights: buffer) where [range(%token_count, 1, 2048), range(%route_id_stride, 1, 512)] {
+  %token_workgroup = kernel.workgroup.id<x> : index
+  %subgroup = kernel.subgroup.id : index
+  %c0 = index.constant 0 : index
+  %c4 = index.constant 4 : index
+  %token_base = index.mul %token_workgroup, %c4 : index
+  %token0 = index.add %token_base, %subgroup : index
+  %valid_token = index.cmp ult, %token0, %token_count : index
+  %safe_token = scf.select %valid_token, %token0, %c0 : index
+  template.apply<@qwen3_moe.router.top8.row>(%valid_token, %safe_token, %token_count, %route_id_stride, %logits, %route_ids, %route_weights) : (i1, index, index, index, buffer, buffer, buffer)
+  kernel.return
+}
+
+// Builds the deterministic route-ID oracle for two physical rows with eight
+// published IDs and eight untouched padding slots per row.
+kernel.def @qwen3_moe_router_top8_wide_stride_reference() {
+  %c1 = index.constant 1 : index
+  %c32 = index.constant 32 : index
+  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c32, %c1, %c1) : index
+} launch(%route_ids: buffer) {
+  %element = kernel.workitem.id<x> : index
+  %c7 = index.constant 7 : index
+  %c8 = index.constant 8 : index
+  %c16 = index.constant 16 : index
+  %c0_offset = index.constant 0 : offset
+  %slot = index.rem %element, %c16 : index
+  %publishes_id = index.cmp ult, %slot, %c8 : index
+  %route_ids_view = buffer.view %route_ids[%c0_offset] : buffer -> view<32xi32>
+  scf.if %publishes_id {
+    %scaled_slot = index.mul %slot, %c8 : index
+    %route_id_index = index.add %scaled_slot, %c7 : index
+    %route_id = index.cast %route_id_index : index to i32
+    view.store %route_id, %route_ids_view[%element] : i32, view<32xi32>
+  }
+  kernel.return
+}
+
+// Fixed-shape wrappers keep the correctness cases independent of dynamic
+// subrange proof without changing the production kernel's lowering.
+kernel.def target(@qwen3_moe_router_gfx11_wave64) @qwen3_moe_router_top8_f32_check_one() {
+  %c1 = index.constant 1 : index
+  %c256 = index.constant 256 : index
+  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c256, %c1, %c1) : index
+} launch(%logits: buffer, %route_ids: buffer, %route_weights: buffer) {
+  %subgroup = kernel.subgroup.id : index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %c8 = index.constant 8 : index
+  %valid_token = index.cmp ult, %subgroup, %c1 : index
+  %safe_token = scf.select %valid_token, %subgroup, %c0 : index
+  template.apply<@qwen3_moe.router.top8.row>(%valid_token, %safe_token, %c1, %c8, %logits, %route_ids, %route_weights) : (i1, index, index, index, buffer, buffer, buffer)
+  kernel.return
+}
+
+kernel.def target(@qwen3_moe_router_gfx11_wave64) @qwen3_moe_router_top8_f32_check_two_compact() {
+  %c1 = index.constant 1 : index
+  %c2 = index.constant 2 : index
+  %c256 = index.constant 256 : index
+  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c256, %c1, %c1) : index
+} launch(%logits: buffer, %route_ids: buffer, %route_weights: buffer) {
+  %subgroup = kernel.subgroup.id : index
+  %c0 = index.constant 0 : index
+  %c2 = index.constant 2 : index
+  %c8 = index.constant 8 : index
+  %valid_token = index.cmp ult, %subgroup, %c2 : index
+  %safe_token = scf.select %valid_token, %subgroup, %c0 : index
+  template.apply<@qwen3_moe.router.top8.row>(%valid_token, %safe_token, %c2, %c8, %logits, %route_ids, %route_weights) : (i1, index, index, index, buffer, buffer, buffer)
+  kernel.return
+}
+
+kernel.def target(@qwen3_moe_router_gfx11_wave64) @qwen3_moe_router_top8_f32_check_two_wide() {
+  %c1 = index.constant 1 : index
+  %c256 = index.constant 256 : index
+  kernel.launch.config workgroups(%c1, %c1, %c1) workgroup_size(%c256, %c1, %c1) : index
+} launch(%logits: buffer, %route_ids: buffer, %route_weights: buffer) {
+  %subgroup = kernel.subgroup.id : index
+  %c0 = index.constant 0 : index
+  %c2 = index.constant 2 : index
+  %c16 = index.constant 16 : index
+  %valid_token = index.cmp ult, %subgroup, %c2 : index
+  %safe_token = scf.select %valid_token, %subgroup, %c0 : index
+  template.apply<@qwen3_moe.router.top8.row>(%valid_token, %safe_token, %c2, %c16, %logits, %route_ids, %route_weights) : (i1, index, index, index, buffer, buffer, buffer)
+  kernel.return
+}
+
+// Period-eight logits place sixteen equal maxima in different lane-local
+// slots. Repeated selection must remove each winner and retain the lower-ID
+// half of that tie set. Two rows leave two inactive waves in the four-wave
+// production workgroup and exercise guarded tail publication. A second call
+// proves that a wider physical route-ID stride preserves its padding.
+check.case public @qwen3_moe_router_top8_f32_repeated_maxima_case {
+  %token_count = check.literal value(2) : index
+  %route_id_stride = check.literal value(8) : index
+  %wide_route_id_stride = check.literal value(16) : index
+  %logits = check.generate.iota offset(0.0) step(1.0) period(8) : tensor<2x128xf32>
+  %route_ids = check.generate.fill value(-1) : tensor<2x8xi32>
+  %route_weights = check.generate.fill value(0.0) : tensor<2x8xf32>
+  %wide_route_ids = check.generate.fill value(-1) : tensor<2x16xi32>
+  %wide_route_weights = check.generate.fill value(0.0) : tensor<2x8xf32>
+  %expected_ids = check.generate.iota offset(7) step(8) period(8) : tensor<2x8xi32>
+  %expected_wide_ids = check.generate.fill value(-1) : tensor<2x16xi32>
+  %expected_weights = check.generate.fill value(0.125) : tensor<2x8xf32>
+  kernel.launch @qwen3_moe_router_top8_f32_check_two_compact(%logits, %route_ids, %route_weights) : (tensor<2x128xf32>, tensor<2x8xi32>, tensor<2x8xf32>)
+  kernel.launch @qwen3_moe_router_top8_wide_stride_reference(%expected_wide_ids) : (tensor<2x16xi32>)
+  kernel.launch @qwen3_moe_router_top8_f32_check_two_wide(%logits, %wide_route_ids, %wide_route_weights) : (tensor<2x128xf32>, tensor<2x16xi32>, tensor<2x8xf32>)
+  check.expect.equal actual(%route_ids) expected(%expected_ids) : tensor<2x8xi32>
+  check.expect.close actual(%route_weights) expected(%expected_weights) atol(1.0000000000000001e-05) rtol(1.0000000000000001e-05) nan(same) : tensor<2x8xf32>
+  check.expect.equal actual(%wide_route_ids) expected(%expected_wide_ids) : tensor<2x16xi32>
+  check.expect.close actual(%wide_route_weights) expected(%expected_weights) atol(1.0000000000000001e-05) rtol(1.0000000000000001e-05) nan(same) : tensor<2x8xf32>
+  check.return
+}
+
+check.case public @qwen3_moe_router_top8_f32_benchmark_case {
+  %token_count = check.param.choice values([1, 32, 128, 512]) name("token_count") : index
+  %route_id_stride = check.literal value(8) : index
+  %logits = check.generate.iota offset(0.0) step(1.0) period(8) : tensor<[%token_count]x128xf32>
+  %route_ids = check.generate.fill value(-1) : tensor<[%token_count]x8xi32>
+  %route_weights = check.generate.fill value(0.0) : tensor<[%token_count]x8xf32>
+  %expected_ids = check.generate.iota offset(7) step(8) period(8) : tensor<[%token_count]x8xi32>
+  %expected_weights = check.generate.fill value(0.125) : tensor<[%token_count]x8xf32>
+  kernel.launch @qwen3_moe_router_top8_f32[%token_count, %route_id_stride](%token_count, %route_id_stride, %logits, %route_ids, %route_weights) : [index, index](index, index, tensor<[%token_count]x128xf32>, tensor<[%token_count]x8xi32>, tensor<[%token_count]x8xf32>)
+  check.expect.equal actual(%route_ids) expected(%expected_ids) : tensor<[%token_count]x8xi32>
+  check.expect.close actual(%route_weights) expected(%expected_weights) atol(1.0000000000000001e-05) rtol(1.0000000000000001e-05) nan(same) : tensor<[%token_count]x8xf32>
+  check.return
+}
+
+check.benchmark<@qwen3_moe_router_top8_f32_repeated_maxima_case> @qwen3_moe_router_top8_f32_repeated_maxima
+
+check.benchmark<@qwen3_moe_router_top8_f32_benchmark_case> @qwen3_moe_router_top8_f32_decode {token_count = 1}
+
+check.benchmark<@qwen3_moe_router_top8_f32_benchmark_case> @qwen3_moe_router_top8_f32_prefill_32 {token_count = 32}
+
+check.benchmark<@qwen3_moe_router_top8_f32_benchmark_case> @qwen3_moe_router_top8_f32_prefill_128 {token_count = 128}
+
+check.benchmark<@qwen3_moe_router_top8_f32_benchmark_case> @qwen3_moe_router_top8_f32_prefill_512 {token_count = 512}

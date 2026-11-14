@@ -1,0 +1,156 @@
+// Fused decode router projection and deterministic normalized top-8 routing.
+//
+// Each wave64 computes a target-selected adjacent expert tile. A device-scope completion
+// sequence publishes the row across workgroups, and the last arrival invokes
+// the same row-selection contract as the standalone router. The completion
+// counter is reset after route publication so reusable command buffers can
+// issue the kernel repeatedly against the same storage.
+//
+// This schedule is decode-only. Prefill has enough token parallelism to keep
+// projection and routing independent without paying completion atomics.
+template.decl @qwen3_moe.router.fused.experts_per_wave() -> (index)
+
+template.decl @qwen3_moe.router.fused.projection(%hidden_size: index, %expert_count: index, %token_count: index, %token: index, %expert_tile: index, %lane: index, %writes_projection: i1, %input: buffer, %weight: buffer, %logits: buffer)
+
+template.decl @qwen3_moe.router.top8.row(%arg0: i1, %arg1: index, %arg2: index, %arg3: index, %arg4: buffer, %arg5: buffer, %arg6: buffer)
+
+template.decl @qwen3_moe.router_projection.storage(%arg0: buffer, %arg1: buffer, %arg2: buffer) -> (buffer, buffer, buffer)
+
+amdgpu.target<gfx11-generic> @qwen3_moe_router_fused_gfx11_wave64 {subgroup_size = 64}
+
+target.decl @qwen3_moe_router_fused_gfx1151
+
+config.decl @qwen3_moe.model.hidden_size : %value: index where [range(%value, 128, 32768), mul(%value, 128)]
+
+config.decl @qwen3_moe.router.expert_count : %value: index where [range(%value, 32, 512), mul(%value, 32)]
+
+kernel.decl @qwen3_moe_router_projection_f32_four_row_wave32(%token_count$26: index) launch(%token_count$27: index, %input: buffer, %weight: buffer, %output: buffer)
+
+kernel.decl @qwen3_moe_router_top8_f32(%token_count$31: index, %route_id_stride$32: index) launch(%token_count$33: index, %route_id_stride$34: index, %logits: buffer, %route_ids: buffer, %route_weights: buffer)
+
+kernel.decl @qwen3_moe_router_top8_f32_check_one() launch(%logits: buffer, %route_ids: buffer, %route_weights: buffer)
+
+kernel.def target(@qwen3_moe_router_fused_gfx11_wave64) @qwen3_moe_router_projection_top8_fused_decode_f32(%token_count: index, %route_id_stride: index) {
+  %expert_count = config.get @qwen3_moe.router.expert_count : index
+  %c1 = index.constant 1 : index
+  %wave_size = target.subgroup.size : index
+  %experts_per_wave = index.constant 4 : index
+  %expert_tiles = index.div %expert_count, %experts_per_wave : index
+  kernel.launch.config workgroups(%expert_tiles, %c1, %c1) workgroup_size(%wave_size, %c1, %c1) : index
+} launch(%token_count: index, %route_id_stride: index, %input: buffer, %weight: buffer, %logits: buffer, %completion_counter: buffer, %route_ids: buffer, %route_weights: buffer) {
+  %hidden_size0 = config.get @qwen3_moe.model.hidden_size : index
+  %expert_count0 = config.get @qwen3_moe.router.expert_count : index
+  %bounded_token_count = index.assume %token_count [range(%token_count, 1, 1)] : index
+  %bounded_route_id_stride = index.assume %route_id_stride [range(%route_id_stride, 1, 512)] : index
+  %hidden_size, %expert_count = index.assume %hidden_size0, %expert_count0 [range(%hidden_size0, 128, 32768), mul(%hidden_size0, 128), range(%expert_count0, 64, 512), mul(%expert_count0, 64)] : index, index
+  %c0 = index.constant 0 : index
+  %c1 = index.constant 1 : index
+  %expert_tile_count0 = kernel.workgroup.count<x> : index
+  %expert_tile_count = index.assume %expert_tile_count0 [range(%expert_tile_count0, 16, 256)] : index
+  %expert_tile0 = kernel.workgroup.id<x> : index
+  %expert_tile = index.assume %expert_tile0 [lt(%expert_tile0, %expert_tile_count)] : index
+  %lane = kernel.subgroup.lane.id : index
+  %c0_i32 = scalar.constant 0 : i32
+  %c1_i32 = scalar.constant 1 : i32
+  %publishes_row = scalar.constant true : i1
+  %c0_offset = index.constant 0 : offset
+  %counter_scratch_bytes = index.constant 4 : offset
+  %token = index.assume %c0 [lt(%c0, %bounded_token_count)] : index
+  %input_storage, %weight_storage, %logits_storage = template.apply<@qwen3_moe.router_projection.storage>(%input, %weight, %logits) : (buffer, buffer, buffer) -> (buffer, buffer, buffer)
+  %input_noalias, %weight_noalias, %logits_noalias, %completion_counter_noalias, %route_ids_noalias, %route_weights_noalias = buffer.assume.noalias %input_storage, %weight_storage, %logits_storage, %completion_counter, %route_ids, %route_weights : buffer, buffer, buffer, buffer, buffer, buffer
+  %completion_counter_aligned = buffer.assume.alignment %completion_counter_noalias {minimum_alignment = 16} : buffer
+  %completion_counter_view = buffer.view %completion_counter_aligned[%c0_offset] : buffer -> view<1xi32>
+  %counter_scratch = buffer.alloca<workgroup> align(4) %counter_scratch_bytes : buffer
+  %counter_scratch_view = buffer.view %counter_scratch[%c0_offset] : buffer -> view<1xi32>
+
+  %lane_i32 = index.cast %lane : index to i32
+  %writes_projection = scalar.cmpi eq, %lane_i32, %c0_i32 : i32
+  template.apply<@qwen3_moe.router.fused.projection>(%hidden_size, %expert_count, %bounded_token_count, %token, %expert_tile, %lane, %writes_projection, %input_noalias, %weight_noalias, %logits_noalias) : (index, index, index, index, index, index, i1, buffer, buffer, buffer)
+
+  // Every projection store precedes its workgroup's release. The last arrival
+  // acquires all preceding releases before any lane loads the complete row.
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  scf.if %writes_projection {
+    %old_counter = view.atomic.rmw<addi> %c1_i32, %completion_counter_view[%c0] {ordering = acq_rel, scope = device} : i32, view<1xi32> -> i32
+    view.store %old_counter, %counter_scratch_view[%c0] : i32, view<1xi32>
+  }
+  kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+  %old_counter = view.load %counter_scratch_view[%c0] : view<1xi32> -> i32
+  %expert_tile_count_i32 = index.cast %expert_tile_count : index to i32
+  %last_expert_tile_i32 = scalar.subi %expert_tile_count_i32, %c1_i32 : i32
+  %negative_expert_tile_count_i32 = scalar.subi %c0_i32, %expert_tile_count_i32 : i32
+  %is_last_projection = scalar.cmpi eq, %old_counter, %last_expert_tile_i32 : i32
+  scf.if %is_last_projection {
+    template.apply<@qwen3_moe.router.top8.row>(%publishes_row, %token, %bounded_token_count, %bounded_route_id_stride, %logits_noalias, %route_ids_noalias, %route_weights_noalias) : (i1, index, index, index, buffer, buffer, buffer)
+    // The counter cannot become reusable until all route stores complete.
+    kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
+    scf.if %writes_projection {
+      view.atomic.reduce<addi> %negative_expert_tile_count_i32, %completion_counter_view[%c0] {ordering = release, scope = device} : i32, view<1xi32>
+    }
+  }
+  kernel.return
+}
+
+// Compare the fused output against the production composition, then invoke the
+// fused route again against the same counter to make reset correctness visible.
+check.case public @qwen3_moe_router_projection_top8_fused_differential_case {
+  %token_count = check.literal value(1) : index
+  %route_id_stride = check.literal value(8) : index
+  %input = check.generate.iota offset(-0.25) step(0.0078125) period(17) : tensor<1x2048xf32>
+  %weight = check.generate.iota offset(-0.5) step(0.015625) period(31) : tensor<128x2048xf32>
+  %expected_logits = check.generate.fill value(0.0) : tensor<1x128xf32>
+  %expected_route_ids = check.generate.fill value(-1) : tensor<1x8xi32>
+  %expected_route_weights = check.generate.fill value(0.0) : tensor<1x8xf32>
+  %actual_logits0 = check.generate.fill value(1.0) : tensor<1x128xf32>
+  %actual_route_ids0 = check.generate.fill value(-1) : tensor<1x8xi32>
+  %actual_route_weights0 = check.generate.fill value(0.0) : tensor<1x8xf32>
+  %actual_logits1 = check.generate.fill value(1.0) : tensor<1x128xf32>
+  %actual_route_ids1 = check.generate.fill value(-1) : tensor<1x8xi32>
+  %actual_route_weights1 = check.generate.fill value(0.0) : tensor<1x8xf32>
+  %completion_counter = check.generate.fill value(0) : tensor<1xi32>
+  %expected_counter = check.generate.fill value(0) : tensor<1xi32>
+  kernel.launch @qwen3_moe_router_projection_f32_four_row_wave32[%token_count](%token_count, %input, %weight, %expected_logits) : [index](index, tensor<1x2048xf32>, tensor<128x2048xf32>, tensor<1x128xf32>)
+  kernel.launch @qwen3_moe_router_top8_f32_check_one(%expected_logits, %expected_route_ids, %expected_route_weights) : (tensor<1x128xf32>, tensor<1x8xi32>, tensor<1x8xf32>)
+  kernel.launch @qwen3_moe_router_projection_top8_fused_decode_f32[%token_count, %route_id_stride](%token_count, %route_id_stride, %input, %weight, %actual_logits0, %completion_counter, %actual_route_ids0, %actual_route_weights0) : [index, index](index, index, tensor<1x2048xf32>, tensor<128x2048xf32>, tensor<1x128xf32>, tensor<1xi32>, tensor<1x8xi32>, tensor<1x8xf32>)
+  kernel.launch @qwen3_moe_router_projection_top8_fused_decode_f32[%token_count, %route_id_stride](%token_count, %route_id_stride, %input, %weight, %actual_logits1, %completion_counter, %actual_route_ids1, %actual_route_weights1) : [index, index](index, index, tensor<1x2048xf32>, tensor<128x2048xf32>, tensor<1x128xf32>, tensor<1xi32>, tensor<1x8xi32>, tensor<1x8xf32>)
+  check.expect.close actual(%actual_logits0) expected(%expected_logits) atol(0.001) rtol(0.001) nan(same) : tensor<1x128xf32>
+  check.expect.close actual(%actual_logits1) expected(%expected_logits) atol(0.001) rtol(0.001) nan(same) : tensor<1x128xf32>
+  check.expect.equal actual(%actual_route_ids0) expected(%expected_route_ids) : tensor<1x8xi32>
+  check.expect.equal actual(%actual_route_ids1) expected(%expected_route_ids) : tensor<1x8xi32>
+  check.expect.close actual(%actual_route_weights0) expected(%expected_route_weights) atol(0.0001) rtol(0.0001) nan(same) : tensor<1x8xf32>
+  check.expect.close actual(%actual_route_weights1) expected(%expected_route_weights) atol(0.0001) rtol(0.0001) nan(same) : tensor<1x8xf32>
+  check.expect.equal actual(%completion_counter) expected(%expected_counter) : tensor<1xi32>
+  check.return
+}
+
+check.case public @qwen3_moe_router_projection_top8_fused_benchmark_case {
+  %token_count = check.literal value(1) : index
+  %route_id_stride = check.literal value(8) : index
+  %input = check.generate.fill value(0.00390625) : tensor<1x2048xf32>
+  %weight = check.generate.fill value(0.015625) : tensor<128x2048xf32>
+  %logits = check.generate.fill value(0.0) : tensor<1x128xf32>
+  %completion_counter = check.generate.fill value(0) : tensor<1xi32>
+  %route_ids = check.generate.fill value(-1) : tensor<1x8xi32>
+  %route_weights = check.generate.fill value(0.0) : tensor<1x8xf32>
+  kernel.launch @qwen3_moe_router_projection_top8_fused_decode_f32[%token_count, %route_id_stride](%token_count, %route_id_stride, %input, %weight, %logits, %completion_counter, %route_ids, %route_weights) : [index, index](index, index, tensor<1x2048xf32>, tensor<128x2048xf32>, tensor<1x128xf32>, tensor<1xi32>, tensor<1x8xi32>, tensor<1x8xf32>)
+  check.return
+}
+
+check.case public @qwen3_moe_router_projection_top8_composed_benchmark_case {
+  %token_count = check.literal value(1) : index
+  %route_id_stride = check.literal value(8) : index
+  %input = check.generate.fill value(0.00390625) : tensor<1x2048xf32>
+  %weight = check.generate.fill value(0.015625) : tensor<128x2048xf32>
+  %logits = check.generate.fill value(0.0) : tensor<1x128xf32>
+  %route_ids = check.generate.fill value(-1) : tensor<1x8xi32>
+  %route_weights = check.generate.fill value(0.0) : tensor<1x8xf32>
+  kernel.launch @qwen3_moe_router_projection_f32_four_row_wave32[%token_count](%token_count, %input, %weight, %logits) : [index](index, tensor<1x2048xf32>, tensor<128x2048xf32>, tensor<1x128xf32>)
+  kernel.launch @qwen3_moe_router_top8_f32[%token_count, %route_id_stride](%token_count, %route_id_stride, %logits, %route_ids, %route_weights) : [index, index](index, index, tensor<1x128xf32>, tensor<1x8xi32>, tensor<1x8xf32>)
+  check.return
+}
+
+check.benchmark<@qwen3_moe_router_projection_top8_fused_differential_case> @qwen3_moe_router_projection_top8_fused_differential
+
+check.benchmark<@qwen3_moe_router_projection_top8_fused_benchmark_case> @qwen3_moe_router_projection_top8_fused_decode
+
+check.benchmark<@qwen3_moe_router_projection_top8_composed_benchmark_case> @qwen3_moe_router_projection_top8_composed_decode

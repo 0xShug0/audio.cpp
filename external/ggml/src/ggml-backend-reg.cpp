@@ -34,6 +34,10 @@
 #include "ggml-cuda.h"
 #endif
 
+#ifdef GGML_USE_HRX
+#include "ggml-hrx.h"
+#endif
+
 #ifdef GGML_USE_METAL
 #include "ggml-metal.h"
 #endif
@@ -115,6 +119,9 @@ struct ggml_backend_registry {
     ggml_backend_registry() {
 #ifdef GGML_USE_CUDA
         register_backend(ggml_backend_cuda_reg());
+#endif
+#ifdef GGML_USE_HRX
+        register_backend(ggml_backend_hrx_reg());
 #endif
 #ifdef GGML_USE_METAL
         register_backend(ggml_backend_metal_reg());
@@ -571,6 +578,7 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
     ggml_backend_load_best("metal", silent, dir_path);
     ggml_backend_load_best("rpc", silent, dir_path);
     ggml_backend_load_best("sycl", silent, dir_path);
+    ggml_backend_load_best("hrx", silent, dir_path);
     ggml_backend_load_best("vulkan", silent, dir_path);
     ggml_backend_load_best("virtgpu", silent, dir_path);
     ggml_backend_load_best("opencl", silent, dir_path);

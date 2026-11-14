@@ -212,6 +212,7 @@ parse_exec_plan(const std::unordered_map<std::string, std::string> & options, st
                         {"cpu", core::BackendType::Cpu},
                         {"cuda", core::BackendType::Cuda},
                         {"hip", core::BackendType::Hip},
+                        {"hrx", core::BackendType::Hrx},
                         {"rocm", core::BackendType::Hip},
                         {"vulkan", core::BackendType::Vulkan},
                         {"metal", core::BackendType::Metal},

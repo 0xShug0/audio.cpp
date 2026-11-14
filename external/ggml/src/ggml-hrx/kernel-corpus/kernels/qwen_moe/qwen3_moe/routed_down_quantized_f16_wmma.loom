@@ -1,0 +1,43 @@
+// Weighted reduction of compact FP16 routed projections into an FP32 residual.
+//
+// One workitem owns four adjacent output channels. All top-k routes are
+// accumulated in FP32 before the residual is loaded and published once.
+
+template.decl @ggml.routing.weighted_reduce_f16_f32(%token_count: index, %route_weights: buffer, %routed_output: buffer, %residual_input: buffer, %output: buffer)
+
+amdgpu.target<gfx11-generic> @qwen3_moe_routed_down_gfx11_wave64 {subgroup_size = 64}
+
+config.decl @qwen3_moe.routed_down.route_count : %value: index where [range(%value, 1, 8)]
+
+config.decl @qwen3_moe.routed_down.output_size : %value: index where [range(%value, 1, 4096)]
+
+kernel.def target(@qwen3_moe_routed_down_gfx11_wave64) @qwen3_moe_routed_down_weighted_reduce_f16_f32(%token_count: index) {
+  %output_size = config.get @qwen3_moe.routed_down.output_size : index
+  %c1 = index.constant 1 : index
+  %c64 = index.constant 64 : index
+  %c256 = index.constant 256 : index
+  %padded_output_size = index.add %output_size, %c256 : index
+  %rounded_output_size = index.sub %padded_output_size, %c1 : index
+  %output_tiles = index.div %rounded_output_size, %c256 : index
+  kernel.launch.config workgroups(%output_tiles, %token_count, %c1) workgroup_size(%c64, %c1, %c1) : index
+} launch(%token_count: index, %route_weights: buffer, %routed_output: buffer, %residual_input: buffer, %output: buffer) where [range(%token_count, 1, 2048)] {
+  template.apply<@ggml.routing.weighted_reduce_f16_f32>(%token_count, %route_weights, %routed_output, %residual_input, %output) : (index, buffer, buffer, buffer, buffer)
+  kernel.return
+}
+
+// Compare separate output storage with the in-place residual/output binding
+// used by composed routed-down schedules.
+check.case public @qwen3_moe_routed_down_weighted_reduce_f16_f32_alias_case {
+  %token_count = check.literal value(1) : index
+  %route_weights = check.generate.iota offset(0.03125) step(0.015625) period(8) : tensor<1x8xf32>
+  %routed_output = check.generate.iota offset(-0.25) step(0.015625) period(31) : tensor<1x8x2048xf16>
+  %separate_residual = check.generate.iota offset(-0.5) step(0.0078125) period(17) : tensor<1x2048xf32>
+  %in_place_residual = check.generate.iota offset(-0.5) step(0.0078125) period(17) : tensor<1x2048xf32>
+  %separate_output = check.generate.fill value(0.0) : tensor<1x2048xf32>
+  kernel.launch @qwen3_moe_routed_down_weighted_reduce_f16_f32[%token_count](%token_count, %route_weights, %routed_output, %separate_residual, %separate_output) : [index](index, tensor<1x8xf32>, tensor<1x8x2048xf16>, tensor<1x2048xf32>, tensor<1x2048xf32>)
+  kernel.launch @qwen3_moe_routed_down_weighted_reduce_f16_f32[%token_count](%token_count, %route_weights, %routed_output, %in_place_residual, %in_place_residual) : [index](index, tensor<1x8xf32>, tensor<1x8x2048xf16>, tensor<1x2048xf32>, tensor<1x2048xf32>)
+  check.expect.equal actual(%in_place_residual) expected(%separate_output) : tensor<1x2048xf32>
+  check.return
+}
+
+check.benchmark<@qwen3_moe_routed_down_weighted_reduce_f16_f32_alias_case> @qwen3_moe_routed_down_weighted_reduce_f16_f32_alias

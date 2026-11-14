@@ -43,6 +43,7 @@ const char * backend_label(BackendType type) {
         case BackendType::Vulkan:        return "vulkan";
         case BackendType::Metal:         return "metal";
         case BackendType::WebGPU:        return "webgpu";
+        case BackendType::Hrx:           return "hrx";
         case BackendType::Sycl:          return "sycl";
         case BackendType::BestAvailable: return "best";
     }
@@ -70,6 +71,9 @@ std::optional<BackendType> backend_type_for_reg_name(const char * reg_name) {
     }
     if (std::strcmp(reg_name, "WebGPU") == 0) {
         return BackendType::WebGPU;
+    }
+    if (std::strcmp(reg_name, "HRX") == 0) {
+        return BackendType::Hrx;
     }
     if (std::strcmp(reg_name, "SYCL") == 0) {
         return BackendType::Sycl;
@@ -230,7 +234,7 @@ void test_text_listing_format_is_stable() {
         }
     }
     expected = "available_devices=" + std::to_string(count) + "\n" + expected +
-        "select with: --backend <cuda|hip|vulkan|metal|webgpu|sycl|cpu> --device <index>\n";
+        "select with: --backend <cuda|hip|vulkan|metal|webgpu|sycl|hrx|cpu> --device <index>\n";
 
     std::ostringstream text;
     engine::core::print_backend_devices(text);
@@ -238,7 +242,7 @@ void test_text_listing_format_is_stable() {
 }
 
 std::optional<BackendType> backend_type_for_option(const std::string & option) {
-    for (const BackendType type : {BackendType::Cpu, BackendType::Cuda, BackendType::Hip, BackendType::Vulkan, BackendType::Metal, BackendType::WebGPU, BackendType::Sycl}) {
+    for (const BackendType type : {BackendType::Cpu, BackendType::Cuda, BackendType::Hip, BackendType::Vulkan, BackendType::Metal, BackendType::WebGPU, BackendType::Sycl, BackendType::Hrx}) {
         if (option == backend_label(type)) {
             return type;
         }
@@ -265,6 +269,9 @@ std::string expected_backend_option(const std::string & registry) {
     }
     if (registry == "WebGPU") {
         return "webgpu";
+    }
+    if (registry == "HRX") {
+        return "hrx";
     }
     if (registry == "SYCL") {
         return "sycl";

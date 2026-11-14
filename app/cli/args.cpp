@@ -207,6 +207,9 @@ engine::core::BackendType parse_backend(const std::string & value) {
     if (value == "webgpu") {
         return engine::core::BackendType::WebGPU;
     }
+    if (value == "hrx") {
+        return engine::core::BackendType::Hrx;
+    }
     if (value == "sycl") {
         return engine::core::BackendType::Sycl;
     }

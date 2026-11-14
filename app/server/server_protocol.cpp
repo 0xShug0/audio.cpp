@@ -537,6 +537,8 @@ const char *backend_name(engine::core::BackendType type) {
     return "metal";
   case engine::core::BackendType::WebGPU:
     return "webgpu";
+  case engine::core::BackendType::Hrx:
+    return "hrx";
   case engine::core::BackendType::Sycl:
     return "sycl";
   case engine::core::BackendType::BestAvailable:

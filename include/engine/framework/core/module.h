@@ -19,6 +19,7 @@ enum class BackendType {
     BestAvailable,
     WebGPU,
     Sycl,
+    Hrx,
 };
 
 // CUDA and HIP share ggml's ggml-cuda implementation for a small set of
