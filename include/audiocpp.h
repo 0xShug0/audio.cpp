@@ -51,7 +51,7 @@ extern "C" {
 /* ------------------------------------------------------------------ */
 
 #define AUDIOCPP_ABI_VERSION_MAJOR 0
-#define AUDIOCPP_ABI_VERSION_MINOR 3
+#define AUDIOCPP_ABI_VERSION_MINOR 4
 #define AUDIOCPP_ABI_VERSION_PATCH 0
 
 /* Packed as (major << 16) | (minor << 8) | patch. A caller built against a
@@ -436,6 +436,13 @@ AUDIOCPP_API audiocpp_status audiocpp_result_audio(const audiocpp_result * resul
 AUDIOCPP_API audiocpp_status audiocpp_result_text(const audiocpp_result * result,
                                                   const char ** out_text,
                                                   const char ** out_language);
+
+/* Added in ABI 0.4. Returns the schema identifier and JSON-serialized data.
+ * Both outputs are optional and borrowed until result is freed.
+ * AUDIOCPP_ERR_NOT_AVAILABLE when the task produced no custom schema output. */
+AUDIOCPP_API audiocpp_status audiocpp_result_custom_schema(const audiocpp_result * result,
+                                                           const char ** out_schema,
+                                                           const char ** out_data);
 
 AUDIOCPP_API size_t          audiocpp_result_segment_count(const audiocpp_result * result);
 AUDIOCPP_API audiocpp_status audiocpp_result_segment(const audiocpp_result * result,

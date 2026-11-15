@@ -35,6 +35,12 @@ static int g_failures = 0;
 static int g_ran = 0;
 static int g_skipped = 0;
 
+static void model_log_callback(audiocpp_log_level level, const char * text, void * user_data) {
+    (void)level;
+    (void)user_data;
+    fprintf(stderr, "%s\n", text);
+}
+
 #define CHECK(cond, ...)                                         \
     do {                                                         \
         if (!(cond)) {                                           \
@@ -74,25 +80,30 @@ typedef struct {
     /* Some families fix their input rate (BS-RoFormer wants 44.1 kHz), so a
      * case can ask for the alternate clip instead of the default one. */
     int use_alt_audio;
+    const char * custom_schema;
 } model_case;
 
 static const model_case CASES[] = {
     { "kokoro_tts", "tts", "offline",
       "Kokoro-82M-GGUF/kokoro-82m-q8_0.gguf",
       "The quick brown fox jumps over the lazy dog.", "en-us", "af_heart", "1234",
-      1, 0, 0, 0, 0 },
+      1, 0, 0, 0, 0, NULL },
     { "citrinet_asr", "asr", "offline",
       "Citrinet-ASR-GGUF/citrinet-asr-q8_0.gguf",
-      NULL, NULL, NULL, NULL, 0, 1, 0, 0, 0 },
+      NULL, NULL, NULL, NULL, 0, 1, 0, 0, 0, NULL },
     { "parakeet_tdt", "asr", "offline",
       "Parakeet-TDT-0.6B-v3-GGUF/parakeet-tdt-0.6b-v3-q8_0.gguf",
-      NULL, NULL, NULL, NULL, 0, 1, 0, 0, 0 },
+      NULL, NULL, NULL, NULL, 0, 1, 0, 0, 0, NULL },
     { "sortformer_diar", "diar", "offline",
       "Sortformer-Diar-4spk-v1-GGUF/sortformer-diar-4spk-v1-q8_0.gguf",
-      NULL, NULL, NULL, NULL, 0, 0, 1, 0, 0 },
+      NULL, NULL, NULL, NULL, 0, 0, 1, 0, 0, NULL },
     { "bs_roformer", "sep", "offline",
       "BS-RoFormer-ep368-GGUF/bs-roformer-ep368-q8_0.gguf",
-      NULL, NULL, NULL, NULL, 0, 0, 0, 1, 1 },
+      NULL, NULL, NULL, NULL, 0, 0, 0, 1, 1, NULL },
+    { "ced", "cls", "offline", "CED-GGUF/ced-tiny-f32.gguf",
+      NULL, NULL, NULL, NULL, 0, 0, 0, 0, 0, "ced.classification.v1" },
+    { "ast_audioset", "cls", "offline", "AST-AudioSet-GGUF/ast-audioset-f32.gguf",
+      NULL, NULL, NULL, NULL, 0, 0, 0, 0, 0, "ast_audioset.classification.v1" },
 };
 
 #define CASE_COUNT (sizeof(CASES) / sizeof(CASES[0]))
@@ -229,6 +240,10 @@ static void run_case(const model_case * c, const char * models_root,
     audiocpp_backend_config backend;
     audiocpp_model_config load_config;
     size_t options;
+    size_t family_index;
+    int linked = 0;
+    const char * custom_schema = NULL;
+    const char * custom_data = NULL;
 
     if (c->use_alt_audio) {
         if (alt_clip->samples == NULL) {
@@ -258,11 +273,19 @@ static void run_case(const model_case * c, const char * models_root,
     }
     memset(&load_config, 0, sizeof(load_config));
     load_config.family_hint = c->family;
-    if (audiocpp_model_load(registry, model_path, &load_config, NULL, &model) != AUDIOCPP_OK) {
-        /* A family not linked into this build is a skip, not a failure -- the
-         * model composite is a build-time choice. */
-        printf("skip %-16s (load: %s)\n", c->family, audiocpp_last_error());
+    for (family_index = 0; family_index < audiocpp_registry_family_count(registry); ++family_index) {
+        const char * family = NULL;
+        CHECK_OK(audiocpp_registry_family(registry, family_index, &family));
+        if (family != NULL && strcmp(family, c->family) == 0) linked = 1;
+    }
+    if (!linked) {
+        printf("skip %-16s (family not linked)\n", c->family);
         g_skipped++;
+        audiocpp_registry_free(registry);
+        return;
+    }
+    if (audiocpp_model_load(registry, model_path, &load_config, NULL, &model) != AUDIOCPP_OK) {
+        CHECK(0, "%s load: %s", c->family, audiocpp_last_error());
         audiocpp_registry_free(registry);
         return;
     }
@@ -304,6 +327,26 @@ static void run_case(const model_case * c, const char * models_root,
         CHECK(0, "%s run: %s", c->family, audiocpp_last_error());
     } else {
         g_ran++;
+
+        if (c->custom_schema != NULL) {
+            const char * schema_again = NULL;
+            const char * data_again = NULL;
+            CHECK_OK(audiocpp_result_custom_schema(result, NULL, NULL));
+            CHECK_OK(audiocpp_result_custom_schema(result, &custom_schema, NULL));
+            CHECK_OK(audiocpp_result_custom_schema(result, NULL, &custom_data));
+            CHECK(custom_schema != NULL && strcmp(custom_schema, c->custom_schema) == 0,
+                  "%s custom schema identifier differs", c->family);
+            CHECK(custom_data != NULL && strlen(custom_data) > 0,
+                  "%s custom schema data is empty", c->family);
+            CHECK_OK(audiocpp_result_custom_schema(result, &schema_again, &data_again));
+            CHECK(schema_again == custom_schema && data_again == custom_data,
+                  "%s repeated access invalidated borrowed strings", c->family);
+            if (custom_schema != NULL) printf("parity:%s:custom_schema=%s\n", c->family, custom_schema);
+            if (custom_data != NULL) printf("parity:%s:custom_data=%s\n", c->family, custom_data);
+        } else {
+            CHECK(audiocpp_result_custom_schema(result, NULL, NULL) == AUDIOCPP_ERR_NOT_AVAILABLE,
+                  "%s unexpectedly returned custom schema output", c->family);
+        }
 
         if (c->expect_audio) {
             const float * samples = NULL;
@@ -431,11 +474,22 @@ static void run_case(const model_case * c, const char * models_root,
               "%s: out-of-range speaker turn not rejected", c->family);
     }
 
-    audiocpp_result_free(result);
     audiocpp_request_free(request);
     audiocpp_session_free(session);
     audiocpp_model_free(model);
     audiocpp_registry_free(registry);
+    if (c->custom_schema != NULL && result != NULL) {
+        const char * schema_after = NULL;
+        const char * data_after = NULL;
+        CHECK_OK(audiocpp_result_custom_schema(result, &schema_after, &data_after));
+        CHECK(schema_after == custom_schema && data_after == custom_data,
+              "%s borrowed strings changed after producer handles were freed", c->family);
+        CHECK(schema_after != NULL && strcmp(schema_after, c->custom_schema) == 0,
+              "%s schema did not outlive producer handles", c->family);
+        CHECK(data_after != NULL && strlen(data_after) > 0,
+              "%s data did not outlive producer handles", c->family);
+    }
+    audiocpp_result_free(result);
 }
 
 int main(int argc, char ** argv) {
@@ -453,6 +507,8 @@ int main(int argc, char ** argv) {
     audio_clip clip;
     audio_clip alt_clip;
     size_t i;
+
+    if (argc > 6 && strcmp(argv[6], "--log") == 0) audiocpp_log_set(model_log_callback, NULL);
 
     memset(&clip, 0, sizeof(clip));
     memset(&alt_clip, 0, sizeof(alt_clip));

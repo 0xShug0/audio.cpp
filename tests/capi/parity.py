@@ -24,6 +24,16 @@ SKIP = 77
 
 # family -> (relative model path, CLI args builder, comparison)
 CASES = {
+    "ced": {
+        "model": "CED-GGUF/ced-tiny-f32.gguf",
+        "task": "cls",
+        "kind": "custom_schema",
+    },
+    "ast_audioset": {
+        "model": "AST-AudioSet-GGUF/ast-audioset-f32.gguf",
+        "task": "cls",
+        "kind": "custom_schema",
+    },
     "citrinet_asr": {
         "model": "Citrinet-ASR-GGUF/citrinet-asr-q8_0.gguf",
         "task": "asr",
@@ -58,8 +68,11 @@ CASES = {
 }
 
 
-def run(cmd):
+def run(cmd, log=False):
     proc = subprocess.run(cmd, capture_output=True, text=True)
+    if log:
+        sys.stdout.write(proc.stdout)
+        sys.stderr.write(proc.stderr)
     if proc.returncode != 0:
         raise RuntimeError(f"{cmd[0]} failed ({proc.returncode}):\n{proc.stderr[-2000:]}")
     return proc.stdout
@@ -110,6 +123,7 @@ def main():
     # Separation dominates the wall time and scales with threads, and thread
     # count does not change results (verified bit-identical stems at 4 and 16).
     parser.add_argument("--threads", default=str(os.cpu_count() or 4))
+    parser.add_argument("--log", action="store_true", help="save child runtime logs in this test's output")
     args = parser.parse_args()
 
     # Resolved up front: this runs from the build directory under CTest, where
@@ -143,7 +157,7 @@ def main():
     # clip and thread count are passed explicitly so this matches what the C
     # test does when CTest runs it directly.
     capi = run([model_test, args.models_root, args.audio, args.backend,
-                args.alt_audio, args.threads])
+                args.alt_audio, args.threads] + (["--log"] if args.log else []), args.log)
     values = dict(re.findall(r"^parity:(\S+?)=(.*)$", capi, re.M))
 
     failures = []
@@ -154,14 +168,33 @@ def main():
             model = os.path.join(args.models_root, case["model"])
             base = [cli, "--task", case["task"], "--family", family, "--model", model,
                     "--backend", args.backend, "--threads", args.threads]
+            if args.log:
+                base.append("--log")
 
-            if case["kind"] == "text":
+            if case["kind"] == "custom_schema":
+                key = f"{family}:custom_schema"
+                if key not in values:
+                    print(f"{family:16} SKIP ({why_missing(family, capi)})")
+                    continue
+                output = run(base + ["--audio", args.audio], args.log)
+                match = re.search(r"^custom_schema_output=(.*)$", output, re.M)
+                if match is None:
+                    raise RuntimeError(f"{family}: CLI returned no custom schema output")
+                cli_value = json.loads(match.group(1))
+                api_value = {"schema": values[key],
+                             "data": json.loads(values[f"{family}:custom_data"])}
+                same = cli_value == api_value
+                print(f"{family:16} custom schema {'MATCH' if same else 'DIFFER'}")
+                if not same:
+                    failures.append(family)
+
+            elif case["kind"] == "text":
                 key = f"{family}:text"
                 if key not in values:
                     print(f"{family:16} SKIP ({why_missing(family, capi)})")
                     continue
                 out = os.path.join(tmp, f"{family}.txt")
-                run(base + ["--audio", args.audio, "--text-out", out])
+                run(base + ["--audio", args.audio, "--text-out", out], args.log)
                 with open(out) as handle:
                     cli_value = handle.read().strip()
                 api_value = values[key].strip()
@@ -183,7 +216,7 @@ def main():
                 # the comparison is meaningless. Verified: two unseeded CLI runs
                 # over the same input differ.
                 run(base + ["--language", case["language"], "--voice-id", case["voice_id"],
-                            "--seed", case["seed"], "--text", case["text"], "--out", out])
+                            "--seed", case["seed"], "--text", case["text"], "--out", out], args.log)
                 frames, rate, _channels, peak = wav_summary(out)
                 api_frames = int(values[f"{family}:audio_frames"])
                 api_rate = int(values[f"{family}:audio_rate"])
@@ -208,7 +241,7 @@ def main():
                     continue
                 out_dir = os.path.join(tmp, family)
                 os.makedirs(out_dir, exist_ok=True)
-                run(base + ["--audio", args.alt_audio, "--out-dir", out_dir])
+                run(base + ["--audio", args.alt_audio, "--out-dir", out_dir], args.log)
                 cli_stems = {}
                 for name in sorted(os.listdir(out_dir)):
                     if not name.lower().endswith(".wav"):
@@ -235,7 +268,7 @@ def main():
                     print(f"{family:16} SKIP ({why_missing(family, capi)})")
                     continue
                 out = os.path.join(tmp, f"{family}.json")
-                run(base + ["--audio", args.audio, "--turns-out", out])
+                run(base + ["--audio", args.audio, "--turns-out", out], args.log)
                 with open(out) as handle:
                     parsed = json.load(handle)
                 cli_turns = len(parsed if isinstance(parsed, list) else parsed.get("turns", []))
