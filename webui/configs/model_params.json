@@ -1,4 +1,10 @@
 {
+  "m5_tts": [
+    {"name": "temperature", "type": "number", "label": "Temperature", "info": "Audio-token sampling temperature.", "default": 0.9, "minimum": 0, "step": 0.1},
+    {"name": "top_k", "type": "number", "label": "Top k", "info": "Top-k audio-token sampling cutoff.", "default": 10, "minimum": 1, "step": 1},
+    {"name": "instruct", "type": "text", "label": "Instruction", "info": "Checkpoint caption conditioning."},
+    {"name": "attention", "type": "choice", "label": "Attention", "info": "Shared attention implementation.", "scope": "session", "session_option": "m5_tts.attention", "default": "auto", "choices": ["auto", "flash", "eager"]}
+  ],
   "zonos2": [
     {"name":"temperature","type":"number","label":"Temperature","info":"Sampling temperature; 0 decodes greedily.","default":1.15,"minimum":0,"step":0.1},
     {"name":"top_k","type":"number","label":"Top k","info":"Top-k candidates per codebook (ties at the threshold are kept).","default":106,"minimum":1,"step":1},
