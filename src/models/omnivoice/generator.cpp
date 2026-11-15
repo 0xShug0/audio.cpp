@@ -15,6 +15,7 @@
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/models/omnivoice/rknn_generator.h"
+#include "engine/models/omnivoice/rknn_zeroop_generator.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -22,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -1908,7 +1910,8 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
     bool packed_cfg,
     bool device_scoring,
     bool packed_projections,
-    std::vector<std::string> rknn_engine_paths)
+    std::vector<std::string> rknn_engine_paths,
+    bool rknn_zeroop)
     : impl_(std::make_unique<Impl>()) {
     if (assets == nullptr) {
         throw std::runtime_error("OmniVoice generator requires assets");
@@ -1936,6 +1939,78 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
             impl_->assets->config.llm.head_dim,
             impl_->assets->config.llm.rope_theta,
             impl_->assets->config.llm.hidden_size);
+    }
+    if (rknn_zeroop) {
+        // The trunk runs on the vendor zero-op rknn_matmul API (librknnrt
+        // only): weights are packed once into the native tiled layouts (disk
+        // cache under <model dir>/rknn-zeroop-cache, override with
+        // AUDIOCPP_RKNN_ZEROOP_CACHE) and the geometry is built at runtime,
+        // so this impl needs no artifacts.
+        const auto & w = impl_->runtime->weights();
+        const auto & cfg = impl_->assets->config;
+        OmniVoiceZeroopWeightViews views;
+        const int64_t dim = head_dim(cfg.llm);
+        views.layers.reserve(w.layers.size());
+        auto is_f16 = [](const core::TensorValue & t) {
+            if (t.tensor->type == GGML_TYPE_F16) return true;
+            if (t.tensor->type == GGML_TYPE_F32) return false;
+            throw std::runtime_error(
+                "omnivoice.exec_plan generator impl rknn_zeroop: the vendor engine converts "
+                "only F16/F32 weight stores, got " +
+                std::string(ggml_type_name(t.tensor->type)));
+        };
+        for (const auto & l : w.layers) {
+            OmniVoiceZeroopLayerView v;
+            v.packed = l.qkv_proj.valid();
+            v.qkv = v.packed ? l.qkv_proj.tensor->data : nullptr;
+            v.q = v.packed ? nullptr : l.q_proj.tensor->data;
+            v.k = v.packed ? nullptr : l.k_proj.tensor->data;
+            v.v = v.packed ? nullptr : l.v_proj.tensor->data;
+            v.o = l.o_proj.tensor->data;
+            v.gate_up = v.packed ? l.gate_up_proj.tensor->data : nullptr;
+            v.gate = v.packed ? nullptr : l.gate_proj.tensor->data;
+            v.up = v.packed ? nullptr : l.up_proj.tensor->data;
+            v.down = l.down_proj.tensor->data;
+            v.n_in = l.input_norm.tensor->data;
+            v.n_post = l.post_norm.tensor->data;
+            v.n_qn = l.q_norm.tensor->data;
+            v.n_kn = l.k_norm.tensor->data;
+            v.qkv_is_f16 = v.packed ? is_f16(l.qkv_proj) : is_f16(l.q_proj);
+            v.gu_is_f16 = v.packed ? is_f16(l.gate_up_proj) : is_f16(l.gate_proj);
+            v.o_is_f16 = is_f16(l.o_proj);
+            v.down_is_f16 = is_f16(l.down_proj);
+            v.norms_is_f16 = is_f16(l.input_norm) && is_f16(l.post_norm) && is_f16(l.q_norm) && is_f16(l.k_norm);
+            views.layers.push_back(v);
+        }
+        views.text_embedding = w.text_embedding.tensor->data;
+        views.text_embedding_rows = cfg.llm.vocab_size;
+        views.audio_embedding = w.audio_embedding.tensor->data;
+        views.audio_embedding_rows = cfg.num_audio_codebook * cfg.audio_vocab_size;
+        views.text_embedding_is_f16 = is_f16(w.text_embedding);
+        views.audio_embedding_is_f16 = is_f16(w.audio_embedding);
+        OmniVoiceZeroopModelDims dims;
+        dims.codebooks = cfg.num_audio_codebook;
+        dims.audio_vocab = cfg.audio_vocab_size;
+        dims.heads = cfg.llm.num_attention_heads;
+        dims.kv_heads = cfg.llm.num_key_value_heads;
+        dims.head_dim = dim;
+        dims.hidden = cfg.llm.hidden_size;
+        dims.intermediate = cfg.llm.intermediate_size;
+        dims.rope_theta = cfg.llm.rope_theta;
+        std::string sidecar_cache;
+        const char * cache_env = std::getenv("AUDIOCPP_RKNN_ZEROOP_CACHE");
+        if (cache_env != nullptr) {
+            sidecar_cache = cache_env;
+        } else {
+            sidecar_cache = (impl_->assets->resources.model_directory() / "rknn-zeroop-cache").string();
+        }
+#if defined(ENGINE_HAVE_RKNN)
+        impl_->rknn = std::make_unique<OmniVoiceRknnZeroopGenerator>(
+            views, dims, sidecar_cache, "omnivoice-zeroop-v1");
+#else
+        throw std::runtime_error(
+            "omnivoice.exec_plan generator impl rknn_zeroop: built without ENGINE_ENABLE_RKNN");
+#endif
     }
 }
 
@@ -2102,6 +2177,11 @@ std::vector<OmniVoiceGeneratedAudioTokens> OmniVoiceQwen3DiffusionRuntime::gener
     // audio heads, guidance combine) on this graph in fp32; the full ladder outputs guided
     // logits directly and needs no tail graph at all.
     const bool rknn_shard = use_rknn && impl_->rknn->front_shard();
+    if (rknn_shard) {
+        // New request boundary: stateless ladders ignore it, the zero-op generator
+        // (KV caches across steps) re-prefills on its next run().
+        impl_->rknn->reset();
+    }
     if (use_rknn && !rknn_shard) {
         impl_->last_stats.batch_capacity = static_cast<int64_t>(batch);
         impl_->last_stats.total_token_capacity = rknn_bucket;

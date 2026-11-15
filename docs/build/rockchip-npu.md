@@ -457,6 +457,30 @@ front engine renders the baseline text whisper-clean at 8.3-8.5 s/step on the NP
 Front-shard requests run at batch 1 (the packed CFG-pair engine pass writes the host's batch-1
 row layout); batched requests fall back to the ggml graph.
 
+### OmniVoice zero-op generator (rknn_zeroop)
+
+The same front-shard contract, with no compiled engine files at all:
+`omnivoice.exec_plan={"generator":{"impl":"rknn_zeroop"}}` runs the 28-layer backbone through the
+vendor `rknn_matmul_api` zero-op calls (the plain `librknnrt` runtime C API, no converter, no
+per-bucket `.rknn` artifacts, ENGINE_ENABLE_RKNN build only, aarch64-only - non-aarch64 builds
+compile the engine as a stub that fails at `open()`). One fp16 `rknn_matmul` context per
+(layer, shape) is created at geometry time, weights are packed once into the native tiled B
+layout (shared across buckets) and cached on disk under `<model dir>/rknn-zeroop-cache`
+(`AUDIOCPP_RKNN_ZEROOP_CACHE` to override); attention is assembled from vendor tiles per
+(batch, head): QK^T + a host fp32 stable softmax + PV over the full cache width, and the
+self-only step rows (the dLLM canvas mask) take an exact identity on V, zero NPU work. The
+vendor matmul is single-core (`core_mask` is accepted and ignored), so this path is a
+quality/cleanliness variant, not a speed variant of the compiled ladder.
+
+Measured on the board against the compiled front-shard ladder's own dumps: 28-layer
+step/prefill referee SNR 80.6-132.9 dB (the host fp32 softmax is the more precise side), the
+twin-geometry run decays smoothly against the compiled ground truth, and the render is
+whisper-clean Russian at `--guidance-scale 2.0`. Speed (medians over 32 steps; the first step of
+each run pays the geometry-context build): 25.8-26.2 s prefill + ~8.8 s/step at the seq896 twin
+geometry, and at deep shapes (seq1536 bucket) 50.1 s prefill + 22.9 s/step, i.e.
+compiled-ladder parity (23.2 s/step) with no artifact pipeline behind it. First run packs the
+weights (cached after; warm load ~1.1 s).
+
 ## Verified
 
 - Export stage: stepwise-vs-full-decode self-check 111.4 dB at B=64 and 103.7 dB at B=16,

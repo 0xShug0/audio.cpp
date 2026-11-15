@@ -279,7 +279,7 @@
       {
         "name": "exec_plan",
         "type": "string",
-        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn. GGML keeps the session backend. RKNN requires artifacts.main, a comma-separated ladder of diffusion-LM step-graph engines compiled one per total-token length (tools/rknn/prepare_omnivoice_rknn_generator.py), and ENGINE_ENABLE_RKNN; omit backend. A request longer than the largest engine runs the CPU graph. Neither implementation takes params.",
+        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn/rknn_zeroop. GGML keeps the session backend. RKNN requires artifacts.main, a comma-separated ladder of diffusion-LM step-graph engines compiled one per total-token length (tools/rknn/prepare_omnivoice_rknn_generator.py), and ENGINE_ENABLE_RKNN; omit backend. RKNN_ZEROOP runs the same trunk on the vendor rknn_matmul_api zero-op matmul calls, linking only librknnrt (ENGINE_ENABLE_RKNN), takes no artifacts, and caches packed weights under <model dir>/rknn-zeroop-cache (override with AUDIOCPP_RKNN_ZEROOP_CACHE). A request longer than the largest engine runs the CPU graph. None of the implementations takes params.",
         "required": false,
         "default": "{}"
       }
