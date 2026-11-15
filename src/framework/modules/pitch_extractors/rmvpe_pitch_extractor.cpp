@@ -2,6 +2,10 @@
 
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/prepared_graph.h"
+#ifdef ENGINE_HAS_CUDA_RMVPE
+#include "rmvpe_cuda_runtime.h"
+#endif
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
@@ -161,35 +165,20 @@ TensorValue batch_norm2d(
         require_tensor(weights, prefix + ".running_var"),
         TensorShape::from_dims({1, channels, 1, 1}));
     const auto input_cont = contiguous(ctx, input);
-    const auto weight_rep = engine::core::wrap_tensor(
-        ggml_repeat(ctx.ggml, weight.tensor, input_cont.tensor),
-        input.shape,
-        GGML_TYPE_F32);
-    const auto bias_rep = engine::core::wrap_tensor(
-        ggml_repeat(ctx.ggml, bias.tensor, input_cont.tensor),
-        input.shape,
-        GGML_TYPE_F32);
-    const auto mean_rep = engine::core::wrap_tensor(
-        ggml_repeat(ctx.ggml, mean.tensor, input_cont.tensor),
-        input.shape,
-        GGML_TYPE_F32);
     const auto denom = engine::core::wrap_tensor(
         ggml_sqrt(ctx.ggml, ggml_scale_bias(ctx.ggml, var.tensor, 1.0F, 1.0e-5F)),
         var.shape,
         GGML_TYPE_F32);
-    const auto denom_rep = engine::core::wrap_tensor(
-        ggml_repeat(ctx.ggml, denom.tensor, input_cont.tensor),
-        input.shape,
-        GGML_TYPE_F32);
     auto centered = engine::core::wrap_tensor(
-        ggml_sub(ctx.ggml, input_cont.tensor, mean_rep.tensor),
+        ggml_sub(ctx.ggml, input_cont.tensor, mean.tensor),
         input.shape,
         GGML_TYPE_F32);
     auto normalized = engine::core::wrap_tensor(
-        ggml_div(ctx.ggml, centered.tensor, denom_rep.tensor),
+        ggml_div(ctx.ggml, centered.tensor, denom.tensor),
         input.shape,
         GGML_TYPE_F32);
-    return engine::modules::AddModule{}.build(ctx, engine::modules::MulModule{}.build(ctx, normalized, weight_rep), bias_rep);
+    return engine::modules::AddModule{false, true}.build(
+        ctx, engine::modules::MulModule{true}.build(ctx, normalized, weight), bias);
 }
 
 TensorValue conv_bn_relu(
@@ -281,14 +270,16 @@ RmvpeGruOutputs build_gru_chunk_graph(
             ctx,
             hidden,
             linear_weights(weights, base + "weight_hh_l0" + suffix, base + "bias_hh_l0" + suffix, true));
-        const auto i_r = engine::modules::SliceModule({1, 0, kRmvpeHiddenDim}).build(ctx, xi);
-        const auto i_z = engine::modules::SliceModule({1, kRmvpeHiddenDim, kRmvpeHiddenDim}).build(ctx, xi);
+        // Reset and update share the same elementwise equation. Packing them
+        // preserves each addition/sigmoid while avoiding separate gate kernels.
+        const auto i_rz = engine::modules::SliceModule({1, 0, kRmvpeHiddenDim * 2}).build(ctx, xi);
+        const auto h_rz = engine::modules::SliceModule({1, 0, kRmvpeHiddenDim * 2}).build(ctx, hi);
+        const auto gates = engine::modules::SigmoidModule{}.build(
+            ctx, engine::modules::AddModule{}.build(ctx, i_rz, h_rz));
+        const auto reset = engine::modules::SliceModule({1, 0, kRmvpeHiddenDim}).build(ctx, gates);
+        const auto update = engine::modules::SliceModule({1, kRmvpeHiddenDim, kRmvpeHiddenDim}).build(ctx, gates);
         const auto i_n = engine::modules::SliceModule({1, kRmvpeHiddenDim * 2, kRmvpeHiddenDim}).build(ctx, xi);
-        const auto h_r = engine::modules::SliceModule({1, 0, kRmvpeHiddenDim}).build(ctx, hi);
-        const auto h_z = engine::modules::SliceModule({1, kRmvpeHiddenDim, kRmvpeHiddenDim}).build(ctx, hi);
         const auto h_n = engine::modules::SliceModule({1, kRmvpeHiddenDim * 2, kRmvpeHiddenDim}).build(ctx, hi);
-        const auto reset = engine::modules::SigmoidModule{}.build(ctx, engine::modules::AddModule{}.build(ctx, i_r, h_r));
-        const auto update = engine::modules::SigmoidModule{}.build(ctx, engine::modules::AddModule{}.build(ctx, i_z, h_z));
         const auto candidate = engine::modules::TanhModule{}.build(
             ctx,
             engine::modules::AddModule{}.build(ctx, i_n, engine::modules::MulModule{}.build(ctx, reset, h_n)));
@@ -297,21 +288,26 @@ RmvpeGruOutputs build_gru_chunk_graph(
             candidate,
             engine::modules::MulModule{}.build(ctx, update, sub(ctx, hidden, candidate)));
         const auto keep_t = engine::modules::SliceModule({0, t, 1}).build(ctx, keep);
-        const auto keep_rep = engine::core::wrap_tensor(
-            ggml_repeat(ctx.ggml, keep_t.tensor, hidden.tensor),
-            hidden.shape,
-            GGML_TYPE_F32);
+        // Broadcast the scalar mask instead of materializing a repeated row.
+        // Keep the original subtract/multiply/add order, including padded steps.
         hidden = engine::modules::AddModule{}.build(
             ctx,
             hidden,
-            engine::modules::MulModule{}.build(ctx, keep_rep, sub(ctx, updated, hidden)));
+            engine::modules::MulModule{true}.build(ctx, sub(ctx, updated, hidden), keep_t));
         steps[static_cast<size_t>(t)] = hidden;
     }
-    auto sequence = steps[0];
-    for (int64_t t = 1; t < frames; ++t) {
-        sequence = engine::modules::ConcatModule({0}).build(ctx, sequence, steps[static_cast<size_t>(t)]);
+    // A balanced concat tree copies each row log2(T) times instead of T times.
+    // Concatenation changes no arithmetic or chronological output ordering.
+    while (steps.size() > 1) {
+        size_t next = 0;
+        for (size_t i = 0; i < steps.size(); i += 2) {
+            steps[next++] = i + 1 < steps.size()
+                ? engine::modules::ConcatModule({0}).build(ctx, steps[i], steps[i + 1])
+                : steps[i];
+        }
+        steps.resize(next);
     }
-    return {sequence, hidden};
+    return {steps.front(), hidden};
 }
 
 TensorValue build_rmvpe_feature_graph(
@@ -380,7 +376,8 @@ TensorValue build_rmvpe_head_graph(
 
 std::vector<float> compute_rmvpe_log_mel(
     const std::vector<float> & waveform_16k,
-    size_t threads) {
+    size_t threads, const std::string & trace_prefix) {
+    const auto stft_start = std::chrono::steady_clock::now();
     constexpr int64_t kSampleRate = 16000;
     constexpr int64_t kNfft = 1024;
     constexpr int64_t kHop = 160;
@@ -400,6 +397,8 @@ std::vector<float> compute_rmvpe_log_mel(
         static_cast<int64_t>(waveform_16k.size()),
         stft_config,
         threads);
+    engine::debug::timing_log_scalar(trace_prefix + ".stft_ms", engine::debug::elapsed_ms(stft_start));
+    const auto mel_start = std::chrono::steady_clock::now();
     const int64_t freq_bins = magnitude.shape[1];
     const int64_t frames = magnitude.shape[2];
     static const RmvpeMelFilterbank mel_filter = [] {
@@ -470,6 +469,7 @@ std::vector<float> compute_rmvpe_log_mel(
             out[static_cast<size_t>(mel * frames + frame)] = std::log(std::max(sum, 1.0e-5F));
         }
     }
+    engine::debug::timing_log_scalar(trace_prefix + ".mel_projection_ms", engine::debug::elapsed_ms(mel_start));
     return out;
 }
 
@@ -490,8 +490,8 @@ std::vector<float> pad_rmvpe_mel_time_axis(
     return padded;
 }
 
-RmvpePreparedMel prepare_rmvpe_mel(const std::vector<float> & waveform_16k, size_t threads) {
-    auto mel = compute_rmvpe_log_mel(waveform_16k, threads);
+RmvpePreparedMel prepare_rmvpe_mel(const std::vector<float> & waveform_16k, size_t threads, const std::string & trace_prefix) {
+    auto mel = compute_rmvpe_log_mel(waveform_16k, threads, trace_prefix);
     const int64_t frames = static_cast<int64_t>(mel.size()) / kRmvpeMelBins;
     const int64_t padded_frames = 32 * ((frames - 1) / 32 + 1);
     return {pad_rmvpe_mel_time_axis(mel, frames, padded_frames), frames, padded_frames};
@@ -615,6 +615,32 @@ std::vector<float> decode_rmvpe_salience(
 
 }  // namespace
 
+#ifdef ENGINE_HAS_CUDA_RMVPE
+namespace {
+class NativeTransposeExecutor final : public engine::core::GraphRegionExecutor {
+public:
+    void prepare(ggml_backend_t backend, ggml_cgraph * region) override {
+        if (ggml_graph_n_nodes(region) != 1 || ggml_graph_node(region, 0)->op != GGML_OP_CONV_TRANSPOSE_2D)
+            throw std::runtime_error("RMVPE native transpose region must contain one transpose convolution");
+        backend_ = backend;
+        output_ = ggml_graph_node(region, 0);
+    }
+    ggml_status compute() override {
+        detail::rmvpe_cuda_conv_transpose(backend_, output_);
+        return GGML_STATUS_SUCCESS;
+    }
+    void reset() noexcept override {
+        if (backend_) ggml_backend_synchronize(backend_);
+        backend_ = nullptr;
+        output_ = nullptr;
+    }
+private:
+    ggml_backend_t backend_ = nullptr;
+    ggml_tensor * output_ = nullptr;
+};
+}
+#endif
+
 struct RmvpePitchExtractorComponent::State {
     ~State() {
         release_feature_graph();
@@ -624,6 +650,9 @@ struct RmvpePitchExtractorComponent::State {
     }
 
     struct FeatureGraph {
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        std::unique_ptr<engine::core::PreparedGraph> native;
+#endif
         ggml_context * ctx = nullptr;
         ggml_gallocr_t gallocr = nullptr;
         ggml_cgraph * graph = nullptr;
@@ -633,6 +662,10 @@ struct RmvpePitchExtractorComponent::State {
     };
 
     struct GruGraph {
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        std::unique_ptr<engine::core::PreparedGraph> native_projection;
+        std::unique_ptr<detail::RmvpeCudaGru> native;
+#endif
         ggml_context * ctx = nullptr;
         ggml_gallocr_t gallocr = nullptr;
         ggml_cgraph * graph = nullptr;
@@ -653,6 +686,9 @@ struct RmvpePitchExtractorComponent::State {
     };
 
     static void release_feature_graph(FeatureGraph & graph) {
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        graph.native.reset();
+#endif
         if (graph.gallocr != nullptr) {
             ggml_gallocr_free(graph.gallocr);
             graph.gallocr = nullptr;
@@ -668,6 +704,10 @@ struct RmvpePitchExtractorComponent::State {
     }
 
     static void release_gru_graph(GruGraph & graph) {
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        graph.native.reset();
+        graph.native_projection.reset();
+#endif
         if (graph.gallocr != nullptr) {
             ggml_gallocr_free(graph.gallocr);
             graph.gallocr = nullptr;
@@ -719,6 +759,38 @@ struct RmvpePitchExtractorComponent::State {
         if (frames <= 0 || frames % 32 != 0) {
             throw std::runtime_error("RMVPE feature graph requires positive 32-aligned frame count");
         }
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        if (config.cuda_native) {
+            if (feature.native && feature.frames == frames) return;
+            release_feature_graph();
+            auto owner = std::make_unique<engine::core::PreparedGraph>(*weights.execution_context,
+                engine::core::PreparedGraphConfig{config.trace_prefix + ".native_feature", 16ull<<20, 16384});
+            auto & ctx = owner->build_context();
+            auto input = engine::core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1,kRmvpeMelBins,frames}));
+            ggml_set_input(input.tensor);
+            auto output = build_rmvpe_feature_graph(ctx, input, weights);
+            ggml_set_output(output.tensor);
+            ggml_build_forward_expand(owner->graph(), output.tensor);
+            for (int i=0;i<ggml_graph_n_nodes(owner->graph());++i) {
+                auto * node=ggml_graph_node(owner->graph(),i);
+                if (node->op==GGML_OP_CONV_TRANSPOSE_2D)
+                    owner->replace_region(0, {{node},{node},{}}, std::make_unique<NativeTransposeExecutor>());
+                if (node->op == GGML_OP_IM2COL && node->type == GGML_TYPE_F32 &&
+                    node->src[0]->ne[0] == 3 && node->src[0]->ne[1] == 3) {
+                    if (node->src[1]->ne[2] >= 32 && node->ne[1] >= 32)
+                        ggml_im2col_2d_set_lowering(node, GGML_IM2COL_2D_LOWERING_CUDA_F32_K3_TILED);
+                    else if (node->op_params[0] == 1 && node->op_params[1] == 1 &&
+                        node->op_params[2] == 1 && node->op_params[3] == 1 &&
+                        node->op_params[4] == 1 && node->op_params[5] == 1)
+                        ggml_im2col_2d_set_lowering(node, GGML_IM2COL_2D_LOWERING_CUDA_N_K3_PAD1_X8);
+                }
+            }
+            owner->allocate();
+            feature.input=input; feature.output=output.tensor; feature.frames=frames;
+            feature.graph=owner->graph(); feature.native=std::move(owner);
+            return;
+        }
+#endif
         if (feature.ctx != nullptr && feature.frames == frames) {
             return;
         }
@@ -757,6 +829,44 @@ struct RmvpePitchExtractorComponent::State {
     }
 
     void ensure_gru_graph(const RmvpePitchExtractorWeights & weights, GruGraph & target, const std::string & suffix, bool reverse_graph) {
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        if (config.cuda_native) {
+            if (target.native) return;
+            auto owner = std::make_unique<engine::core::PreparedGraph>(*weights.execution_context,
+                engine::core::PreparedGraphConfig{config.trace_prefix + (reverse_graph ? ".native_reverse" : ".native_forward"),
+                    2ull << 20, 128, 1ull << 20});
+            auto & build = owner->build_context();
+            auto & persistent = owner->persistent_build_context();
+            auto input = engine::core::make_tensor(build, GGML_TYPE_F32,
+                TensorShape::from_dims({kRmvpeGruChunkFrames, kRmvpeFeatureDim}));
+            ggml_set_input(input.tensor);
+            const std::string base = "fc.0.gru.";
+            auto projected = engine::modules::LinearModule({kRmvpeFeatureDim, kRmvpeHiddenDim*3, true}).build(
+                build, input, linear_weights(weights, base + "weight_ih_l0" + suffix,
+                    base + "bias_ih_l0" + suffix, true));
+            ggml_set_output(projected.tensor);
+            ggml_build_forward_expand(owner->graph(), projected.tensor);
+            auto keep = engine::core::make_tensor(persistent, GGML_TYPE_F32,
+                TensorShape::from_dims({kRmvpeGruChunkFrames, 1}));
+            auto hidden = engine::core::make_tensor(persistent, GGML_TYPE_F32,
+                TensorShape::from_dims({1, kRmvpeHiddenDim}));
+            auto sequence = engine::core::make_tensor(persistent, GGML_TYPE_F32,
+                TensorShape::from_dims({kRmvpeGruChunkFrames, kRmvpeHiddenDim}));
+            owner->allocate_persistent();
+            owner->allocate();
+            auto native = std::make_unique<detail::RmvpeCudaGru>(weights.execution_context->backend(),
+                weights.execution_context->config().device, kRmvpeGruChunkFrames, kRmvpeHiddenDim,
+                reverse_graph, projected.tensor,
+                require_tensor(weights, base + "weight_hh_l0" + suffix).tensor,
+                require_tensor(weights, base + "bias_hh_l0" + suffix).tensor,
+                hidden.tensor, keep.tensor, sequence.tensor);
+            target.input = input; target.keep = keep; target.hidden = hidden;
+            target.sequence = sequence.tensor; target.final_hidden = hidden.tensor;
+            target.native = std::move(native);
+            target.native_projection = std::move(owner);
+            return;
+        }
+#endif
         if (target.ctx != nullptr) {
             return;
         }
@@ -812,6 +922,26 @@ struct RmvpePitchExtractorComponent::State {
         }
     }
 
+    void compute_feature() {
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        if (feature.native) { feature.native->compute(); return; }
+#endif
+        if (engine::core::compute_backend_graph(weights.execution_context->backend(), feature.graph) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("ggml_backend_graph_compute failed for RMVPE feature graph");
+    }
+
+    void compute_gru(GruGraph & graph) {
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        if (graph.native) {
+            graph.native_projection->compute();
+            graph.native->compute();
+            return;
+        }
+#endif
+        if (engine::core::compute_backend_graph(weights.execution_context->backend(), graph.graph) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("ggml_backend_graph_compute failed for RMVPE GRU graph");
+    }
+
     void ensure_head_graph(const RmvpePitchExtractorWeights & weights) {
         if (head.ctx != nullptr) {
             return;
@@ -857,6 +987,9 @@ struct RmvpePitchExtractorComponent::State {
         ensure_feature_graph(weights, feature_frames);
         ensure_gru_graph(weights, forward, "", false);
         ensure_gru_graph(weights, reverse, "_reverse", true);
+#ifdef ENGINE_HAS_CUDA_RMVPE
+        if (forward.native) forward.native->prepare_pair(*reverse.native);
+#endif
         ensure_head_graph(weights);
     }
 
@@ -875,6 +1008,14 @@ RmvpePitchExtractorComponent::RmvpePitchExtractorComponent(
     engine::assets::TensorStorageType storage_type,
     RmvpePitchExtractorConfig config)
     : state_(std::make_shared<State>()) {
+    if (config.cuda_native) {
+#ifndef ENGINE_HAS_CUDA_RMVPE
+        throw std::runtime_error("Native CUDA RMVPE recurrence was not compiled");
+#else
+        if (backend.type != engine::core::BackendType::Cuda)
+            throw std::runtime_error("Native CUDA RMVPE recurrence requires the CUDA backend");
+#endif
+    }
     state_->config = std::move(config);
     state_->weights = load_rmvpe_weights(std::move(source), std::move(backend), storage_type, state_->config);
 }
@@ -891,7 +1032,7 @@ std::vector<float> RmvpePitchExtractorComponent::infer_16k_mono(
         throw std::runtime_error("RMVPE is not initialized");
     }
     auto timing_start = std::chrono::steady_clock::now();
-    const auto mel = prepare_rmvpe_mel(waveform_16k, threads);
+    const auto mel = prepare_rmvpe_mel(waveform_16k, threads, state_->config.trace_prefix);
     auto timing_end = std::chrono::steady_clock::now();
     engine::debug::timing_log_scalar(
         state_->config.trace_prefix + ".mel_ms",
@@ -931,30 +1072,60 @@ std::vector<float> RmvpePitchExtractorComponent::infer_16k_mono(
             context_frames,
             feature_window);
         engine::core::write_tensor_f32(state_->feature.input, feature_window);
-        if (engine::core::compute_backend_graph(backend, state_->feature.graph) != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("ggml_backend_graph_compute failed for RMVPE feature graph");
-        }
+        state_->compute_feature();
         const auto feature_output = engine::core::read_tensor_f32(state_->feature.output);
         copy_feature_rows(feature_output, active_offset, active_frames, features, active_start);
     }
+
+    const auto feature_end = std::chrono::steady_clock::now();
+    engine::debug::timing_log_scalar(state_->config.trace_prefix + ".feature_ms",
+        engine::debug::elapsed_ms(timing_start, feature_end));
 
     std::vector<float> feature_chunk;
     std::vector<float> keep;
     std::vector<float> hidden(static_cast<size_t>(kRmvpeHiddenDim), 0.0F);
     std::vector<float> forward_states(static_cast<size_t>(mel.padded_frames * kRmvpeHiddenDim), 0.0F);
+    std::vector<float> reverse_states;
+#ifdef ENGINE_HAS_CUDA_RMVPE
+    if (state_->forward.native) {
+        reverse_states.resize(forward_states.size());
+        engine::core::write_tensor_f32(state_->forward.hidden, hidden);
+        engine::core::write_tensor_f32(state_->reverse.hidden, hidden);
+        for (int64_t start=0, end=mel.padded_frames; start<mel.padded_frames; start+=kRmvpeGruChunkFrames) {
+            const auto count=std::min<int64_t>(kRmvpeGruChunkFrames, mel.padded_frames-start);
+            const auto reverse_start=std::max<int64_t>(0,end-kRmvpeGruChunkFrames);
+            fill_gru_chunk(features,start,count,feature_chunk,keep);
+            engine::core::write_tensor_f32(state_->forward.input,feature_chunk);
+            engine::core::write_tensor_f32(state_->forward.keep,keep);
+            fill_gru_chunk(features,reverse_start,end-reverse_start,feature_chunk,keep);
+            engine::core::write_tensor_f32(state_->reverse.input,feature_chunk);
+            engine::core::write_tensor_f32(state_->reverse.keep,keep);
+            state_->forward.native_projection->compute();
+            state_->reverse.native_projection->compute();
+            state_->forward.native->compute_pair();
+            const auto forward_sequence=engine::core::read_tensor_f32(state_->forward.sequence);
+            const auto reverse_sequence=engine::core::read_tensor_f32(state_->reverse.sequence);
+            copy_hidden_rows(forward_sequence,0,count,forward_states,start);
+            copy_hidden_rows(reverse_sequence,0,end-reverse_start,reverse_states,reverse_start);
+            end=reverse_start;
+        }
+    } else
+#endif
     for (int64_t start = 0; start < mel.padded_frames; start += kRmvpeGruChunkFrames) {
         const int64_t chunk_frames = std::min<int64_t>(kRmvpeGruChunkFrames, mel.padded_frames - start);
         fill_gru_chunk(features, start, chunk_frames, feature_chunk, keep);
         engine::core::write_tensor_f32(state_->forward.input, feature_chunk);
         engine::core::write_tensor_f32(state_->forward.keep, keep);
         engine::core::write_tensor_f32(state_->forward.hidden, hidden);
-        if (engine::core::compute_backend_graph(backend, state_->forward.graph) != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("ggml_backend_graph_compute failed for RMVPE forward GRU graph");
-        }
+        state_->compute_gru(state_->forward);
         const auto sequence = engine::core::read_tensor_f32(state_->forward.sequence);
         copy_hidden_rows(sequence, 0, chunk_frames, forward_states, start);
         hidden = engine::core::read_tensor_f32(state_->forward.final_hidden);
     }
+
+    const auto forward_end = std::chrono::steady_clock::now();
+    engine::debug::timing_log_scalar(state_->config.trace_prefix + ".forward_ms",
+        engine::debug::elapsed_ms(feature_end, forward_end));
 
     std::vector<float> salience(static_cast<size_t>(mel.frames * kRmvpeClasses), 0.0F);
     std::vector<float> reverse_hidden(static_cast<size_t>(kRmvpeHiddenDim), 0.0F);
@@ -962,15 +1133,18 @@ std::vector<float> RmvpePitchExtractorComponent::infer_16k_mono(
     for (int64_t end = mel.padded_frames; end > 0;) {
         const int64_t start = std::max<int64_t>(0, end - kRmvpeGruChunkFrames);
         const int64_t chunk_frames = end - start;
+        std::vector<float> reverse_sequence;
+        if (!reverse_states.empty()) {
+            copy_hidden_rows_to_chunk(reverse_states,start,chunk_frames,reverse_sequence);
+        } else {
         fill_gru_chunk(features, start, chunk_frames, feature_chunk, keep);
         engine::core::write_tensor_f32(state_->reverse.input, feature_chunk);
         engine::core::write_tensor_f32(state_->reverse.keep, keep);
         engine::core::write_tensor_f32(state_->reverse.hidden, reverse_hidden);
-        if (engine::core::compute_backend_graph(backend, state_->reverse.graph) != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("ggml_backend_graph_compute failed for RMVPE reverse GRU graph");
-        }
-        const auto reverse_sequence = engine::core::read_tensor_f32(state_->reverse.sequence);
+        state_->compute_gru(state_->reverse);
+        reverse_sequence = engine::core::read_tensor_f32(state_->reverse.sequence);
         reverse_hidden = engine::core::read_tensor_f32(state_->reverse.final_hidden);
+        }
         const int64_t salience_rows =
             start < mel.frames ? std::min<int64_t>(chunk_frames, mel.frames - start) : 0;
         if (salience_rows > 0) {
@@ -991,6 +1165,8 @@ std::vector<float> RmvpePitchExtractorComponent::infer_16k_mono(
         end = start;
     }
     timing_end = std::chrono::steady_clock::now();
+    engine::debug::timing_log_scalar(state_->config.trace_prefix + ".reverse_head_ms",
+        engine::debug::elapsed_ms(forward_end, timing_end));
     engine::debug::timing_log_scalar(
         state_->config.trace_prefix + ".compute_ms",
         engine::debug::elapsed_ms(timing_start, timing_end));

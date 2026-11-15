@@ -13,6 +13,8 @@ namespace engine::modules {
 struct RmvpePitchExtractorConfig {
     std::string trace_prefix = "framework.rmvpe";
     size_t weight_context_bytes = 256ull * 1024ull * 1024ull;
+    // Optional CUDA implementation; other callers retain the GGML graphs.
+    bool cuda_native = false;
 };
 
 class RmvpePitchExtractorComponent {
