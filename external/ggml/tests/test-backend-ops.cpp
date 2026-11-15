@@ -49,6 +49,9 @@
 #   define N_THREADS std::thread::hardware_concurrency()
 #endif
 
+// Optional bounded, prewarmed operator graphs for latency comparisons.
+static int perf_max_runs = 0;
+
 static void init_tensor_uniform(ggml_tensor * tensor, float min = -1.0f, float max = 1.0f) {
     size_t nels = ggml_nelements(tensor);
     std::vector<float> data(nels);
@@ -1540,6 +1543,8 @@ struct test_case {
             n_runs = (int)std::min<int64_t>(ggml_graph_size(gf) - ggml_graph_n_nodes(gf), target_size / op_size(out)) + 1;
         }
 
+        if (perf_max_runs > 0) n_runs = std::min(n_runs, perf_max_runs);
+
         // duplicate the op
         for (int i = 1; i < n_runs; i++) {
             ggml_graph_add_node(gf, out);
@@ -1562,6 +1567,15 @@ struct test_case {
                 continue;
             }
             mem += tensor_op_size(ggml_graph_node(gf, i));
+        }
+
+        if (perf_max_runs > 0) {
+            // Warm the graph actually timed, including capture/JIT preparation.
+            status = ggml_backend_graph_compute(backend, gf);
+            if (status != GGML_STATUS_SUCCESS) {
+                fprintf(stderr, "%s: prepared graph warmup failed: %s\n", __func__, ggml_status_to_string(status));
+                return false;
+            }
         }
 
         // run
@@ -10107,6 +10121,7 @@ static void usage(char ** argv) {
     printf("    op names for -o are as given by ggml_op_desc() (e.g. ADD, MUL_MAT, etc),\n");
     printf("        optionally including the full test case string (e.g. \"ADD(type=f16,ne=[1,1,8,1],nr=[1,1,1,1],nf=1)\")\n");
     printf("    --output specifies output format (default: console, options: console, sql, csv)\n");
+    printf("    --perf-max-runs caps duplicated operators and prewarms the final timing graph\n");
     printf("    --backend-impl selects an optional backend implementation\n");
     printf("    --suite gfx1151_v1 selects focused matmul and IM2COL1D correctness/performance cases\n");
     printf("    --list-ops lists all available GGML operations\n");
@@ -10154,6 +10169,15 @@ int main(int argc, char ** argv) {
                 usage(argv);
                 return 1;
             }
+        } else if (strcmp(argv[i], "--perf-max-runs") == 0) {
+            if (i + 1 >= argc) return 1;
+            char * end = nullptr;
+            const long count = std::strtol(argv[++i], &end, 10);
+            if (*end != '\0' || count < 1 || count > 8192) {
+                fprintf(stderr, "--perf-max-runs requires an integer from 1 to 8192\n");
+                return 1;
+            }
+            perf_max_runs = static_cast<int>(count);
         } else if (strcmp(argv[i], "--backend-impl") == 0) {
             if (i + 1 >= argc) return 1;
             impl = argv[++i];
