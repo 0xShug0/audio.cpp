@@ -12,7 +12,6 @@
 
 namespace engine::modules {
 namespace {
-constexpr int kMel = 100, kFFT = 1024, kHop = 256;
 struct Graph {
     ggml_backend_t backend = nullptr;
     ggml_context * ctx = nullptr;
@@ -46,6 +45,7 @@ core::TensorValue build_vocos_backbone(core::ModuleBuildContext & ctx,
 }
 class VocosVocoder::Impl {
 public:
+    VocosVocoderConfig config;
     ggml_backend_t backend;
     int threads;
     core::BackendType type;
@@ -58,9 +58,20 @@ public:
         : backend(b), threads(n > 0 ? n : 1), type(core::backend_type(b)),
           store(b, type, "vocos", 8ULL << 20) {
         auto source = assets::open_tensor_source(checkpoint);
-        if (std::filesystem::path(checkpoint).extension() == ".gguf") {
+        if (std::filesystem::path(checkpoint).extension() == ".gguf")
             source = assets::make_prefixed_tensor_source(source, "vocos");
-        }
+        initialize(source);
+    }
+
+    Impl(std::shared_ptr<const assets::TensorSource> source, ggml_backend_t b, int n, VocosVocoderConfig c)
+        : config(c), backend(b), threads(n > 0 ? n : 1), type(core::backend_type(b)),
+          store(b, type, "vocos", 8ULL << 20) {
+        if (config.mel_bins <= 0 || config.n_fft <= 0 || config.hop_length <= 0 || config.hop_length > config.n_fft)
+            throw std::invalid_argument("Invalid Vocos audio geometry");
+        initialize(source);
+    }
+
+    void initialize(const std::shared_ptr<const assets::TensorSource> & source) {
         const auto f32 = [&](const std::string & name) {
             return store.load_f32_tensor(*source, name, source->require_metadata(name).shape);
         };
@@ -86,8 +97,8 @@ public:
         if (weights.blocks.empty()) throw std::runtime_error("Vocos has no ConvNeXt blocks");
         store.upload();
         source->release_storage();
-        window.resize(kFFT);
-        for (int i = 0; i < kFFT; ++i) window[i] = 0.5f * (1 - std::cos(2.0f * 3.14159265358979323846f * i / kFFT));
+        window.resize(config.n_fft);
+        for (int i = 0; i < config.n_fft; ++i) window[i] = 0.5f * (1 - std::cos(2.0f * 3.14159265358979323846f * i / config.n_fft));
     }
 
     std::unique_ptr<Graph> build(int64_t frames) {
@@ -97,7 +108,7 @@ public:
         g->inputs = ggml_init({1ULL << 20, nullptr, true});
         if (!g->ctx || !g->inputs) throw std::runtime_error("Vocos context allocation failed");
         core::ModuleBuildContext ctx{g->ctx, "vocos", type}, io{g->inputs, "vocos.input", type};
-        auto mel = core::make_tensor(io, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames, kMel}));
+        auto mel = core::make_tensor(io, GGML_TYPE_F32, core::TensorShape::from_dims({1, frames, config.mel_bins}));
         g->mel = mel.tensor;
         ggml_set_input(g->mel);
         auto x = build_vocos_backbone(ctx, mel, weights);
@@ -116,12 +127,12 @@ public:
         if (!g->buffer || !g->arena || !ggml_gallocr_alloc_graph(g->arena, g->graph))
             throw std::runtime_error("Vocos graph allocation failed");
         g->istft = std::make_unique<audio::HostLogMagnitudePhaseISTFT>(
-            audio::HostLogMagnitudePhaseISTFTConfig{frames, kFFT, kHop, kFFT + 2, size_t(threads)});
+            audio::HostLogMagnitudePhaseISTFTConfig{frames, config.n_fft, config.hop_length, config.n_fft + 2, size_t(threads)});
         return g;
     }
     std::vector<float> decode(const std::vector<float> & mel) {
-        if (mel.size() < 2 * kMel || mel.size() % kMel) throw std::invalid_argument("Vocos needs complete 100-bin mel frames");
-        const int64_t frames = mel.size() / kMel;
+        if (mel.size() < static_cast<size_t>(2 * config.mel_bins) || mel.size() % config.mel_bins) throw std::invalid_argument("Vocos needs complete " + std::to_string(config.mel_bins) + "-bin mel frames");
+        const int64_t frames = mel.size() / config.mel_bins;
         if (!graphs.find(frames)) {
             // Release the previous arena before allocating the next shape.
             graphs.clear();
@@ -136,11 +147,16 @@ public:
         auto audio = g.istft->compute(spec, window).audio;
         // Framework ISTFT uses same padding (T*hop). Vocos uses center=True:
         // trim a further half hop at each end to obtain (T-1)*hop samples.
-        return {audio.begin() + kHop / 2, audio.end() - kHop / 2};
+        if (config.center_padding)
+            return {audio.begin() + config.hop_length / 2, audio.end() - config.hop_length / 2};
+        return audio;
     }
 };
 VocosVocoder::VocosVocoder(const std::string & path, ggml_backend_t backend, int threads)
     : impl_(std::make_unique<Impl>(path, backend, threads)) {}
+VocosVocoder::VocosVocoder(std::shared_ptr<const assets::TensorSource> source, ggml_backend_t backend,
+    int threads, VocosVocoderConfig config)
+    : impl_(std::make_unique<Impl>(std::move(source), backend, threads, config)) {}
 VocosVocoder::~VocosVocoder() = default;
 std::vector<float> VocosVocoder::decode(const std::vector<float> & mel) { return impl_->decode(mel); }
 size_t VocosVocoder::cached_graph_count() const { return impl_->graphs.size(); }

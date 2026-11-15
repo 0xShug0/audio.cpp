@@ -5,6 +5,7 @@
 #include "engine/framework/modules/primitive_modules.h"
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -125,6 +126,30 @@ core::TensorValue FlowSamplerCfgGraphModule::build(core::ModuleBuildContext & ct
     auto difference = core::wrap_tensor(ggml_sub(ctx.ggml, positive.tensor, negative.tensor),
         positive.shape, GGML_TYPE_F32);
     return AddModule().build(ctx, negative, MulModule(true).build(ctx, difference, guidance));
+}
+
+FlowSamplerRescaledCfgGraphModule::FlowSamplerRescaledCfgGraphModule(float rescale) : rescale_(rescale) {
+    if (!std::isfinite(rescale) || rescale < 0 || rescale > 1)
+        throw std::invalid_argument("CFG rescale must be in [0,1]");
+}
+
+core::TensorValue FlowSamplerRescaledCfgGraphModule::build(core::ModuleBuildContext & ctx,
+    const core::TensorValue & positive, const core::TensorValue & negative,
+    const core::TensorValue & guidance) const {
+    core::validate_rank_between(positive, 3, 3, "rescaled CFG prediction");
+    auto guided = FlowSamplerCfgGraphModule().build(ctx, positive, negative, guidance);
+    const auto deviation = [&](const core::TensorValue & value) {
+        const auto flat = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, value),
+            core::TensorShape::from_dims({value.shape.dims[0], value.shape.num_elements() / value.shape.dims[0]}));
+        const auto mean = ReduceMeanModule({1}).build(ctx, flat);
+        const auto centered = AddModule(false, true).build(ctx, flat, ScaleBiasModule({-1, 0}).build(ctx, mean));
+        return SqrtModule().build(ctx, ReduceMeanModule({1}).build(ctx, MulModule().build(ctx, centered, centered)));
+    };
+    const auto a = deviation(positive), b = deviation(guided);
+    const auto ratio = core::wrap_tensor(ggml_div(ctx.ggml, a.tensor, b.tensor), a.shape);
+    const auto factor = core::reshape_tensor(ctx, ScaleBiasModule({rescale_, 1 - rescale_}).build(ctx, ratio),
+        core::TensorShape::from_dims({positive.shape.dims[0], 1, 1}));
+    return MulModule(true).build(ctx, guided, factor);
 }
 
 FlowSamplerApgGraphModule::FlowSamplerApgGraphModule(std::vector<int> axes) : axes_(std::move(axes)) {

@@ -238,6 +238,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **moss_soundeffect** | SFX | en, zh | [MOSS-SoundEffect v2](docs/models/moss_soundeffect.md) | GGUF BF16/Q8 |
 | **mulacover** | Music | multilingual | [MuLaCover](docs/models/mulacover.md) | GGUF 16/Q8 |
 | **soulx_flashhead** | Audio-to-video | lang agnostic | [SoulX-FlashHead Lite](docs/models/soulx_flashhead.md) | GGUF Q8/BF16, Stream |
+| **soulx_singer** | Singing synthesis / voice conversion | zh, en, yue; SVC lang agnostic | [SoulX-Singer SVS/SVC](docs/models/soulx_singer.md) | GGUF F16/Q8 |
 | **stable_audio** | Music, SFX, Edit | en | [Stable Audio 3 Small Music](docs/models/stable_audio.md)<br>Stable Audio 3 Small SFX<br>Stable Audio 3 Medium | GGUF 16/Q8 |
 | **vevo2** | TTS, Music, VC, Edit | en, zh | [Vevo2](docs/models/vevo2.md) | GGUF 16 |
 | **yue2** | Music | en | [YuE2-3B](docs/models/yue2.md) | GGUF BF16/Q8/Q4, LoRA |

@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/framework/core/backend.h"
+#include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/modules/convnext_modules.h"
 #include <memory>
 #include <string>
@@ -16,12 +17,19 @@ struct VocosBackboneWeights {
 core::TensorValue build_vocos_backbone(core::ModuleBuildContext & ctx,
     const core::TensorValue & mel, const VocosBackboneWeights & weights);
 
+struct VocosVocoderConfig {
+    int64_t mel_bins = 100, n_fft = 1024, hop_length = 256;
+    bool center_padding = true;
+};
+
 // Generalized F5/Vocos mel-24khz graph: Conv1d, ConvNeXt, LN, spectral head.
 // Owns backend weights and one runtime graph/ISTFT workspace. The backend is
 // borrowed and must outlive this object. Callers serialize decode calls.
 class VocosVocoder {
 public:
     VocosVocoder(const std::string & checkpoint, ggml_backend_t backend, int threads);
+    VocosVocoder(std::shared_ptr<const assets::TensorSource> source, ggml_backend_t backend,
+        int threads, VocosVocoderConfig config);
     ~VocosVocoder();
     VocosVocoder(const VocosVocoder &) = delete;
     VocosVocoder & operator=(const VocosVocoder &) = delete;

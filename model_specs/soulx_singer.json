@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "family": "soulx_singer",
+  "display_name": "SoulX-Singer",
+  "description": "Reference-conditioned singing synthesis and singing voice conversion.",
+  "category": "audio_generation",
+  "status": "supported",
+  "tasks": [
+    "music",
+    "svc"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "zh",
+    "en",
+    "yue"
+  ],
+  "capabilities": {
+    "music": [
+      "lyrics"
+    ],
+    "svc": [
+      "speaker_reference"
+    ]
+  },
+  "packages": [
+    {
+      "id": "soulx_singer_svs_q8_0",
+      "display_name": "SoulX-Singer SVS Q8_0",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "SoulX-Singer-GGUF",
+      "files": [
+        "SoulX-Singer-GGUF/soulx-singer-q8_0.gguf"
+      ],
+      "strip_prefix": "SoulX-Singer-GGUF"
+    },
+    {
+      "id": "soulx_singer_svs_f16",
+      "display_name": "SoulX-Singer SVS F16",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "SoulX-Singer-GGUF",
+      "files": [
+        "SoulX-Singer-GGUF/soulx-singer-f16.gguf"
+      ],
+      "strip_prefix": "SoulX-Singer-GGUF"
+    },
+    {
+      "id": "soulx_singer_svc_q8_0",
+      "display_name": "SoulX-Singer SVC Q8_0",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "SoulX-Singer-SVC-GGUF",
+      "files": [
+        "SoulX-Singer-SVC-GGUF/soulx-singer-svc-q8_0.gguf"
+      ],
+      "strip_prefix": "SoulX-Singer-SVC-GGUF"
+    },
+    {
+      "id": "soulx_singer_svc_f16",
+      "display_name": "SoulX-Singer SVC F16",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "SoulX-Singer-SVC-GGUF",
+      "files": [
+        "SoulX-Singer-SVC-GGUF/soulx-singer-svc-f16.gguf"
+      ],
+      "strip_prefix": "SoulX-Singer-SVC-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "Music"
+    ],
+    "docs": [
+      "docs/models/soulx_singer.md"
+    ],
+    "recommended_package": "soulx_singer_svs_q8_0"
+  },
+  "options": {
+    "request": [
+      {
+        "name": "num_steps",
+        "type": "int",
+        "default": 32,
+        "min": 1,
+        "required": false,
+        "description": "Number of flow-matching Euler steps."
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "default": 3,
+        "min": 0,
+        "required": false,
+        "description": "Classifier-free guidance strength; zero disables guidance."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "default": 2026,
+        "min": -1,
+        "required": false,
+        "description": "Sampling seed; -1 selects a random seed."
+      },
+      {
+        "name": "pitch_shift",
+        "type": "int",
+        "default": 0,
+        "min": -24,
+        "max": 24,
+        "required": false,
+        "description": "Pitch shift in semitones."
+      },
+      {
+        "name": "auto_pitch_shift",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "description": "Match source median pitch to reference when pitch_shift is zero."
+      },
+      {
+        "name": "reference_metadata_file",
+        "type": "path",
+        "required": false,
+        "description": "Upstream JSON metadata describing the reference singing. Required for SVS."
+      },
+      {
+        "name": "target_metadata_file",
+        "type": "path",
+        "required": false,
+        "description": "Upstream JSON metadata describing target singing segments. Required for SVS."
+      },
+      {
+        "name": "control",
+        "type": "enum",
+        "values": [
+          "score",
+          "melody"
+        ],
+        "default": "melody",
+        "required": false,
+        "description": "Musical score or F0-contour control."
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "q8_0"
+        ],
+        "default": "native",
+        "required": false,
+        "description": "DiT weight storage; native preserves the package."
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
+        "default": "auto",
+        "required": false,
+        "description": "DiT attention implementation."
+      }
+    ],
+    "load": []
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "vocos_weights": {
+          "source": "weights:",
+          "prefix": "vocos"
+        }
+      },
+      "optional_files": {
+        "phoneset": "model:phone_set.json"
+      },
+      "optional_tensors": {
+        "whisper_weights": {
+          "source": "weights:",
+          "prefix": "whisper"
+        },
+        "rmvpe_weights": {
+          "source": "weights:",
+          "prefix": "rmvpe"
+        }
+      }
+    }
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/SoulX-Singer-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  }
+}

@@ -48,6 +48,56 @@ public:
         TensorValue output;
     };
     std::unique_ptr<State> state;
+    // Only instantiated by the explicit fixed-prefix preparation overload. Tensor
+    // handles borrow the current State's constants and are rebound on graph rebuild.
+    struct FixedPrefixInputs {
+        DitFixedPrefixConditioning conditioning;
+        int64_t target_frames = 0;
+        TensorValue reference;
+
+        void allocate(State & state, const DitConditioning & conditions, const DitConfig & config, int64_t rows) {
+            reference = state.constants->make_f32(
+                TensorShape::from_dims({conditions.batch, conditioning.frames, config.output_channels}),
+                std::vector<float>(conditioning.latent.size(), 0));
+            if (!conditioning.key_mask.empty()) {
+                const auto tokens = conditions.frames + config.memory_tokens;
+                std::vector<ggml_fp16_t> zeros(static_cast<size_t>(rows * tokens * tokens), ggml_fp32_to_fp16(0));
+                state.inputs.attention_mask = state.constants->make_tensor(
+                    TensorShape::from_dims({rows, 1, tokens, tokens}), GGML_TYPE_F16,
+                    zeros.data(), zeros.size() * sizeof(ggml_fp16_t));
+            }
+        }
+
+        void upload(State & state, const DitConditioning & conditions, const DitConfig & config, int64_t branch) {
+            core::write_tensor_f32(reference, conditioning.latent);
+            if (!state.inputs.attention_mask.valid()) return;
+            const auto rows = state.branches * conditions.batch;
+            const auto tokens = conditions.frames + config.memory_tokens;
+            std::vector<ggml_fp16_t> mask(static_cast<size_t>(rows * tokens * tokens));
+            for (int64_t b = 0; b < rows; ++b)
+                for (int64_t q = 0; q < tokens; ++q)
+                    for (int64_t k = 0; k < tokens; ++k)
+                        mask[static_cast<size_t>((b * tokens + q) * tokens + k)] = ggml_fp32_to_fp16(
+                            conditioning.key_mask[static_cast<size_t>((branch * conditions.batch + b) * tokens + k)]
+                                ? 0.f : -std::numeric_limits<float>::infinity());
+            ggml_backend_tensor_set(state.inputs.attention_mask.tensor, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
+        }
+
+        void build(core::ModuleBuildContext & ctx, State & state, int64_t channels, int64_t batch, int64_t rows) const {
+            state.latent = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({batch, channels, target_frames}));
+            ggml_set_input(state.latent.tensor);
+            auto latent = state.latent;
+            if (batch != rows)
+                latent = RepeatModule({TensorShape::from_dims({rows, channels, target_frames})}).build(ctx, latent);
+            latent = TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, latent);
+            auto prefix = reference;
+            if (rows != batch)
+                prefix = RepeatModule({TensorShape::from_dims({rows, conditioning.frames, channels})}).build(ctx, prefix);
+            state.inputs.latent = ConcatModule({1}).build(ctx, prefix, latent);
+        }
+    };
+    std::unique_ptr<FixedPrefixInputs> fixed_input;
+
     struct ModulationState {
         std::unique_ptr<core::PreparedGraph> graph;
         TensorValue time, duration, global, output;
@@ -159,7 +209,8 @@ public:
         context_graph->release_buffers();
     }
 
-    void prepare(DitConditioning in) {
+    template<bool FixedPrefix = false>
+    void prepare(DitConditioning in, DitFixedPrefixConditioning * fixed = nullptr) {
         const auto & c = config.model;
         if (in.frames <= 0 || in.batch <= 0 || in.branches <= 0 ||
             in.frame_features.size() != in.frame_channels.size() || in.vector_features.size() != in.vector_channels.size())
@@ -169,7 +220,7 @@ public:
         for (size_t i = 0; i < in.frame_channels.size(); ++i) {
             if (in.frame_channels[i] <= 0 || in.frame_features[i].size() != static_cast<size_t>(rows * in.frames * in.frame_channels[i]))
                 throw std::invalid_argument(config.label + " frame conditioning shape mismatch");
-            channels += in.frame_channels[i];
+            if (!c.additive_frame_conditioning) channels += in.frame_channels[i];
         }
         for (size_t i = 0; i < in.vector_channels.size(); ++i) {
             if (in.vector_channels[i] <= 0 || in.vector_features[i].size() != static_cast<size_t>(rows * in.vector_channels[i]))
@@ -186,16 +237,36 @@ public:
             (!in.latent_mask.empty() && in.latent_mask.size() != static_cast<size_t>(in.batch * in.frames)) ||
             (config.guidance == DitGuidance::AdaptiveProjected && in.branches > 1 && in.latent_mask.empty()))
             throw std::invalid_argument(config.label + " conditioning mask shape mismatch");
-        const bool changed = in.value_mask.empty() != conditions.value_mask.empty() || in.frames != conditions.frames || in.batch != conditions.batch || in.branches != conditions.branches ||
+        bool changed = in.value_mask.empty() != conditions.value_mask.empty() || in.frames != conditions.frames || in.batch != conditions.batch || in.branches != conditions.branches ||
             in.context_tokens != conditions.context_tokens || in.frame_channels != conditions.frame_channels || in.vector_channels != conditions.vector_channels;
+        if constexpr (FixedPrefix) {
+            if (fixed->frames <= 0 || fixed->frames >= in.frames ||
+                fixed->latent.size() != static_cast<size_t>(fixed->frames * in.batch * c.output_channels) ||
+                (!fixed->key_mask.empty() && fixed->key_mask.size() != static_cast<size_t>(rows * (in.frames + c.memory_tokens))))
+                throw std::invalid_argument(config.label + " invalid fixed reference prefix");
+            if (config.guidance == DitGuidance::AdaptiveProjected)
+                throw std::invalid_argument(config.label + " fixed reference prefix does not support APG");
+            changed |= !fixed_input || fixed->frames != fixed_input->conditioning.frames ||
+                fixed->key_mask.empty() != fixed_input->conditioning.key_mask.empty();
+        } else {
+            changed |= static_cast<bool>(fixed_input);
+        }
         prepared = false;
         if (changed) { state.reset(); context_graph.reset(); context_kv.clear(); context_store.reset(); }
+        if constexpr (FixedPrefix) {
+            if (!fixed_input) fixed_input = std::make_unique<FixedPrefixInputs>();
+            fixed_input->conditioning = std::move(*fixed);
+            fixed_input->target_frames = in.frames - fixed_input->conditioning.frames;
+        } else {
+            fixed_input.reset();
+        }
         conditions = std::move(in);
         prepare_context();
-        if (state) upload_conditions();
+        if (state) upload_conditions<FixedPrefix>();
         prepared = true;
     }
 
+    template<bool FixedPrefix = false>
     void upload_conditions(int64_t branch = 0) {
         if (!state) return;
         const auto count = state->branches * conditions.batch;
@@ -207,6 +278,7 @@ public:
             const auto n = static_cast<size_t>(count * conditions.vector_channels[i]);
             core::write_tensor_f32_slice(state->inputs.vector_conditions[i], 0, conditions.vector_features[i].data() + branch * conditions.batch * conditions.vector_channels[i], n);
         }
+        if constexpr (FixedPrefix) fixed_input->upload(*state, conditions, config.model, branch);
         if (state->latent_mask.valid()) core::write_tensor_f32(state->latent_mask, conditions.latent_mask);
         if (state->inputs.context.valid()) core::write_tensor_f32_slice(state->inputs.context, 0,
             conditions.context.data() + branch * conditions.batch * conditions.context_tokens * config.model.context_dim, static_cast<size_t>(count * conditions.context_tokens * config.model.context_dim));
@@ -223,6 +295,8 @@ public:
         ggml_set_input(s.guidance.tensor); ggml_set_output(s.guidance.tensor);
         const auto positive = SliceModule({0, 0, conditions.batch}).build(ctx, prediction);
         const auto negative = SliceModule({0, conditions.batch, conditions.batch}).build(ctx, prediction);
+        if (config.guidance == DitGuidance::Rescaled)
+            return FlowSamplerRescaledCfgGraphModule(config.guidance_rescale).build(ctx, positive, negative, s.guidance);
         if (config.guidance == DitGuidance::Linear)
             return FlowSamplerCfgGraphModule().build(ctx, positive, negative, s.guidance);
         s.sigma = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({conditions.batch, 1, 1}));
@@ -249,6 +323,7 @@ public:
         return FlowSamplerEulerGraphModule({rounding, rounding}).build(ctx, s.latent, s.output, s.step);
     }
 
+    template<bool FixedPrefix = false>
     void ensure(int64_t branches, bool guided = false, DitSampler sampler = DitSampler::Euler) {
         if (!prepared) throw std::logic_error(config.label + " conditioning has not been prepared");
         if (branches <= 0 || branches > conditions.branches) throw std::invalid_argument(config.label + " unavailable guidance branches");
@@ -276,15 +351,20 @@ public:
         s.inputs.positions = s.constants->make_tensor(TensorShape::from_dims({tokens}), GGML_TYPE_I32, positions.data(), positions.size() * sizeof(int32_t));
         if (guided && branches == 2 && config.guidance == DitGuidance::AdaptiveProjected && !conditions.latent_mask.empty())
             s.latent_mask = s.constants->make_f32(TensorShape::from_dims({conditions.batch, conditions.frames, 1}), conditions.latent_mask);
+        if constexpr (FixedPrefix) fixed_input->allocate(s, conditions, c, rows);
         s.constants->ensure_uploaded();
         const auto builder = [&](core::ModuleBuildContext & ctx) {
             ctx.elide_identity_reshapes = c.projection_type == DitProjectionType::Bf16Autocast;
             const auto latent_rows = conditions.batch;
-            s.latent = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({latent_rows, c.output_channels, conditions.frames}));
-            ggml_set_input(s.latent.tensor);
-            auto latent = s.latent;
-            if (latent_rows != rows) latent = RepeatModule({TensorShape::from_dims({rows, c.output_channels, conditions.frames})}).build(ctx, latent);
-            s.inputs.latent = TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, latent);
+            if constexpr (FixedPrefix) {
+                fixed_input->build(ctx, s, c.output_channels, latent_rows, rows);
+            } else {
+                s.latent = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({latent_rows, c.output_channels, conditions.frames}));
+                ggml_set_input(s.latent.tensor);
+                auto latent = s.latent;
+                if (latent_rows != rows) latent = RepeatModule({TensorShape::from_dims({rows, c.output_channels, conditions.frames})}).build(ctx, latent);
+                s.inputs.latent = TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, latent);
+            }
             // Without branch-specific global conditioning, both CFG branches
             // share timestep modulation rather than computing duplicate gates.
             const auto time_rows = c.global_dim ? rows : conditions.batch;
@@ -307,6 +387,8 @@ public:
                 }
             }
             auto output = module.build(ctx, s.inputs, weights);
+            if constexpr (FixedPrefix)
+                output = SliceModule({1, fixed_input->conditioning.frames, fixed_input->target_frames}).build(ctx, output);
             if (guided && branches == 2) output = build_guidance(ctx, s, output);
             s.output = core::ensure_backend_addressable_layout(ctx, TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, output));
             return DeviceDenoiserGraph{s.latent, s.output, guided ? build_sampling_step(ctx, s) : s.latent};
@@ -314,18 +396,20 @@ public:
         };
         s.device = std::make_unique<DeviceDenoiserRuntime>(execution,
             core::PreparedGraphConfig{config.label, config.graph_metadata_bytes, config.graph_nodes}, builder, config.optimizations);
-        upload_conditions();
+        upload_conditions<FixedPrefix>();
     }
 
+    template<bool FixedPrefix = false>
     std::vector<float> predict(const std::vector<float> & latent, const std::vector<float> & times,
         int64_t branches, int64_t branch) {
-        ensure(branches);
+        ensure<FixedPrefix>(branches);
         auto & s = *state;
-        const auto size = static_cast<size_t>(conditions.batch * config.model.output_channels * conditions.frames);
+        const auto frames = FixedPrefix ? fixed_input->target_frames : conditions.frames;
+        const auto size = static_cast<size_t>(conditions.batch * config.model.output_channels * frames);
         if (latent.size() != size || times.size() != static_cast<size_t>(conditions.batch) || branch < 0 || branch + branches > conditions.branches)
             throw std::invalid_argument(config.label + " prediction input shape/branch mismatch");
         const auto started = std::chrono::steady_clock::now();
-        if (s.condition_branch != branch) upload_conditions(branch);
+        if (s.condition_branch != branch) upload_conditions<FixedPrefix>(branch);
         core::write_tensor_f32_slice(s.latent, 0, latent.data(), latent.size());
         core::write_tensor_f32(s.time, time_features(times, s.time.shape.dims[0]));
 
@@ -338,6 +422,7 @@ public:
         return s.device->predict();
     }
 
+    template<bool FixedPrefix = false>
     std::vector<float> sample(const DitSamplingRequest & request);
     TensorValue embed_time(core::ModuleBuildContext & ctx, const TensorValue & input,
         const std::vector<LinearWeights> & embedding);
@@ -750,15 +835,17 @@ std::vector<float> DitRuntime::Impl::predict_prefix(const std::vector<float> & t
     return result;
 }
 
+template<bool FixedPrefix>
 std::vector<float> DitRuntime::Impl::sample(const DitSamplingRequest & input_request) {
     auto request = input_request;
     if (!prepared) throw std::logic_error(config.label + " conditioning has not been prepared");
-    const auto count = static_cast<size_t>(conditions.batch * config.model.output_channels * conditions.frames);
+    const auto frames = FixedPrefix ? fixed_input->target_frames : conditions.frames;
+    const auto count = static_cast<size_t>(conditions.batch * config.model.output_channels * frames);
     if (request.noise.size() != count || request.steps <= 0 || !std::isfinite(request.guidance))
         throw std::invalid_argument(config.label + " invalid sampling inputs");
     const auto started = std::chrono::steady_clock::now();
     const int64_t branches = request.guidance == 1 ? 1 : 2;
-    ensure(branches, true, request.sampler);
+    ensure<FixedPrefix>(branches, true, request.sampler);
     const auto points = request.steps + 1;
     const auto schedule_size = static_cast<size_t>(conditions.batch * points);
     if (request.schedule.empty()) {
@@ -781,7 +868,7 @@ std::vector<float> DitRuntime::Impl::sample(const DitSamplingRequest & input_req
     if (request.schedule.size() != schedule_size)
         throw std::invalid_argument(config.label + " schedule shape mismatch");
     auto & s = *state;
-    if (s.condition_branch != 0) upload_conditions();
+    if (s.condition_branch != 0) upload_conditions<FixedPrefix>();
     if (s.guidance.valid()) core::write_tensor_f32(s.guidance, &request.guidance, 1);
     if (s.apg.valid()) core::write_tensor_f32(s.apg, &request.apg_scale, 1);
     if (s.branch_indices.valid()) {
@@ -835,13 +922,23 @@ DitRuntime::DitRuntime(core::ExecutionContext & execution, const assets::TensorS
     : impl_(std::make_unique<Impl>(execution, source, std::move(config), names)) {}
 DitRuntime::~DitRuntime() = default;
 void DitRuntime::prepare_conditioning(DitConditioning conditioning) { impl_->prepare(std::move(conditioning)); }
+void DitRuntime::prepare_conditioning(DitConditioning conditioning, DitFixedPrefixConditioning prefix) {
+    impl_->prepare<true>(std::move(conditioning), &prefix);
+}
 std::vector<float> DitRuntime::predict(const std::vector<float> & latent, float timestep, int64_t branch) {
-    return impl_->predict(latent, std::vector<float>(static_cast<size_t>(impl_->conditions.batch), timestep), 1, branch);
+    const std::vector<float> times(static_cast<size_t>(impl_->conditions.batch), timestep);
+    if (impl_->fixed_input) return impl_->predict<true>(latent, times, 1, branch);
+    return impl_->predict(latent, times, 1, branch);
 }
 std::vector<float> DitRuntime::predict_cfg(const std::vector<float> & latent, float timestep) {
-    return impl_->predict(latent, std::vector<float>(static_cast<size_t>(impl_->conditions.batch), timestep), 2, 0);
+    const std::vector<float> times(static_cast<size_t>(impl_->conditions.batch), timestep);
+    if (impl_->fixed_input) return impl_->predict<true>(latent, times, 2, 0);
+    return impl_->predict(latent, times, 2, 0);
 }
-std::vector<float> DitRuntime::sample(const DitSamplingRequest & request) { return impl_->sample(request); }
+std::vector<float> DitRuntime::sample(const DitSamplingRequest & request) {
+    if (impl_->fixed_input) return impl_->sample<true>(request);
+    return impl_->sample(request);
+}
 DitModulationBank DitRuntime::prepare_modulations(const std::vector<float> & times,
     const std::vector<float> & durations, const std::vector<float> & global, DitOperationStats * stats) {
     return impl_->prepare_modulations(times, durations, global, stats);
