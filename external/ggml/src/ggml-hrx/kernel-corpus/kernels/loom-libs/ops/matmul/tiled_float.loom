@@ -254,14 +254,10 @@ kernel.def target(@ggml_float_matmul_tiled_target) export("ggml_float_matmul_til
       %w1 = view.load %ws[%row_hi, %kk] : view<32x17xf32> -> f32
       %x0 = view.load %xs[%col, %kk] : view<32x17xf32> -> f32
       %x1 = view.load %xs[%col_hi, %kk] : view<32x17xf32> -> f32
-      %p00 = scalar.mulf %w0, %x0 : f32
-      %n00 = scalar.addf %s00, %p00 : f32
-      %p01 = scalar.mulf %w0, %x1 : f32
-      %n01 = scalar.addf %s01, %p01 : f32
-      %p10 = scalar.mulf %w1, %x0 : f32
-      %n10 = scalar.addf %s10, %p10 : f32
-      %p11 = scalar.mulf %w1, %x1 : f32
-      %n11 = scalar.addf %s11, %p11 : f32
+      %n00 = scalar.fmaf %w0, %x0, %s00 : f32
+      %n01 = scalar.fmaf %w0, %x1, %s01 : f32
+      %n10 = scalar.fmaf %w1, %x0, %s10 : f32
+      %n11 = scalar.fmaf %w1, %x1, %s11 : f32
       scf.yield %n00, %n01, %n10, %n11 : f32, f32, f32, f32
     }
     kernel.barrier<workgroup> scope(workgroup) ordering(acq_rel)
