@@ -7681,6 +7681,25 @@ static const ggml_type other_types[] = {
 #endif
 
 // Test cases for evaluation: should try to cover edge cases while using small input sizes to keep the runtime low
+struct test_flash_attn_all_masked : test_flash_attn_ext {
+    test_flash_attn_all_masked()
+        : test_flash_attn_ext(64, 64, 2, {3, 1}, 65, 3, true, false,
+              0, 0, GGML_PREC_F32, GGML_TYPE_F32, GGML_TYPE_F32, {0, 2, 1, 3}) {}
+
+    std::string vars() override { return test_flash_attn_ext::vars() + ",all_masked_row=1"; }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        test_flash_attn_ext::initialize_tensors(ctx);
+        for (auto * t = ggml_get_first_tensor(ctx); t; t = ggml_get_next_tensor(ctx, t)) {
+            if (strcmp(t->name, "m") == 0) {
+                std::vector<ggml_fp16_t> row(static_cast<size_t>(t->ne[0]),
+                    ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity()));
+                ggml_backend_tensor_set(t, row.data(), 0, row.size() * sizeof(ggml_fp16_t));
+            }
+        }
+    }
+};
+
 static std::vector<std::unique_ptr<test_case>> make_test_cases_float_fallback() {
     std::vector<std::unique_ptr<test_case>> test_cases;
     // Floating fallback: scalar tails, broadcast batches, and long codec sequences.
@@ -7690,7 +7709,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_float_fallback() 
         test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 33, 17, 63, {2, 1}, {3, 2}));
     }
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 384, 35520, 192, {1, 1}, {1, 1}));
-    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 33, 17, 63, {2, 1}, {3, 2}, {1, 0, 2, 3}));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 33, 17, 63, {2, 1}, {3, 2}, {0, 2, 1, 3}));
+    test_cases.emplace_back(new test_flash_attn_ext(128, 128, 8, {2, 1}, 23, 23, true, false,
+        0, 0, GGML_PREC_F32, GGML_TYPE_F32, GGML_TYPE_F32, {0, 2, 1, 3}));
+    test_cases.emplace_back(new test_flash_attn_ext(128, 128, 16, {1, 1}, 34, 34, false, false,
+        0, 0, GGML_PREC_F32, GGML_TYPE_F32, GGML_TYPE_F32, {0, 2, 1, 3}));
+    test_cases.emplace_back(new test_flash_attn_ext(64, 64, 2, {7, 2}, 257, 1, true, false,
+        0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 2, 1, 3}));
+    test_cases.emplace_back(new test_flash_attn_all_masked());
     return test_cases;
 }
 

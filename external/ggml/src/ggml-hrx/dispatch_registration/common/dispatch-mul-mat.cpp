@@ -2105,17 +2105,14 @@ static bool match_decode_mul_mat_add_dispatch(const DispatchMatchContext & conte
     return build_decode_mul_mat_add_dispatch(match, context, dispatch_match);
 }
 
-static bool match_strided_float_matmul(const DispatchMatchContext & context, DispatchMatch & match) {
-    const auto * node = context.root_node;
-    if (node == nullptr || node->inputs.size() != 2) return false;
-    const auto * weight = context.graph.values().find(node->inputs[0]);
-    const auto * input = context.graph.values().find(node->inputs[1]);
-    const auto * output = context.graph.values().find(node->output);
+bool build_float_matmul_dispatch(const Value & weights, const Value & inputs, const Value & outputs, Dispatch & dispatch) {
+    const auto * weight = &weights;
+    const auto * input = &inputs;
+    const auto * output = &outputs;
     const auto floating = [](ggml_type t) { return t == GGML_TYPE_F32 || t == GGML_TYPE_F16 || t == GGML_TYPE_BF16; };
-    if (weight == nullptr || input == nullptr || output == nullptr || !floating(weight->type) || !floating(input->type) ||
-        output->type != GGML_TYPE_F32 || !output->contiguous || weight->ne[0] != input->ne[0] ||
+    if (!floating(weight->type) || !floating(input->type) ||
+        output->type != GGML_TYPE_F32 || output->nb[0] != sizeof(float) || weight->ne[0] != input->ne[0] ||
         input->ne[2] % weight->ne[2] || input->ne[3] % weight->ne[3]) return false;
-    Dispatch dispatch;
     dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_float_matmul_tiled"));
     auto & config = dispatch.kernel.compile_parameters;
     config.emplace("ggml.float_matmul.k", std::to_string(weight->ne[0]));
@@ -2140,7 +2137,19 @@ static bool match_strided_float_matmul(const DispatchMatchContext & context, Dis
     dispatch.kernel.integer_parameters.emplace("input_span", input->byte_count / ggml_type_size(input->type));
     dispatch.bindings.push_back({weight->storage_root, weight->storage_offset, weight->byte_count});
     dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
-    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    dispatch.bindings.push_back({output->storage_root, output->storage_offset, output->byte_count});
+    return true;
+}
+
+static bool match_strided_float_matmul(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node == nullptr || node->inputs.size() != 2) return false;
+    const auto * weight = context.graph.values().find(node->inputs[0]);
+    const auto * input = context.graph.values().find(node->inputs[1]);
+    const auto * output = context.graph.values().find(node->output);
+    if (weight == nullptr || input == nullptr || output == nullptr) return false;
+    Dispatch dispatch;
+    if (!build_float_matmul_dispatch(*weight, *input, *output, dispatch)) return false;
     match.covered_nodes.push_back(context.root_index);
     match.dispatches.push_back(std::move(dispatch));
     return true;

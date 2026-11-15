@@ -14,6 +14,8 @@ config.decl @ggml.softmax.stride3 : %value: index where [range(%value, 1, 107374
 config.decl @ggml.softmax.mask_stride1 : %value: index where [range(%value, 1, 1073741824)]
 config.decl @ggml.softmax.mask_stride2 : %value: index where [range(%value, 1, 1073741824)]
 config.decl @ggml.softmax.mask_stride3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.mask_stride0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.softmax.zero_all_masked : %value: index where [range(%value, 0, 1)]
 kernel.def target(@ggml_softmax_target) export("ggml_softmax_f32") @ggml_softmax_f32(%rows: index, %input_span: index, %mask_span: index) {
   %one = index.constant 1 : index
   %four = index.constant 4 : index
@@ -50,6 +52,9 @@ kernel.def target(@ggml_softmax_target) export("ggml_softmax_f32") @ggml_softmax
   %stride1 = config.get @ggml.softmax.stride1 : index
   %stride2 = config.get @ggml.softmax.stride2 : index
   %stride3 = config.get @ggml.softmax.stride3 : index
+  %mask_stride0 = config.get @ggml.softmax.mask_stride0 : index
+  %zero_all_masked = config.get @ggml.softmax.zero_all_masked : index
+  %zero_masked = index.cmp ne, %zero_all_masked, %zero : index
   %mask_stride1 = config.get @ggml.softmax.mask_stride1 : index
   %mask_stride2 = config.get @ggml.softmax.mask_stride2 : index
   %mask_stride3 = config.get @ggml.softmax.mask_stride3 : index
@@ -81,7 +86,8 @@ kernel.def target(@ggml_softmax_target) export("ggml_softmax_f32") @ggml_softmax
     %x = view.load %iv[%ii] : view<[%ispan]xf32> -> f32
     %scaled = scalar.mulf %x, %scale : f32
     %mask_value = scf.if %has_mask -> (f32) {
-      %mi0 = index.add %mask_base, %col : index
+      %mask_col = index.mul %col, %mask_stride0 : index
+      %mi0 = index.add %mask_base, %mask_col : index
       %mi = index.assume %mi0 [lt(%mi0, %mspan)] : index
       %mv = scf.if %mask_f16 -> (f32) {
         %m16 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf16>
@@ -108,7 +114,8 @@ kernel.def target(@ggml_softmax_target) export("ggml_softmax_f32") @ggml_softmax
     %x = view.load %iv[%ii] : view<[%ispan]xf32> -> f32
     %scaled = scalar.mulf %x, %scale : f32
     %mask_value = scf.if %has_mask -> (f32) {
-      %mi0 = index.add %mask_base, %col : index
+      %mask_col = index.mul %col, %mask_stride0 : index
+      %mi0 = index.add %mask_base, %mask_col : index
       %mi = index.assume %mi0 [lt(%mi0, %mspan)] : index
       %mv = scf.if %mask_f16 -> (f32) {
         %m16 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf16>
@@ -138,7 +145,8 @@ kernel.def target(@ggml_softmax_target) export("ggml_softmax_f32") @ggml_softmax
       %x = view.load %iv[%ii] : view<[%ispan]xf32> -> f32
       %scaled = scalar.mulf %x, %scale : f32
       %mask_value = scf.if %has_mask -> (f32) {
-        %mi0 = index.add %mask_base, %col : index
+        %mask_col = index.mul %col, %mask_stride0 : index
+        %mi0 = index.add %mask_base, %mask_col : index
         %mi = index.assume %mi0 [lt(%mi0, %mspan)] : index
         %mv = scf.if %mask_f16 -> (f32) {
           %m16 = buffer.view %mask[%offset] : buffer -> view<[%mspan]xf16>
@@ -158,7 +166,10 @@ kernel.def target(@ggml_softmax_target) export("ggml_softmax_f32") @ggml_softmax
       %shifted = scalar.subf %score, %maximum : f32
       %probability = scalar.expf<afn> %shifted : f32
       %normalized = scalar.divf %probability, %sum : f32
-      view.store %normalized, %ov[%row, %col] : f32, view<[%row_count]x[%width]xf32>
+      %all_masked = scalar.cmpf oeq, %maximum, %negative_infinity : f32
+      %clear_row = scalar.andi %zero_masked, %all_masked : i1
+      %result = scf.select %clear_row, %zero_f, %normalized : f32
+      view.store %result, %ov[%row, %col] : f32, view<[%row_count]x[%width]xf32>
     }
   }
   kernel.return

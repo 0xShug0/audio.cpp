@@ -32,6 +32,8 @@ bool match_softmax(const DispatchMatchContext & context, DispatchMatch & match) 
     std::ostringstream scale;
     scale << std::setprecision(std::numeric_limits<float>::max_digits10) << params->scale;
     config.emplace("ggml.softmax.scale", scale.str());
+    config.emplace("ggml.softmax.mask_stride0", mask != nullptr ? std::to_string(mask->nb[0] / ggml_type_size(mask->type)) : "1");
+    config.emplace("ggml.softmax.zero_all_masked", "0");
     config.emplace("ggml.softmax.width", std::to_string(input->ne[0]));
     config.emplace("ggml.softmax.ne1", std::to_string(input->ne[1]));
     config.emplace("ggml.softmax.ne2", std::to_string(input->ne[2]));

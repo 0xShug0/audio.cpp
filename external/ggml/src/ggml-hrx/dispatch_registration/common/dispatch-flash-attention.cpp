@@ -2,6 +2,7 @@
 
 #include "dispatch-activation-publication.h"
 #include "dispatch-mul-mat-common.h"
+#include "dispatch-mul-mat.h"
 #include "ggml.h"
 #include "graph/graph-matcher.h"
 #include "kernel-corpus/kernel-corpus-catalog-verify.h"
@@ -696,38 +697,67 @@ static bool match_strided_attention_f32(const DispatchMatchContext & context, Di
     if (mask != nullptr && ((mask->type != GGML_TYPE_F16 && mask->type != GGML_TYPE_F32) ||
         mask->ne[0] < k->ne[1] || mask->ne[1] < q->ne[1] ||
         q->ne[2] % mask->ne[2] || q->ne[3] % mask->ne[3])) return false;
-    Dispatch dispatch;
-    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_attention_f32"));
-    const int64_t tiles = (v->ne[0] + 31) / 32;
-    dispatch.kernel.integer_parameters.emplace("rows", tiles * q->ne[1] * q->ne[2] * q->ne[3]);
-    for (const auto & item : {std::pair<const char *, const Value *>{"qspan", q}, {"kspan", k}, {"vspan", v},
-                             {"mspan", mask != nullptr ? mask : q}, {"ospan", out}}) {
-        dispatch.kernel.integer_parameters.emplace(item.first, item.second->byte_count / ggml_type_size(item.second->type));
+    // Reuse precision-preserving GEMM and stable softmax. The plan owns and
+    // reuses the score buffer; no host transfers or runtime allocations occur.
+    Value scores = *out;
+    scores.id = match_value(context, match, 0);
+    scores.kind = ValueKind::Transient;
+    scores.storage_root = scores.id;
+    scores.storage_offset = 0;
+    scores.ne = {k->ne[1], q->ne[1], q->ne[2], q->ne[3]};
+    scores.nb[0] = sizeof(float);
+    scores.element_count = 1;
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        scores.element_count *= scores.ne[i];
+        if (i > 0) scores.nb[i] = scores.nb[i - 1] * scores.ne[i - 1];
     }
-    auto & config = dispatch.kernel.compile_parameters;
-    const std::pair<const char *, int64_t> values[] = {
-        {"kv_f16", k->type == GGML_TYPE_F16}, {"d", q->ne[0]}, {"dv", v->ne[0]}, {"nq", q->ne[1]}, {"nk", k->ne[1]}, {"hq", q->ne[2]},
-        {"ratioh", q->ne[2] / k->ne[2]}, {"ratiob", q->ne[3] / k->ne[3]}, {"tiles", tiles},
-        {"mask_type", mask == nullptr ? 0 : mask->type == GGML_TYPE_F16 ? 2 : 1},
-        {"mask_h", mask != nullptr ? mask->ne[2] : 1}, {"mask_b", mask != nullptr ? mask->ne[3] : 1},
-    };
-    for (const auto & item : values) config.emplace(std::string("ggml.attention_f32.") + item.first, std::to_string(item.second));
-    for (const auto & item : {std::pair<const char *, const Value *>{"q", q}, {"k", k}, {"v", v}, {"m", mask}}) {
-        for (int i = 0; i < GGML_MAX_DIMS; ++i) {
-            if (item.second != nullptr && item.second->nb[i] % ggml_type_size(item.second->type)) return false;
-            config.emplace(std::string("ggml.attention_f32.") + item.first + "s" + std::to_string(i),
-                           std::to_string(item.second != nullptr ? item.second->nb[i] / ggml_type_size(item.second->type) : 1));
-        }
-    }
+    scores.byte_count = static_cast<size_t>(scores.element_count) * sizeof(float);
+    scores.storage_byte_count = scores.byte_count;
+    scores.tensor = nullptr;
+    scores.buffer.reset();
+
+    Dispatch qk;
+    if (!build_float_matmul_dispatch(*k, *q, scores, qk)) return false;
+    Value values = *v;
+    std::swap(values.ne[0], values.ne[1]);
+    std::swap(values.nb[0], values.nb[1]);
+    Value output = *out;
+    std::swap(output.ne[1], output.ne[2]);
+    std::swap(output.nb[1], output.nb[2]);
+    Dispatch pv;
+    if (!build_float_matmul_dispatch(values, scores, output, pv)) return false;
+
+    Dispatch softmax;
+    softmax.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_softmax_f32"));
+    softmax.kernel.integer_parameters.emplace("rows", scores.element_count / scores.ne[0]);
+    softmax.kernel.integer_parameters.emplace("input_span", scores.element_count);
+    softmax.kernel.integer_parameters.emplace("mask_span", mask != nullptr ? mask->byte_count / ggml_type_size(mask->type) : 1);
+    auto & config = softmax.kernel.compile_parameters;
     std::ostringstream scale;
-    scale << std::setprecision(std::numeric_limits<float>::max_digits10) << op_params_as<FlashAttnExtParams>(node->params)->scale;
-    config.emplace("ggml.attention_f32.scale", scale.str());
-    for (const Value * value : {q, k, v, mask != nullptr ? mask : q}) {
-        dispatch.bindings.push_back({value->storage_root, value->storage_offset, value->byte_count});
+    scale << std::setprecision(std::numeric_limits<float>::max_digits10) << params->scale;
+    config.emplace("ggml.softmax.scale", scale.str());
+    config.emplace("ggml.softmax.width", std::to_string(scores.ne[0]));
+    config.emplace("ggml.softmax.ne1", std::to_string(scores.ne[1]));
+    config.emplace("ggml.softmax.ne2", std::to_string(scores.ne[2]));
+    config.emplace("ggml.softmax.mask_type", mask == nullptr ? "0" : mask->type == GGML_TYPE_F16 ? "2" : "1");
+    config.emplace("ggml.softmax.mask_ne2", std::to_string(mask != nullptr ? mask->ne[2] : 1));
+    config.emplace("ggml.softmax.mask_ne3", std::to_string(mask != nullptr ? mask->ne[3] : 1));
+    config.emplace("ggml.softmax.zero_all_masked", "1");
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (mask != nullptr && mask->nb[i] % ggml_type_size(mask->type)) return false;
+        if (i > 0) config.emplace("ggml.softmax.stride" + std::to_string(i), std::to_string(scores.nb[i] / sizeof(float)));
+        config.emplace("ggml.softmax.mask_stride" + std::to_string(i),
+                       std::to_string(mask != nullptr ? mask->nb[i] / ggml_type_size(mask->type) : 1));
     }
-    dispatch.bindings.push_back({out->storage_root, out->storage_offset, out->byte_count});
+    const DispatchBinding score_binding{scores.id, 0, scores.byte_count};
+    softmax.bindings.push_back(score_binding);
+    softmax.bindings.push_back(mask != nullptr ? DispatchBinding{mask->storage_root, mask->storage_offset, mask->byte_count} : score_binding);
+    softmax.bindings.push_back(score_binding);
+    match.transients.push_back({scores.id, "common.attention.scores", scores.byte_count, 256});
     match.covered_nodes.push_back(context.root_index);
-    match.dispatches.push_back(std::move(dispatch));
+    match.dispatches.push_back(std::move(qk));
+    match.dispatches.push_back(std::move(softmax));
+    match.dispatches.push_back(std::move(pv));
     return true;
 }
 
