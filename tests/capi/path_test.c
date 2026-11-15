@@ -24,6 +24,7 @@
 static int g_failures = 0;
 static int g_log_callback_called = 0;
 static int g_log_last_level = -1;
+static int g_print_logs = 0;
 
 static void test_log_callback(audiocpp_log_level level, const char * text, void * user_data) {
     int * count = (int *)user_data;
@@ -31,7 +32,7 @@ static void test_log_callback(audiocpp_log_level level, const char * text, void 
         (*count)++;
     }
     g_log_last_level = (int)level;
-    (void)text;
+    if (g_print_logs) fprintf(stderr, "%s\n", text);
 }
 
 #define CHECK(cond, ...)                                         \
@@ -185,6 +186,8 @@ static void run_once(audiocpp_session * session, const audio_clip * clip, segmen
         /* A VAD result carries no audio or text; NOT_AVAILABLE, not a crash. */
         CHECK(audiocpp_result_audio(result, NULL, NULL, NULL, NULL)
               == AUDIOCPP_ERR_NOT_AVAILABLE, "vad result claimed to have audio");
+        CHECK(audiocpp_result_custom_schema(result, NULL, NULL)
+              == AUDIOCPP_ERR_NOT_AVAILABLE, "vad result claimed to have custom schema output");
     }
 
     audiocpp_result_free(result);
@@ -214,6 +217,7 @@ int main(int argc, char ** argv) {
     size_t families, options, i;
     int found_family = 0;
 
+    g_print_logs = argc > 4 && strcmp(argv[4], "--log") == 0;
     memset(&clip, 0, sizeof(clip));
 
     printf("abi=%u build=%s backend=%s\n",
@@ -222,6 +226,8 @@ int main(int argc, char ** argv) {
                                      ((uint32_t)AUDIOCPP_ABI_VERSION_MINOR << 8) |
                                      (uint32_t)AUDIOCPP_ABI_VERSION_PATCH),
           "abi version mismatch between header and library");
+    CHECK(audiocpp_result_custom_schema(NULL, NULL, NULL) == AUDIOCPP_ERR_INVALID_ARGUMENT,
+          "NULL custom schema result was not rejected");
 
     /* Freeing NULL is documented as a no-op; cleanup paths rely on it. */
     audiocpp_registry_free(NULL);
@@ -288,6 +294,7 @@ int main(int argc, char ** argv) {
 
     /* An unknown family must be reported as such, not as a generic failure,
      * and must leave a message behind. */
+    if (g_print_logs) audiocpp_log_set(test_log_callback, NULL);
     {
         audiocpp_model * bogus = NULL;
         audiocpp_model_config bogus_config;

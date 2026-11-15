@@ -25,6 +25,7 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/io/json.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -311,6 +312,7 @@ struct audiocpp_request {
 
 struct audiocpp_result {
     rt::TaskResult result;
+    mutable std::optional<std::string> custom_schema_json;
     /* An event exposes its contents through a result view that it owns. The
      * view has the same type as an owned result and there is a public free for
      * that type, so freeing one has to be a no-op rather than a double free. */
@@ -1047,6 +1049,26 @@ audiocpp_status audiocpp_result_text(const audiocpp_result * result,
     assign_out(out_text, result->result.text_output->text);
     assign_out(out_language, result->result.text_output->language);
     return AUDIOCPP_OK;
+}
+
+audiocpp_status audiocpp_result_custom_schema(const audiocpp_result * result,
+                                              const char ** out_schema,
+                                              const char ** out_data) {
+    if (result == nullptr) {
+        return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "result must be non-null");
+    }
+    if (!result->result.custom_schema_output.has_value()) {
+        return fail(AUDIOCPP_ERR_NOT_AVAILABLE, "result carries no custom schema output");
+    }
+    return guard([&] {
+        const auto & output = *result->result.custom_schema_output;
+        if (out_data != nullptr && !result->custom_schema_json.has_value()) {
+            result->custom_schema_json = engine::io::json::stringify(output.data);
+        }
+        assign_out(out_schema, output.schema);
+        if (out_data != nullptr) assign_out(out_data, *result->custom_schema_json);
+        return AUDIOCPP_OK;
+    });
 }
 
 size_t audiocpp_result_segment_count(const audiocpp_result * result) {
