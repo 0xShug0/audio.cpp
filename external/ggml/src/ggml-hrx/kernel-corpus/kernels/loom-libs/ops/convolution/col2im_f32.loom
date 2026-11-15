@@ -54,7 +54,8 @@ kernel.def target(@ggml_col2im_target) export("ggml_col2im_f32") @ggml_col2im_f3
       %frame_base = index.mul %frame, %columns : index
       %row = index.add %frame_base, %channel_base : index
       %src0 = index.add %row, %tap : index
-      %src = index.assume %src0 [lt(%src0, %size)] : index
+      // The frame interval guarantees a nonnegative tap within this source row.
+      %src = index.assume %src0 [range(%src0, 0, 1073741824), lt(%src0, %size)] : index
       %value = view.load %iv[%src] : view<[%size]xf32> -> f32
       %next = scalar.addf %acc, %value : f32
       scf.yield %next : f32
