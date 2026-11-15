@@ -52,6 +52,10 @@ struct SetParams {
     std::array<int32_t, 5> values{};
 };
 
+struct PadParams {
+    std::array<int32_t, 9> values{};
+};
+
 struct DiagMaskParams {
     int32_t past = 0;
 };
@@ -144,6 +148,7 @@ using OpParams = std::variant<
     ScaleParams,
     FillParams,
     SetParams,
+    PadParams,
     DiagMaskParams,
     Im2ColParams,
     BinaryParams,

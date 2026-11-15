@@ -151,6 +151,8 @@ json op_params_json(const OpParams & params) {
                 return {{"kind", "im2col"}, {"values", value.values}};
             } else if constexpr (std::is_same_v<T, SetParams>) {
                 return {{"kind", "set"}, {"values", value.values}};
+            } else if constexpr (std::is_same_v<T, PadParams>) {
+                return {{"kind", "pad"}, {"values", value.values}};
             } else if constexpr (std::is_same_v<T, DiagMaskParams>) {
                 return {{"kind", "diag_mask"}, {"past", value.past}};
             } else if constexpr (std::is_same_v<T, FillParams>) {
@@ -228,6 +230,9 @@ OpParams parse_op_params(const json & item) {
     }
     if (kind == "set") {
         return SetParams{item.at("values").get<std::array<int32_t, 5>>()};
+    }
+    if (kind == "pad") {
+        return PadParams{item.at("values").get<std::array<int32_t, 9>>()};
     }
     if (kind == "diag_mask") {
         return DiagMaskParams{item.at("past").get<int32_t>()};

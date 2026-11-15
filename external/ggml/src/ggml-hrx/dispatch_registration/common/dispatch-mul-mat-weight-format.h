@@ -165,10 +165,13 @@ inline bool common_mul_mat_dense_float_format(CommonMulMatWeightFormat format) {
            format == CommonMulMatWeightFormat::F32;
 }
 
-inline bool common_mul_mat_supported_dense_input_size(CommonMulMatWeightFormat format, int64_t input_size) {
+// Small contractions require a kernel with masked 256-wide staging. Keep
+// callers using whole-tile schedules on their existing minimum by default.
+inline bool common_mul_mat_supported_dense_input_size(CommonMulMatWeightFormat format, int64_t input_size,
+                                                      bool allow_small_k = false) {
     switch (format) {
         case CommonMulMatWeightFormat::Q1_0:
-            return input_size >= 256 && input_size <= 32768 && input_size % 128 == 0;
+            return input_size >= (allow_small_k ? 128 : 256) && input_size <= 32768 && input_size % 128 == 0;
         case CommonMulMatWeightFormat::Q4_0:
         case CommonMulMatWeightFormat::Q4_1:
         case CommonMulMatWeightFormat::Q5_0:
@@ -176,7 +179,7 @@ inline bool common_mul_mat_supported_dense_input_size(CommonMulMatWeightFormat f
         case CommonMulMatWeightFormat::IQ4_NL:
         case CommonMulMatWeightFormat::Q8_0:
         case CommonMulMatWeightFormat::Q8_1:
-            return input_size >= 256 && input_size <= 32768 && input_size % 32 == 0;
+            return input_size >= (allow_small_k ? 32 : 256) && input_size <= 32768 && input_size % 32 == 0;
         default:
             return input_size >= 256 && input_size <= 32768 && input_size % 256 == 0;
     }

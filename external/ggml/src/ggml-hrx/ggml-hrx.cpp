@@ -1041,6 +1041,29 @@ static bool device_supports_op(ggml_backend_dev_t device, const ggml_tensor * op
                op->src[0]->type == GGML_TYPE_F32 && op->src[2]->type == GGML_TYPE_F32 &&
                ggml_get_op_params_f32(op, 1) == 0.0f && ggml_get_op_params_f32(op, 2) == 0.0f;
     }
+    if (op->op == GGML_OP_PAD) {
+        const ggml_tensor * source = op->src[0];
+        constexpr int64_t maximum_elements = int64_t{ 1 } << 30;
+        if (source == nullptr || source->type != GGML_TYPE_F32 || op->type != GGML_TYPE_F32 ||
+            !ggml_is_contiguous(op) || ggml_nelements(op) <= 0 || ggml_nelements(op) > maximum_elements ||
+            ggml_nbytes(source) % sizeof(float) != 0 ||
+            ggml_nbytes(source) / sizeof(float) > static_cast<size_t>(maximum_elements)) {
+            return false;
+        }
+        size_t output_stride = sizeof(float);
+        for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+            const int64_t left = ggml_get_op_params_i32(op, 2 * i);
+            const int64_t right = ggml_get_op_params_i32(op, 2 * i + 1);
+            if (source->ne[i] <= 0 || source->ne[i] > maximum_elements || source->nb[i] == 0 ||
+                source->nb[i] % sizeof(float) != 0 ||
+                source->nb[i] / sizeof(float) > static_cast<size_t>(maximum_elements) ||
+                op->ne[i] <= 0 || op->ne[i] != source->ne[i] + left + right || op->nb[i] != output_stride) {
+                return false;
+            }
+            output_stride *= static_cast<size_t>(op->ne[i]);
+        }
+        return true;
+    }
     if (op->op == GGML_OP_SUM_ROWS) {
         return op->src[0] != nullptr && op->type == GGML_TYPE_F32 && op->src[0]->type == GGML_TYPE_F32;
     }

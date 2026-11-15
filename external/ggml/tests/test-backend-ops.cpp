@@ -9044,6 +9044,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_acc(GGML_TYPE_F32, {256, 17, 2, 3}, {256, 16, 2, 3}, 1));
     test_cases.emplace_back(new test_acc(GGML_TYPE_F32, {256, 17, 2, 3}, {128, 16, 2, 3}, 2));
     test_cases.emplace_back(new test_acc(GGML_TYPE_F32, {256, 17, 2, 3}, {64, 16, 2, 3}, 3));
+    // Native small-K contractions and strided padding/attention layouts.
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 1280, 4, 192, {1, 1}, {1, 1}));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 1024, 67, 64, {1, 1}, {1, 1}));
+    test_cases.emplace_back(new test_flash_attn_ext(64, 64, 2, {7, 1}, 512, 1, true, false,
+        0, 0, GGML_PREC_F32, GGML_TYPE_F16, GGML_TYPE_F16, {0, 2, 1, 3}));
+    test_cases.emplace_back(new test_pad_ext(GGML_TYPE_F32, {512, 1, 43, 1}, 1, 1, 0, 0, 0, 0, 0, 0, 2));
+    test_cases.emplace_back(new test_pad_ext(GGML_TYPE_F32, {512, 1, 38, 1}, 1, 1, 0, 0, 0, 0, 0, 0, 2));
     test_cases.emplace_back(new test_pad());
     test_cases.emplace_back(new test_pad(GGML_TYPE_F32, {33, 17, 2, 1}, 4, 3, true)); // circular
     test_cases.emplace_back(new test_pad_ext());

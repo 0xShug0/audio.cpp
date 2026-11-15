@@ -374,7 +374,8 @@ inline bool common_is_swiglu_params(const OpParams & params) {
 inline CommonMulMatMatch common_match_mul_mat_any_format(const Graph &     graph,
                                                          const GraphNode * node,
                                                          KernelCatalogRef  kernel,
-                                                         bool              decode) {
+                                                         bool              decode,
+                                                         bool              allow_small_k = false) {
     CommonMulMatMatch match;
     if (node == nullptr || node->op != GGML_OP_MUL_MAT || node->inputs.size() != 2) {
         return match;
@@ -414,7 +415,7 @@ inline CommonMulMatMatch common_match_mul_mat_any_format(const Graph &     graph
     const bool    token_count_supported = decode ? common_is_supported_decode_token_count(token_count) :
                                                    common_is_supported_prefill_token_count(token_count);
     if (input->ne[0] != input_size || output->ne[0] != output_size || output->ne[1] != token_count ||
-        !token_count_supported || !common_is_supported_dense_input_size(format, input_size) ||
+        !token_count_supported || !common_mul_mat_supported_dense_input_size(format, input_size, allow_small_k) ||
         !(decode ? common_is_supported_dense_decode_output_size(format, input_size, output_size) :
                    common_is_supported_dense_output_size(output_size))) {
         return {};

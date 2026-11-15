@@ -1285,7 +1285,7 @@ static bool build_mul_mat_dispatch(
         (!use_iq_codebook || common_mul_mat_is_skinny_route(match))) {
         return false;
     }
-    const bool use_aligned_dynamic = match.token_count % 32 == 0 &&
+    const bool use_aligned_dynamic = match.input_size >= 256 && match.token_count % 32 == 0 &&
                                      match.kernel.id == kMulMatTiledF32F32Kernel.id && !publish_f16_alternate &&
                                      !use_iq_codebook;
     const bool use_q1_token64 = use_aligned_dynamic && match.token_count == 64 &&
@@ -1988,6 +1988,22 @@ static void build_decode_mul_mat_dispatch(const CommonMulMatMatch & match,
     dispatch_match.dispatches.push_back(std::move(dispatch));
 }
 
+static bool match_small_k_mul_mat_dispatch(const DispatchMatchContext & context, DispatchMatch & dispatch_match) {
+    CommonMulMatMatch match =
+        common_match_mul_mat_any_format(context.graph, context.root_node, kMulMatTiledF32F32Kernel, false, true);
+    if (!match.matched()) {
+        match = common_match_mul_mat_any_format(context.graph, context.root_node, kMulMatTiledF32F32Kernel, true, true);
+    }
+    if (!match.matched() || match.input_size >= 256 ||
+        !common_is_supported_dense_output_size(match.output_size)) {
+        return false;
+    }
+    // The tiled core zero-fills incomplete K tiles and uses logical row strides.
+    // Whole-block skinny, vector and packed-activation schedules do not own these shapes.
+    try_match_fused_unary(context, match);
+    return build_mul_mat_dispatch(context, match, dispatch_match);
+}
+
 static bool match_skinny_mul_mat_dispatch(const DispatchMatchContext & context, DispatchMatch & dispatch_match) {
     CommonMulMatMatch match =
         common_match_mul_mat_any_format(context.graph, context.root_node, kMulMatSkinnyF32F32Kernel, false);
@@ -2128,6 +2144,14 @@ static bool match_strided_float_matmul(const DispatchMatchContext & context, Dis
 }
 
 void register_mul_mat_dispatches(DispatchRegistryBuilder & registry) {
+    registry.add({
+        "common.mul_mat.small_k",
+        GGML_OP_MUL_MAT,
+        DispatchMatchKind::Fused,
+        190,
+        DispatchSource::Common,
+        match_small_k_mul_mat_dispatch,
+    });
     registry.add({"common.strided_float_matmul", GGML_OP_MUL_MAT, DispatchMatchKind::SingleOp, -100,
                   DispatchSource::Common, match_strided_float_matmul});
     registry.add_activation_consumer({

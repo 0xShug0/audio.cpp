@@ -22,7 +22,7 @@ template.decl @ggml.unary_f32.apply_vector4(%op: index, %values: vector<4xf32>) 
 
 amdgpu.target<gfx11-generic> @ggml_matmul_tiled_input_f32_publish_f32_gfx11_wave64 {subgroup_size = 64}
 
-config.decl @ggml.mul_mat.input_size : %value: index where [range(%value, 256, 32768), mul(%value, 32)]
+config.decl @ggml.mul_mat.input_size : %value: index where [range(%value, 32, 32768), mul(%value, 32)]
 
 config.decl @ggml.mul_mat.output_size : %value: index where [range(%value, 1, 262144)]
 

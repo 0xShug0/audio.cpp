@@ -228,6 +228,54 @@ static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, Disp
     return true;
 }
 
+static bool match_pad_f32_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    if (node == nullptr || node->op != GGML_OP_PAD || node->inputs.size() != 1) {
+        return false;
+    }
+    const auto * source = graph_value(context.graph, node->inputs[0]);
+    const auto * output = graph_value(context.graph, node->output);
+    const auto * params = op_params_as<PadParams>(node->params);
+    if (source == nullptr || output == nullptr || params == nullptr || source->type != GGML_TYPE_F32 ||
+        output->type != GGML_TYPE_F32 || !packed_f32_layout(*output) || !f32_element_strides(*source) ||
+        output->element_count <= 0 || static_cast<uint64_t>(output->element_count) > kMaximumCopyElements ||
+        source->byte_count / sizeof(float) > kMaximumCopyElements || source->storage == output->storage) {
+        return false;
+    }
+
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_pad_f32"));
+    dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("source_span", source->byte_count / sizeof(float));
+    dispatch.kernel.compile_parameters.emplace("ggml.pad.circular", params->values[8] != 0 ? "1" : "0");
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        const int64_t left = params->values[2 * i];
+        const int64_t right = params->values[2 * i + 1];
+        if (source->ne[i] > static_cast<int64_t>(kMaximumCopyElements) ||
+            source->nb[i] / sizeof(float) > kMaximumCopyElements || output->ne[i] <= 0 ||
+            output->ne[i] != source->ne[i] + left + right) {
+            return false;
+        }
+        const std::string dim = std::to_string(i);
+        dispatch.kernel.compile_parameters.emplace("ggml.pad.src_ne" + dim, std::to_string(source->ne[i]));
+        dispatch.kernel.compile_parameters.emplace("ggml.pad.stride" + dim,
+                                                    std::to_string(source->nb[i] / sizeof(float)));
+        dispatch.kernel.compile_parameters.emplace("ggml.pad.left" + dim, std::to_string(left > 0 ? left : 0));
+        dispatch.kernel.compile_parameters.emplace("ggml.pad.crop" + dim, std::to_string(left < 0 ? -left : 0));
+        // Normalize on the host so circular padding also handles padding wider than the source.
+        const int64_t shift = ((-left % source->ne[i]) + source->ne[i]) % source->ne[i];
+        dispatch.kernel.compile_parameters.emplace("ggml.pad.shift" + dim, std::to_string(shift));
+        if (i < 3) {
+            dispatch.kernel.compile_parameters.emplace("ggml.pad.ne" + dim, std::to_string(output->ne[i]));
+        }
+    }
+    dispatch.bindings.push_back({ source->storage_root, source->storage_offset, source->byte_count });
+    dispatch.bindings.push_back({ output->id, 0, output->byte_count });
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 static Dispatch float_copy_dispatch(const Value * source, const Value * output) {
     Dispatch dispatch;
     dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_float_copy"));
@@ -342,6 +390,8 @@ static bool match_concat_dispatch(const DispatchMatchContext & context, Dispatch
 }
 
 void register_copy_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.pad_f32", GGML_OP_PAD, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_pad_f32_dispatch});
     registry.add({"common.concat_strided", GGML_OP_CONCAT, DispatchMatchKind::SingleOp, -10,
                   DispatchSource::Common, match_concat_dispatch});
     registry.add({"common.set_f32", GGML_OP_SET, DispatchMatchKind::SingleOp, 0,

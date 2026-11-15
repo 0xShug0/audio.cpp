@@ -33,7 +33,9 @@ func.decl @ggml_dequant_f16_vector4(%iq4nl_table: vector<16xi8>, %iq3s_grid_low0
 
 func.def inline @ggml_matmul_tiled_input_f32_dequant_accumulate_f32(%full_token_tiles: i1, %weight_format: index, %token_count: index, %input_size0: index, %output_size0: index, %output_accumulation: index, %output_unary_op: index, %epilogue: index, %epsilon: f32, %channel_tile: index, %token_tile: index, %input: buffer, %weight: buffer, %bias: buffer, %output: buffer, %residual_input: buffer, %residual_output: buffer, %norm_weight: buffer, %normalized_output: buffer, %completion_counters: buffer) {
   %bounded_token_count = index.assume %token_count [range(%token_count, 1, 2048)] : index
-  %bounded_input_size = index.assume %input_size0 [range(%input_size0, 256, 32768), mul(%input_size0, 32)] : index
+  // K may contain only part of the first 256-wide staging tile. Weight
+  // decoding and activation loads below are guarded by the logical K size.
+  %bounded_input_size = index.assume %input_size0 [range(%input_size0, 32, 32768), mul(%input_size0, 32)] : index
   %bounded_output_size = index.assume %output_size0 [range(%output_size0, 1, 262144)] : index
   %workitem = kernel.workitem.id<x> : index
   %subgroup0 = kernel.subgroup.id : index

@@ -80,7 +80,7 @@ static bool is_supported_value_head_size(int64_t head_size) {
 static bool has_query_layout(const Value & value, int64_t query_head_count, int64_t head_size) {
     const size_t element_size = sizeof(float);
     return value.nb[0] == element_size &&
-           value.nb[1] == static_cast<size_t>(query_head_count * head_size) * element_size &&
+           (value.ne[1] == 1 || value.nb[1] == static_cast<size_t>(query_head_count * head_size) * element_size) &&
            (value.ne[2] == 1 || value.nb[2] == static_cast<size_t>(head_size) * element_size);
 }
 

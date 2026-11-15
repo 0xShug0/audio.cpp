@@ -21,6 +21,9 @@
       "path": "ops/elementwise/fill_f32.loom"
     },
     {
+      "path": "ops/copy/pad_f32.loom"
+    },
+    {
       "path": "ops/copy/repeat_f32.loom"
     },
     {
@@ -978,6 +981,49 @@
         "mode": "direct",
         "primary_sources": [
           "ops/elementwise/fill_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_pad_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_pad_f32",
+      "source": "ops/copy/pad_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "source_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/copy/pad_f32.loom"
         ],
         "library_sources": []
       },
