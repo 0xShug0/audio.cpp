@@ -2116,7 +2116,7 @@ static bool match_strided_float_matmul(const DispatchMatchContext & context, Dis
         output->type != GGML_TYPE_F32 || !output->contiguous || weight->ne[0] != input->ne[0] ||
         input->ne[2] % weight->ne[2] || input->ne[3] % weight->ne[3]) return false;
     Dispatch dispatch;
-    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_float_matmul"));
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_float_matmul_tiled"));
     auto & config = dispatch.kernel.compile_parameters;
     config.emplace("ggml.float_matmul.k", std::to_string(weight->ne[0]));
     config.emplace("ggml.float_matmul.m", std::to_string(weight->ne[1]));
@@ -2131,6 +2131,9 @@ static bool match_strided_float_matmul(const DispatchMatchContext & context, Dis
         if (weight->nb[i] % ws || input->nb[i] % xs) return false;
         config.emplace("ggml.float_matmul.w_stride" + std::to_string(i), std::to_string(weight->nb[i] / ws));
         config.emplace("ggml.float_matmul.x_stride" + std::to_string(i), std::to_string(input->nb[i] / xs));
+    }
+    for (int i = 1; i < GGML_MAX_DIMS; ++i) {
+        config.emplace("ggml.float_matmul.o_stride" + std::to_string(i), std::to_string(output->nb[i] / sizeof(float)));
     }
     dispatch.kernel.integer_parameters.emplace("element_count", output->element_count);
     dispatch.kernel.integer_parameters.emplace("weight_span", weight->byte_count / ggml_type_size(weight->type));

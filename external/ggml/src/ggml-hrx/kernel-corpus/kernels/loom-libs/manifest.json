@@ -703,6 +703,9 @@
     },
     {
       "path": "ops/copy/bilinear_f32.loom"
+    },
+    {
+      "path": "ops/matmul/tiled_float.loom"
     }
   ],
   "exports": [
@@ -10416,6 +10419,59 @@
         "mode": "direct",
         "primary_sources": [
           "ops/copy/bilinear_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_float_matmul_tiled",
+      "family": "loom_libs",
+      "symbol": "ggml_float_matmul_tiled",
+      "source": "ops/matmul/tiled_float.loom",
+      "workload_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "weight_span",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "element_count",
+          "type": "index"
+        },
+        {
+          "name": "weight_span",
+          "type": "index"
+        },
+        {
+          "name": "input_span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "weight",
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/matmul/tiled_float.loom"
         ],
         "library_sources": []
       },

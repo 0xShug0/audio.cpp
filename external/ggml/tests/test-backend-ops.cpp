@@ -7681,6 +7681,19 @@ static const ggml_type other_types[] = {
 #endif
 
 // Test cases for evaluation: should try to cover edge cases while using small input sizes to keep the runtime low
+static std::vector<std::unique_ptr<test_case>> make_test_cases_float_fallback() {
+    std::vector<std::unique_ptr<test_case>> test_cases;
+    // Floating fallback: scalar tails, broadcast batches, and long codec sequences.
+    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16}) {
+        test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 33, 65, 31, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 96, 2051, 192, {1, 1}, {1, 1}));
+        test_cases.emplace_back(new test_mul_mat(type, GGML_TYPE_F32, 33, 17, 63, {2, 1}, {3, 2}));
+    }
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 384, 35520, 192, {1, 1}, {1, 1}));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 33, 17, 63, {2, 1}, {3, 2}, {1, 0, 2, 3}));
+    return test_cases;
+}
+
 static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     std::vector<std::unique_ptr<test_case>> test_cases;
     std::default_random_engine rng(0);
@@ -9046,6 +9059,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_acc(GGML_TYPE_F32, {256, 17, 2, 3}, {64, 16, 2, 3}, 3));
     test_cases.emplace_back(new test_upscale(GGML_TYPE_F32, {467, 896, 1, 1}, 4));
     test_cases.emplace_back(new test_upscale(GGML_TYPE_F32, {467, 896, 1, 1}, 4, GGML_SCALE_MODE_BILINEAR));
+    for (auto & test : make_test_cases_float_fallback()) test_cases.push_back(std::move(test));
     // Native small-K contractions and strided padding/attention layouts.
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 1280, 4, 192, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 1024, 67, 64, {1, 1}, {1, 1}));
@@ -9313,6 +9327,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 // Test cases for performance evaluation: should be representative of real-world use cases
 static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
+    for (auto & test : make_test_cases_float_fallback()) test_cases.push_back(std::move(test));
 
     for (ggml_type dst_type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
         test_cases.emplace_back(new test_im2col_3d(
