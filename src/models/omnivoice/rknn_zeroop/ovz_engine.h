@@ -74,8 +74,12 @@ public:
 
     // Pack per-(layer,shape) B operands into the native tiled layout
     // (M-independent -> all buckets share) and sync to device. Warm: loads the
-    // disk cache (files "ovz_<fingerprint>.<layer>.<shape>.bin"); cold: packs
-    // and writes it.
+    // disk cache (files "ovz_<fingerprint>.<layer>.<shape>.bin" = packed body
+    // + FNV-1a-64 trailer, verified per file; any miss falls back to a cold
+    // repack); cold: packs and writes it (creating the cache dir; each file is
+    // published via temp+fsync+rename so a crashed write can never pass the
+    // warm checks; cache I/O problems are non-fatal and land in
+    // last_warning()).
     int pack_weights();
 
     // Vendor contexts + activation buffers for a canvas geometry.
@@ -108,6 +112,9 @@ public:
     int caches_truncate(int len);  // all 56 caches -> len
 
     const std::string& last_error() const;
+    // non-fatal disk-cache problems from pack_weights() (mkdir/write/flush
+    // failures); the engine runs normally with them, the caller logs it
+    const std::string& last_warning() const;
 
     // --- debug gate hooks (valid after step(); bench-SNR validation only) ---
     void set_layer_hook(void (*fn)(int layer, void* ud), void* ud);

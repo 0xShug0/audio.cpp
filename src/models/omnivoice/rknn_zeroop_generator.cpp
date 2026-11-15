@@ -359,6 +359,11 @@ OmniVoiceRknnZeroopGenerator::OmniVoiceRknnZeroopGenerator(
         throw std::runtime_error(std::string(kLabel) + " pack: " + I.engine.last_error());
     }
     debug::timing_log_scalar("omnivoice.generator.rknn_zeroop.pack_ms", debug::elapsed_ms(pack_start));
+    // non-fatal disk-cache problems (mkdir/write/flush): surface them, the
+    // engine runs normally and just repacks on every run
+    if (const std::string & warn = I.engine.last_warning(); !warn.empty()) {
+        debug::log_message(debug::LogLevel::Warning, "omnivoice.rknn_zeroop", warn);
+    }
     I.ready = true;
 }
 

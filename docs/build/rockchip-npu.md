@@ -479,7 +479,10 @@ whisper-clean Russian at `--guidance-scale 2.0`. Speed (medians over 32 steps; t
 each run pays the geometry-context build): 25.8-26.2 s prefill + ~8.8 s/step at the seq896 twin
 geometry, and at deep shapes (seq1536 bucket) 50.1 s prefill + 22.9 s/step, i.e.
 compiled-ladder parity (23.2 s/step) with no artifact pipeline behind it. First run packs the
-weights (cached after; warm load ~1.1 s).
+weights (cached after; warm load ~1.1 s). The cache directory is created when absent, each pack
+file is `[body][FNV-1a-64 trailer]` published temp+fsync+rename (a crashed write can never pass
+the warm checks, and the trailer catches full-size corruption - any miss falls back to a cold
+repack), and cache I/O failures are logged as a warning, never fatal - the run just repacks.
 
 ## Verified
 

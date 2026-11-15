@@ -16,9 +16,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <map>
+#include <system_error>
 #include <tuple>
 #include <time.h>
+#include <unistd.h>
 #include <utility>
 
 #include "rknn_api.h"
@@ -120,7 +123,7 @@ void unpack_c(const float* src, float* dst, int M, int N, int N1, int subN) {
 
 struct Engine::Impl {
     std::vector<LayerW> w;
-    std::string cache_dir, fp, err;
+    std::string cache_dir, fp, err, warn;
     bool opened = false, packed = false;
 
     // main GEMM slots: per-(M-slot,shape) 28 layer ctx sharing A/C (bench
@@ -477,6 +480,15 @@ int Engine::pack_weights() {
     Impl& I = *im_;
     if (!I.opened) { I.err = "open first"; return 1; }
     if (I.w.size() != kLayers) { I.err = "weights: need 28 layers"; return 1; }
+    I.warn.clear();
+    const bool cache = !I.cache_dir.empty() && !I.fp.empty();
+    if (cache) {
+        // a fresh install has no cache dir; mkdir it so the disk cache is
+        // usable from the first run (fopen below does not create parents)
+        std::error_code ec;
+        std::filesystem::create_directories(I.cache_dir, ec);
+        if (ec) I.warn = "cache: mkdir " + I.cache_dir + ": " + ec.message();
+    }
     const int Mw = 2 * kQrows;  // io.B.size is M-independent; any M queries it
     for (int s = 0; s < 4; ++s) {
         if (I.pack_ctx[s]) continue;
@@ -497,18 +509,46 @@ int Engine::pack_weights() {
                 if (!I.wt[l][s].mem) { I.err = "alloc wt"; return 1; }
             }
     }
-    bool warm = !I.cache_dir.empty() && !I.fp.empty();
-    char fn[512];
+    bool warm = cache;
+    std::string fn;
+    auto path = [&](int l, int s) {
+        fn = I.cache_dir + "/ovz_" + I.fp + "." + std::to_string(l) + "." + std::to_string(s) + ".bin";
+    };
+    // cache file = [packed body wsz][FNV-1a-64 trailer 8] published atomically;
+    // the size check catches truncated files, the trailer catches full-size
+    // content corruption (bit-rot, half-committed fs blocks after power loss).
+    // Caches written without a trailer fail the size check and repack, so the
+    // format change invalidates them without touching the fingerprint tag.
+    auto fnv64 = [](const uint8_t* b, size_t n) {
+        uint64_t h = 0xcbf29ce484222325ULL;
+        for (size_t i = 0; i < n; ++i) { h ^= b[i]; h *= 0x100000001b3ULL; }
+        return h;
+    };
     for (int l = 0; warm && l < kLayers; ++l)
         for (int s = 0; s < 4; ++s) {
-            snprintf(fn, sizeof(fn), "%s/ovz_%s.%d.%d.bin", I.cache_dir.c_str(), I.fp.c_str(), l, s);
-            FILE* f = fopen(fn, "rb");
+            path(l, s);
+            FILE* f = fopen(fn.c_str(), "rb");
             if (!f) { warm = false; break; }
             fseek(f, 0, SEEK_END);
             long sz = ftell(f);
             fclose(f);
-            if (sz != (long)wsz[s]) { warm = false; break; }
+            if (sz != (long)wsz[s] + 8) { warm = false; break; }
         }
+    if (warm)  // warm load with per-file checksum verify; any miss -> cold repack
+        for (int l = 0; warm && l < kLayers; ++l)
+            for (int s = 0; s < 4 && warm; ++s) {
+                path(l, s);
+                uint16_t* dst = (uint16_t*)I.wt[l][s].mem->virt_addr;
+                uint64_t cs = 0;
+                FILE* f = fopen(fn.c_str(), "rb");
+                bool bad = !f || fread(dst, 1, wsz[s], f) != wsz[s] || fread(&cs, 1, 8, f) != 8 ||
+                           cs != fnv64((const uint8_t*)dst, wsz[s]);
+                if (f) fclose(f);
+                if (bad || rknn_mem_sync(I.wt[l][s].sync, I.wt[l][s].mem, RKNN_MEMORY_SYNC_TO_DEVICE)) {
+                    warm = false;
+                    break;
+                }
+            }
     std::vector<uint16_t> fused;
     for (int l = 0; !warm && l < kLayers; ++l) {
         const LayerW& w = I.w[l];
@@ -544,28 +584,31 @@ int Engine::pack_weights() {
                 I.err = "sync wt l" + std::to_string(l) + " s" + std::to_string(s);
                 return 1;
             }
-            if (!I.cache_dir.empty() && !I.fp.empty()) {
-                snprintf(fn, sizeof(fn), "%s/ovz_%s.%d.%d.bin", I.cache_dir.c_str(), I.fp.c_str(), l, s);
-                FILE* f = fopen(fn, "wb");
-                if (f) { fwrite(I.wt[l][s].mem->virt_addr, 1, (size_t)wsz[s], f); fclose(f); }
+            if (cache) {
+                path(l, s);
+                const uint8_t* buf = (const uint8_t*)I.wt[l][s].mem->virt_addr;
+                const uint64_t cs = fnv64(buf, wsz[s]);
+                // atomic publish: write a unique temp, fsync, rename over the
+                // final name; a half-written/crashed pack never masquerades as
+                // a complete cache file. On any failure drop the temp and
+                // warn - the engine still runs (and repacks next run).
+                const std::string tmp = fn + "." + std::to_string(getpid()) + ".tmp";
+                FILE* f = fopen(tmp.c_str(), "wb");
+                bool ok = f && fwrite(buf, 1, (size_t)wsz[s], f) == (size_t)wsz[s] &&
+                          fwrite(&cs, 1, 8, f) == 8 && fflush(f) == 0 && fsync(fileno(f)) == 0;
+                if (f) fclose(f);
+                if (!ok || rename(tmp.c_str(), fn.c_str()) != 0) {
+                    remove(tmp.c_str());
+                    if (I.warn.empty()) I.warn = "cache: write failed for " + fn;
+                }
             }
         }
     }
-    if (warm)
-        for (int l = 0; l < kLayers; ++l)
-            for (int s = 0; s < 4; ++s) {
-                snprintf(fn, sizeof(fn), "%s/ovz_%s.%d.%d.bin", I.cache_dir.c_str(), I.fp.c_str(), l, s);
-                FILE* f = fopen(fn, "rb");
-                bool bad = !f || fread(I.wt[l][s].mem->virt_addr, 1, (size_t)wsz[s], f) != (size_t)wsz[s];
-                if (f) fclose(f);
-                if (bad) { I.err = std::string("cache read ") + fn; return 1; }
-                if (rknn_mem_sync(I.wt[l][s].sync, I.wt[l][s].mem, RKNN_MEMORY_SYNC_TO_DEVICE)) {
-                    I.err = "sync cache wt"; return 1;
-                }
-            }
     I.packed = true;
     return 0;
 }
+
+const std::string& Engine::last_warning() const { return im_->warn; }
 
 int Engine::ensure_geometry(int seq_pad, int tgt_pad) {
     Impl& I = *im_;
@@ -857,6 +900,10 @@ int Engine::caches_truncate(int) { return 0; }
 const std::string& Engine::last_error() const {
     static const std::string e = "omnivoice rknn_zeroop engine requires aarch64";
     return e;
+}
+const std::string& Engine::last_warning() const {
+    static const std::string w;
+    return w;
 }
 void Engine::set_layer_hook(void (*)(int, void*), void*) {}
 const uint16_t* Engine::dbg_q16() const { return nullptr; }
