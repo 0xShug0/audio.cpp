@@ -43,6 +43,23 @@ std::string normalize_config_option(std::string key) {
     return option;
 }
 
+std::set<std::string> explicit_key_value_overrides(
+    const std::vector<std::string> & arguments,
+    const std::string & option) {
+    std::set<std::string> keys;
+    for (size_t i = 1; i + 1 < arguments.size(); ++i) {
+        if (arguments[i] != option) {
+            continue;
+        }
+        const auto separator = arguments[i + 1].find('=');
+        if (separator != std::string::npos && separator > 0) {
+            keys.insert(arguments[i + 1].substr(0, separator));
+        }
+        ++i;
+    }
+    return keys;
+}
+
 // Every option name the CLI looked for, split by whether the lookup consumes the following
 // argument. Populated by the lookups below, so a new flag is recognised the moment its lookup
 // is added and there is no second list to keep in sync.
@@ -171,17 +188,32 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
         }
     }
 
+    const auto session_overrides = explicit_key_value_overrides(arguments, "--session-option");
+    const auto request_overrides = explicit_key_value_overrides(arguments, "--request-option");
     for (const auto & key : keys) {
         const auto option = normalize_config_option(key);
+        const std::set<std::string> * key_value_overrides = nullptr;
+        if (option == "--session-option") {
+            key_value_overrides = &session_overrides;
+        } else if (option == "--request-option") {
+            key_value_overrides = &request_overrides;
+        }
         const auto scalar = config.scalars.find(key);
         if (scalar != config.scalars.end()) {
             if (boolean_flags().count(option) != 0) {
                 if (engine::io::yaml::parse_bool_scalar(scalar->second, key)) {
                     arguments.push_back(option);
                 }
-            } else {
+            } else if (key_value_overrides == nullptr) {
                 arguments.push_back(option);
                 arguments.push_back(scalar->second);
+            } else {
+                const auto separator = scalar->second.find('=');
+                if (separator == std::string::npos || separator == 0 ||
+                    key_value_overrides->count(scalar->second.substr(0, separator)) == 0) {
+                    arguments.push_back(option);
+                    arguments.push_back(scalar->second);
+                }
             }
             continue;
         }
@@ -190,9 +222,16 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
             throw std::runtime_error("CLI YAML boolean flag cannot be a list: " + key);
         }
         const auto & values = config.lists.at(key);
-        for (size_t i = 0; i < values.size(); ++i) {
+        for (const auto & value : values) {
+            if (key_value_overrides != nullptr) {
+                const auto separator = value.find('=');
+                if (separator != std::string::npos && separator > 0 &&
+                    key_value_overrides->count(value.substr(0, separator)) != 0) {
+                    continue;
+                }
+            }
             arguments.push_back(option);
-            arguments.push_back(values[i]);
+            arguments.push_back(value);
         }
     }
     return arguments;

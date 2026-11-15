@@ -644,6 +644,57 @@ void test_cli_arguments_can_be_loaded_from_yaml() {
     std::filesystem::remove(config_path);
 }
 
+void test_cli_key_value_options_override_yaml() {
+    const auto config_path = std::filesystem::temp_directory_path() /
+                             ("audiocpp-cli-config-overrides-" +
+                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                              ".yaml");
+    {
+        std::ofstream config(config_path);
+        config << "session-option:\n"
+               << "  - confucius4_r2t2.unfixed_chunk_num=2\n"
+               << "  - confucius4_r2t2.chunk_size_ms=320\n"
+               << "request-option: temperature=0.7\n";
+    }
+
+    const std::string config_argument = config_path.string();
+    const char * argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--session-option",
+        "confucius4_r2t2.chunk_size_ms=640",
+        "--request-option",
+        "temperature=0.9",
+        "--request-option",
+        "top_k=10",
+    };
+    const auto expanded = minitts::cli::expand_cli_args(9, const_cast<char **>(argv));
+    std::vector<char *> expanded_argv;
+    expanded_argv.reserve(expanded.size() + 1);
+    for (const auto & arg : expanded) {
+        expanded_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    expanded_argv.push_back(nullptr);
+    const int expanded_argc = static_cast<int>(expanded.size());
+
+    const auto session_options =
+        minitts::cli::collect_key_value_args(expanded_argc, expanded_argv.data(), "--session-option");
+    const auto request_options =
+        minitts::cli::collect_key_value_args(expanded_argc, expanded_argv.data(), "--request-option");
+    engine::test::require_eq(
+        session_options.at("confucius4_r2t2.chunk_size_ms"),
+        std::string("640"),
+        "CLI session option overrides YAML");
+    engine::test::require_eq(
+        session_options.at("confucius4_r2t2.unfixed_chunk_num"),
+        std::string("2"),
+        "YAML session option retained");
+    engine::test::require_eq(request_options.at("temperature"), std::string("0.9"), "CLI request option overrides YAML");
+    engine::test::require_eq(request_options.at("top_k"), std::string("10"), "CLI-only request option retained");
+    std::filesystem::remove(config_path);
+}
+
 }  // namespace
 
 int main() {
@@ -660,6 +711,7 @@ int main() {
     test_component_exec_plans();
     test_non_negative_int_flag_values();
     test_cli_arguments_can_be_loaded_from_yaml();
+    test_cli_key_value_options_override_yaml();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }
