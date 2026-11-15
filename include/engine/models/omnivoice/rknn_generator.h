@@ -64,22 +64,28 @@ public:
         int64_t head_dim,
         float rope_theta,
         int64_t hidden_size);
-    ~OmniVoiceRknnGenerator();
+    virtual ~OmniVoiceRknnGenerator();
 
     OmniVoiceRknnGenerator(const OmniVoiceRknnGenerator &) = delete;
     OmniVoiceRknnGenerator & operator=(const OmniVoiceRknnGenerator &) = delete;
 
     // Longest conditional row the ladder covers, in tokens. A longer request has no engine and
     // has to run on the ggml graph, which is why the caller keeps it.
-    int64_t max_tokens() const;
-    int64_t engine_count() const;
+    virtual int64_t max_tokens() const;
+    virtual int64_t engine_count() const;
 
     // True when the registered ladder is the front-shard contract (name-detected at
     // registration, attribute-validated at load); run() then writes hidden rows, not logits.
-    bool front_shard() const;
+    virtual bool front_shard() const;
 
     // The smallest engine that covers `total_tokens`, without loading it: 0 when none does.
-    int64_t bucket_for(int64_t total_tokens) const;
+    virtual int64_t bucket_for(int64_t total_tokens) const;
+
+    // Per-request state hook, called once before the first run() of a request. The compiled
+    // ladder is stateless (every step recomputes the canvas) so this is a no-op there; the
+    // zero-op generator (rknn_zeroop_generator.h) keeps KV caches across steps and
+    // re-prefills here.
+    virtual void reset();
 
     // One full diffusion step at a bucket from bucket_for(). Full ladder: writes the guided
     // conditional logits of the target block as [target_frames][codebooks][vocab_size] floats
@@ -91,7 +97,7 @@ public:
     // written rows is untouched - the caller zero-pads it). The engine's own output attribute
     // layout (declared [1,codebooks,tokens,vocab] or the converter's NHWC relabel) is read at
     // load, so the crop follows the engine, not the producer's file.
-    void run(
+    virtual void run(
         int64_t bucket,
         const OmniVoiceRknnStepInputs & inputs,
         float * logits_out,

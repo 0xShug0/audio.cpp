@@ -472,7 +472,10 @@ struct OmniVoiceRknnGenerator::Impl {
             return a->tokens < b->tokens;
         });
         if (slots.empty()) {
-            throw std::runtime_error(std::string(kLabel) + ": no engine paths given");
+            // The zero-op generator (rknn_zeroop_generator.h) derives from this class and
+            // registers no compiled ladders; an empty ladder is inert here (bucket_for 0,
+            // run throws) so the derived vtable drives the request.
+            return;
         }
         // The board states its own ceiling; 0 means pin every rung the deployment declares.
         const int64_t budget_mib = aperture_budget_mib();
@@ -542,6 +545,11 @@ OmniVoiceRknnGenerator::OmniVoiceRknnGenerator(
 }
 
 OmniVoiceRknnGenerator::~OmniVoiceRknnGenerator() = default;
+
+// The compiled ladder recomputes the whole canvas every step and keeps no
+// per-request state, so the hook is a no-op here; the zero-op generator
+// overrides it to drop its KV caches.
+void OmniVoiceRknnGenerator::reset() {}
 
 int64_t OmniVoiceRknnGenerator::max_tokens() const {
     return impl_->slots.empty() ? 0 : impl_->slots.back()->tokens;

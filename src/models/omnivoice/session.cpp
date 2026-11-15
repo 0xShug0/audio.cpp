@@ -249,7 +249,8 @@ std::vector<std::string> generator_rknn_engines_from_options(
         "omnivoice.exec_plan",
         {{"generator", "ggml",
           {{"ggml", {options.backend.type}, {}, {}, {}},
-           {"rknn", {}, {"main"}, {}, {}}}}});
+           {"rknn", {}, {"main"}, {}, {}},
+           {"rknn_zeroop", {}, {}, {}, {}}}}});
     const auto & generator_plan = exec_plan.at("generator");
     if (generator_plan.impl != "rknn") {
         return {};
@@ -264,6 +265,19 @@ std::vector<std::string> generator_rknn_engines_from_options(
         }
     }
     return engines;
+}
+
+// The generator component's impl key ("rknn_zeroop" selects the vendor
+// rknn_matmul_api zero-op engine; no artifacts, no compiled ladders).
+std::string generator_rknn_impl_from_options(const runtime::SessionOptions & options) {
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "omnivoice.exec_plan",
+        {{"generator", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}, {}},
+           {"rknn", {}, {"main"}, {}, {}},
+           {"rknn_zeroop", {}, {}, {}, {}}}}});
+    return exec_plan.at("generator").impl;
 }
 
 }  // namespace
@@ -309,6 +323,7 @@ OmniVoiceSession::OmniVoiceSession(
           audio_tokenizer_codebook_weight_storage_type_),
       prompt_builder_(assets_, tokenizer_),
       generator_rknn_engines_(generator_rknn_engines_from_options(options, *assets_)),
+      generator_rknn_zeroop_(generator_rknn_impl_from_options(options) == "rknn_zeroop"),
       generator_(
           assets_,
           execution_context(),
@@ -321,7 +336,8 @@ OmniVoiceSession::OmniVoiceSession(
           generator_packed_cfg_,
           generator_device_scoring_,
           generator_packed_projections_,
-          generator_rknn_engines_) {
+          generator_rknn_engines_,
+          generator_rknn_zeroop_) {
     engine::debug::trace_log_scalar("omnivoice.perf_mode", perf_mode_name(generator_perf_mode_));
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning &&

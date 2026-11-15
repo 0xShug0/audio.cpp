@@ -71,7 +71,7 @@ runtime::ModelCliInterface cli(const OmniVoiceAssets &) {
         {"omnivoice.generator_decode_graph_arena_mb", "int", "Generator decode graph arena size in MiB; default 256.", false, "256", "1"},
         {"omnivoice.audio_tokenizer_weight_context_mb", "int", "Audio tokenizer weight context size in MiB; default 128.", false, "128", "1"},
         {"omnivoice.generator_weight_context_mb", "int", "Generator weight context size in MiB; default 256.", false, "256", "1"},
-        {"omnivoice.exec_plan", "json", "Component execution plans; {\"generator\":{\"impl\":\"rknn\",\"artifacts\":{\"main\":\"engine1.rknn,engine2.rknn\"}}} runs the diffusion-LM step on a ladder of Rockchip NPU engines compiled one per total-token length (tools/rknn/prepare_omnivoice_rknn_generator.py, built with ENGINE_ENABLE_RKNN); default {} keeps the ggml graph. A request longer than the largest engine runs the ggml graph.", false, "{}"},
+        {"omnivoice.exec_plan", "json", "Component execution plans; {\"generator\":{\"impl\":\"rknn\",\"artifacts\":{\"main\":\"engine1.rknn,engine2.rknn\"}}} runs the diffusion-LM step on a ladder of Rockchip NPU engines compiled one per total-token length (tools/rknn/prepare_omnivoice_rknn_generator.py, built with ENGINE_ENABLE_RKNN); {\"generator\":{\"impl\":\"rknn_zeroop\"}} runs the same trunk on the vendor rknn_matmul_api zero-op matmul calls, links only librknnrt and needs no engine files (ENGINE_ENABLE_RKNN; packed weights cached under <model dir>/rknn-zeroop-cache, override with AUDIOCPP_RKNN_ZEROOP_CACHE); default {} keeps the ggml graph. A request longer than the largest engine runs the ggml graph.", false, "{}"},
     };
     return out;
 }

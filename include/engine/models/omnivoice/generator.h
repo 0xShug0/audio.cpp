@@ -47,7 +47,8 @@ public:
         bool packed_cfg = true,
         bool device_scoring = true,
         bool packed_projections = true,
-        std::vector<std::string> rknn_engine_paths = {});
+        std::vector<std::string> rknn_engine_paths = {},
+        bool rknn_zeroop = false);
     ~OmniVoiceQwen3DiffusionRuntime();
 
     // One request, drawing from the runtime RNG (see seed_rng()).
