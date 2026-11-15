@@ -1219,10 +1219,13 @@ void xet_download(
     std::filesystem::resize_file(destination, request.size);
 
     TokenProvider tokens(request, cancelled, options);
+    const bool verify_sha256 = options.verify_sha256 && is_xet_hash(request.expected_sha256);
     std::unique_ptr<PrefixHasher> hasher;
-    if (options.verify_sha256 && is_xet_hash(request.expected_sha256)) {
+#ifndef _WIN32
+    if (verify_sha256) {
         hasher = std::make_unique<PrefixHasher>(destination, cancelled);
     }
+#endif
     for (uint64_t segment_start = 0; segment_start < request.size;) {
         const uint64_t segment_end = std::min(request.size, segment_start + options.segment_bytes);
         std::vector<char> done;
@@ -1284,6 +1287,13 @@ void xet_download(
         throw XetIntegrityError("Xet reconstruction size mismatch: expected " +
             std::to_string(request.size) + ", got " + std::to_string(size));
     }
+#ifdef _WIN32
+    // MSVC ignores pubsetbuf before open. Hash only after the writers close,
+    // so read-ahead cannot capture bytes that have not been reconstructed yet.
+    if (verify_sha256) {
+        hasher = std::make_unique<PrefixHasher>(destination, cancelled);
+    }
+#endif
     if (hasher) {
         const auto digest = hasher->finish(request.size);
         if (digest != request.expected_sha256) {
