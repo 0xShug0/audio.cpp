@@ -481,8 +481,10 @@ inline core::TensorValue build_gated_feed_forward_impl(
             config.hidden_size, 2 * config.intermediate_size, config.use_bias,
             config.projection_precision, config.use_weight_type_projection_precision, config.use_fast_cuda_projection);
         const int axis = static_cast<int>(input.shape.rank) - 1;
-        up = SliceModule({axis, 0, config.intermediate_size}).build(ctx, packed);
-        gate = SliceModule({axis, config.intermediate_size, config.intermediate_size}).build(ctx, packed);
+        const int64_t gate_offset = config.packed_gate_first ? 0 : config.intermediate_size;
+        const int64_t up_offset = config.packed_gate_first ? config.intermediate_size : 0;
+        up = SliceModule({axis, up_offset, config.intermediate_size}).build(ctx, packed);
+        gate = SliceModule({axis, gate_offset, config.intermediate_size}).build(ctx, packed);
     } else {
         gate = build_linear_projection_impl(
             ctx,
@@ -495,15 +497,24 @@ inline core::TensorValue build_gated_feed_forward_impl(
             config.use_weight_type_projection_precision,
             config.use_fast_cuda_projection);
     }
-    switch (config.activation) {
-        case GatedFeedForwardActivation::Gelu:
-            gate = GeluModule({config.gelu_approximation}).build(ctx, gate);
-            break;
-        case GatedFeedForwardActivation::Silu:
-            gate = SiluModule{}.build(ctx, gate);
-            break;
+    if (config.round_projections) gate = Bf16RoundModule{}.build(ctx, gate);
+    // Fused SwiGLU needs the unactivated gate and the up projection together.
+    if (config.fused_swiglu && !weights.up_gate_proj.weight.valid()) {
+        up = build_linear_projection_impl(ctx, input, weights.up_proj,
+            config.hidden_size, config.intermediate_size, config.use_bias,
+            config.projection_precision, config.use_weight_type_projection_precision, config.use_fast_cuda_projection);
     }
-    if (!weights.up_gate_proj.weight.valid()) {
+    if (!config.fused_swiglu) {
+        switch (config.activation) {
+            case GatedFeedForwardActivation::Gelu:
+                gate = GeluModule({config.gelu_approximation}).build(ctx, gate);
+                break;
+            case GatedFeedForwardActivation::Silu:
+                gate = SiluModule{}.build(ctx, gate);
+                break;
+        }
+    }
+    if (!weights.up_gate_proj.weight.valid() && !config.fused_swiglu) {
         up = build_linear_projection_impl(
             ctx,
             input,
@@ -515,8 +526,13 @@ inline core::TensorValue build_gated_feed_forward_impl(
             config.use_weight_type_projection_precision,
             config.use_fast_cuda_projection);
     }
-    auto hidden = MulModule{}.build(ctx, gate, up);
-    return build_linear_projection_impl(
+    if (config.round_projections) up = Bf16RoundModule{}.build(ctx, up);
+    if (config.round_activation && !config.fused_swiglu) gate = Bf16RoundModule{}.build(ctx, gate);
+    auto hidden = config.fused_swiglu
+        ? core::wrap_tensor(ggml_swiglu_split(ctx.ggml, gate.tensor, up.tensor), gate.shape, gate.type)
+        : MulModule{}.build(ctx, gate, up);
+    if (config.round_product) hidden = Bf16RoundModule{}.build(ctx, hidden);
+    auto output = build_linear_projection_impl(
         ctx,
         hidden,
         weights.down_proj,
@@ -526,6 +542,7 @@ inline core::TensorValue build_gated_feed_forward_impl(
         config.projection_precision,
         config.use_weight_type_projection_precision,
         config.use_fast_cuda_projection);
+    return config.round_output ? Bf16RoundModule{}.build(ctx, output) : output;
 }
 
 inline AttentionWeights require_attention_weights(const AttentionWeights & weights, bool use_bias) {

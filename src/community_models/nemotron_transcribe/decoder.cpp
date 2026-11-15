@@ -7,6 +7,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/kv_cache.h"
 #include "engine/framework/modules/moe_module.h"
+#include "engine/framework/modules/moe_feed_forward_module.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/staged_moe_runtime.h"
 #include "engine/framework/sampling/hf_sampler.h"
@@ -139,11 +140,7 @@ struct LayerWeights {
     ggml_tensor * k = nullptr;
     ggml_tensor * v = nullptr;
     ggml_tensor * attention_out = nullptr;
-    ggml_tensor * router = nullptr;
-    ggml_tensor * router_bias = nullptr;
-    ggml_tensor * experts_up = nullptr;
-    ggml_tensor * experts_down = nullptr;
-    modules::FeedForwardWeights shared;
+    modules::MoeFeedForwardWeights ffn;
 };
 
 struct Weights {
@@ -314,17 +311,21 @@ public:
         : execution_(execution), state_(state), steps_(steps), prompt_(prompt), hidden_size_(c.hidden_size), weights_(w),
           prepared_(execution, {"nemotron_transcribe.decoder", kGraphArenaBytes, kGraphNodes,
               w.disk_store ? 64 * ggml_tensor_overhead() : 0}) {
-        routing_config_.experts = c.experts;
-        routing_config_.selected = c.experts_per_token;
-        routing_config_.scoring = modules::MoeScoring::Sigmoid;
-        routing_config_.normalization = modules::MoeNormalization::Clamp;
-        routing_config_.denominator_epsilon = 6.103515625e-5F;
-        routing_config_.scale = c.routed_scaling_factor;
-        routing_config_.precision = GGML_PREC_F32;
-        shared_config_.hidden_size = c.hidden_size;
-        shared_config_.intermediate_size = c.shared_expert_width;
-        shared_config_.use_bias = false;
-        shared_config_.activation = modules::FeedForwardActivation::ReluSquared;
+        auto & routing = ffn_config_.routing;
+        modules::FeedForwardConfig shared;
+        routing.experts = c.experts;
+        routing.selected = c.experts_per_token;
+        routing.scoring = modules::MoeScoring::Sigmoid;
+        routing.normalization = modules::MoeNormalization::Clamp;
+        routing.denominator_epsilon = 6.103515625e-5F;
+        routing.scale = c.routed_scaling_factor;
+        routing.precision = GGML_PREC_F32;
+        shared.hidden_size = c.hidden_size;
+        shared.intermediate_size = c.shared_expert_width;
+        shared.use_bias = false;
+        shared.activation = modules::FeedForwardActivation::ReluSquared;
+        ffn_config_.shared = shared;
+        ffn_config_.experts.activation = modules::MoeActivation::ReluSquared;
         auto * g = prepared_.build_context().ggml;
         graph_ = prepared_.graph();
         auto * inputs = w.disk_store ? prepared_.persistent_build_context().ggml : g;
@@ -376,7 +377,7 @@ public:
                     cur, layer, c, state, i, sequence_id_, steps); break;
                 case 'A': cur = build_attention(g, cur, layer, c, state, i, slots_, mask_, steps,
                     prefill_body_ ? prefill_body_ : (!needs_logits ? graph_ : nullptr)); break;
-                case 'E': cur = build_moe(ctx, cur, layer); break;
+                case 'E': cur = modules::MoeFeedForwardModule(ffn_config_).build(ctx, cur, layer.ffn); break;
             }
             cur = ggml_add(g, cur, residual);
         }
@@ -427,20 +428,11 @@ public:
 
 
 private:
-    ggml_tensor * build_moe(core::ModuleBuildContext & ctx, ggml_tensor * input,
-        const LayerWeights & layer) const {
-        const auto routing = modules::MoeModule::build_routing(ctx, input, layer.router, layer.router_bias, routing_config_);
-        auto * routed = moe_.build(ctx, input, routing, {layer.experts_up, nullptr, layer.experts_down});
-        auto shared = modules::FeedForwardModule(shared_config_).build(ctx,
-            core::wrap_tensor(input, core::TensorShape::from_dims({input->ne[1], input->ne[0]})), layer.shared);
-        return ggml_add(ctx.ggml, routed, shared.tensor);
-    }
-
     void build_offload(const DecoderConfig & c, const Weights & weights,
         ggml_tensor * embeddings) {
         const auto h = c.hidden_size, k = c.experts_per_token;
         const auto first = c.block_pattern.find('E');
-        slots_count_ = weights.layers.at(first).experts_up->ne[2];
+        slots_count_ = weights.layers.at(first).ffn.experts.up->ne[2];
         int64_t expert_rows = std::min<int64_t>(steps_, 32);
         while ((expert_rows & (expert_rows - 1)) != 0) ++expert_rows;
         modules::StagedMoeConfig staged_config;
@@ -470,11 +462,9 @@ private:
             auto * graph = prepared_.graph(id);
             auto * normalized = rms_norm(g, x_, layer.norm, c.rms_norm_eps);
             if (c.block_pattern[i] == 'E') {
-                const auto routing = modules::MoeModule::build_routing(ctx, normalized, layer.router, layer.router_bias, routing_config_);
-                auto shared = modules::FeedForwardModule(shared_config_).build(ctx,
-                    core::wrap_tensor(normalized, core::TensorShape::from_dims({steps_, h})), layer.shared);
-                ggml_build_forward_expand(graph, ggml_cpy(g, shared.tensor, shared_));
-                staged_moe_->build_inputs(ctx, graph, normalized, routing);
+                const auto inputs = modules::MoeFeedForwardModule(ffn_config_).build_inputs(ctx, normalized, layer.ffn);
+                ggml_build_forward_expand(graph, ggml_cpy(g, inputs.shared, shared_));
+                staged_moe_->build_inputs(ctx, graph, inputs.experts, inputs.routing);
             } else {
                 auto * output = c.block_pattern[i] == 'M'
                     ? build_mamba(g, graph, normalized, layer, c, state_, i, sequence_id_, steps_)
@@ -483,14 +473,15 @@ private:
             }
             layer_graphs_.push_back(id);
             if (c.block_pattern[i] == 'E') {
-                staged_layers_.push_back(staged_moe_->add_layer(moe_,
-                    {layer.experts_up, nullptr, layer.experts_down}, *weights.disk_store, weights.disk_groups[i]));
+                staged_layers_.push_back(staged_moe_->add_layer(modules::MoeModule(ffn_config_.experts),
+                    layer.ffn.experts, *weights.disk_store, weights.disk_groups[i]));
             } else staged_layers_.push_back(-1);
         }
 
         finish_ = prepared_.add_graph("finish", 64);
         auto * routed = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
-        ggml_build_forward_expand(prepared_.graph(finish_), ggml_cpy(g, ggml_add(g, ggml_add(g, routed, shared_), x_), x_));
+        auto * output = modules::MoeFeedForwardModule(ffn_config_).finish(ctx, routed, shared_, weights.layers.at(first).ffn);
+        ggml_build_forward_expand(prepared_.graph(finish_), ggml_cpy(g, ggml_add(g, output, x_), x_));
         final_ = prepared_.add_graph("final", 64);
         auto * last = ggml_view_2d(g, x_, h, 1, x_->nb[1], (steps_ - 1) * x_->nb[1]);
         logits_ = ggml_mul_mat(g, weights.output, rms_norm(g, last, weights.final_norm, c.rms_norm_eps));
@@ -543,9 +534,7 @@ private:
         state_.advance(steps_);
     }
 
-    modules::MoeRoutingConfig routing_config_;
-    modules::FeedForwardConfig shared_config_;
-    const modules::MoeModule moe_{{modules::MoeActivation::ReluSquared}};
+    modules::MoeFeedForwardConfig ffn_config_;
     core::ExecutionContext & execution_;
     DecoderState & state_;
     int64_t steps_;
@@ -638,8 +627,8 @@ struct NemotronHDecoderRuntime::Impl {
                 layer.attention_out = store_.load_tensor(s, prefix + "attn_output.weight", storage,
                     {c.hidden_size, c.attention_heads * c.attention_head_dim}).tensor;
             } else {
-                layer.router = store_.load_f32_tensor(s, prefix + "ffn_gate_inp.weight", {c.experts, c.hidden_size}).tensor;
-                layer.router_bias = store_.load_f32_tensor(s, prefix + "exp_probs_b.bias", {c.experts}).tensor;
+                layer.ffn.router = store_.load_f32_tensor(s, prefix + "ffn_gate_inp.weight", {c.experts, c.hidden_size});
+                layer.ffn.selection_bias = store_.load_f32_tensor(s, prefix + "exp_probs_b.bias", {c.experts});
                 const auto & expert = resources_->bind_layer(moe_ordinal++, i, {
                     {prefix + "ffn_up_exps.weight", prefix + "ffn_up_exps.weight",
                         {c.experts, c.expert_width, expert_row_width(c.hidden_size, c.expert_row_alignment)}, storage},
@@ -647,11 +636,12 @@ struct NemotronHDecoderRuntime::Impl {
                         {c.experts, c.hidden_size, expert_row_width(c.expert_width, c.expert_row_alignment)}, storage}},
                     c.experts_per_token);
                 weights_.disk_groups[i] = expert.disk_group;
-                layer.experts_up = expert.weights[0].tensor;
-                layer.experts_down = expert.weights[1].tensor;
-                layer.shared.fc1_weight = store_.load_tensor(s, prefix + "ffn_up_shexp.weight", storage,
+                layer.ffn.experts.up = expert.weights[0].tensor;
+                layer.ffn.experts.down = expert.weights[1].tensor;
+                auto & shared = std::get<modules::FeedForwardWeights>(layer.ffn.shared);
+                shared.fc1_weight = store_.load_tensor(s, prefix + "ffn_up_shexp.weight", storage,
                     {c.shared_expert_width, c.hidden_size});
-                layer.shared.fc2_weight = store_.load_tensor(s, prefix + "ffn_down_shexp.weight", storage,
+                shared.fc2_weight = store_.load_tensor(s, prefix + "ffn_down_shexp.weight", storage,
                     {c.hidden_size, c.shared_expert_width});
             }
             weights_.layers.push_back(layer);

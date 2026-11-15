@@ -1,3 +1,4 @@
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/models/ming3_audio/backbone.h"
 
@@ -35,9 +36,6 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
     embedding = store.load_tensor(source, "model.word_embeddings.weight", native, {c.vocabulary_size, c.hidden_size});
     head = store.load_tensor(source, "lm_head.weight", native, {c.vocabulary_size, c.hidden_size});
     norm = binding::norm_weight_from_source(store, source, "model.norm", c.hidden_size);
-    std::vector<float> identity(c.expert_groups * c.expert_groups, 0.0f);
-    for (int64_t i = 0; i < c.expert_groups; ++i) identity[i * c.expert_groups + i] = 1.0f;
-    group_identity = store.make_f32(core::TensorShape::from_dims({c.expert_groups, c.expert_groups}), std::move(identity));
     for (int64_t layer = 0; layer < c.layers; ++layer) {
         const auto prefix = "model.layers." + std::to_string(layer);
         const auto attn = prefix + ".attention";
@@ -83,16 +81,17 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
         const bool routed = layer >= c.dense_layers;
         const auto dense = prefix + (routed ? ".mlp.shared_experts" : ".mlp");
         const auto middle = routed ? c.shared_intermediate_size : c.intermediate_size;
-        w.mlp_gate_up = modules::PackedLinearWeightsBuilder({c.hidden_size, {
+        auto & shared = w.ffn.shared.emplace<modules::GatedFeedForwardWeights>();
+        shared.up_gate_proj = modules::PackedLinearWeightsBuilder({c.hidden_size, {
             {dense + ".gate_proj.weight", std::nullopt, middle},
             {dense + ".up_proj.weight", std::nullopt, middle}}, false, true}).build(store, source, native);
-        w.mlp_down = binding::linear_from_source(store, source, dense + ".down_proj", native, c.hidden_size, middle, false);
+        shared.down_proj = binding::linear_from_source(store, source, dense + ".down_proj", native, c.hidden_size, middle, false);
         if (routed) {
-            w.router = store.load_f32_tensor(source, prefix + ".mlp.gate.weight", {c.experts, c.hidden_size});
+            w.ffn.router = store.load_f32_tensor(source, prefix + ".mlp.gate.weight", {c.experts, c.hidden_size});
             auto bias = source.require_f32(prefix + ".mlp.gate.expert_bias", {c.experts});
             // The official BF16 loader casts this buffer before the F32 router uses it.
             core::round_f32_to_bf16_in_place(bias);
-            w.router_bias = store.make_f32(core::TensorShape::from_dims({c.experts}), std::move(bias));
+            w.ffn.selection_bias = store.make_f32(core::TensorShape::from_dims({c.experts}), std::move(bias));
             const auto & bank = experts->bind_layer(static_cast<size_t>(layer - c.dense_layers),
                 static_cast<size_t>(layer), {
                     {prefix + ".mlp.experts.gate_proj.weight", "thinker/" + prefix + ".mlp.experts.gate_proj.weight",
@@ -103,10 +102,30 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
                         {c.experts, c.hidden_size, c.expert_intermediate_size}, native}}, c.experts_per_token);
             w.disk_store = bank.disk_store;
             w.disk_group = bank.disk_group;
-            w.expert_gate = bank.weights[0];
-            w.expert_up = bank.weights[1];
-            w.expert_down = bank.weights[2];
+            w.ffn.experts.gate = bank.weights[0].tensor;
+            w.ffn.experts.up = bank.weights[1].tensor;
+            w.ffn.experts.down = bank.weights[2].tensor;
         }
+        modules::GatedFeedForwardConfig shared_config;
+        shared_config.hidden_size = c.hidden_size;
+        shared_config.intermediate_size = middle;
+        shared_config.activation = modules::GatedFeedForwardActivation::Silu;
+        shared_config.packed_gate_first = true;
+        shared_config.round_projections = shared_config.round_activation = true;
+        shared_config.round_product = shared_config.round_output = true;
+        w.ffn_config.shared = shared_config;
+        auto & routing = w.ffn_config.routing;
+        routing.experts = c.experts;
+        routing.selected = c.experts_per_token;
+        routing.scoring = modules::MoeScoring::Sigmoid;
+        routing.normalization = c.experts_per_token > 1 ? modules::MoeNormalization::AddEpsilon : modules::MoeNormalization::None;
+        routing.denominator_epsilon = 1e-20F;
+        routing.scale = c.routed_scaling_factor;
+        routing.precision = GGML_PREC_F32;
+        routing.groups = c.expert_groups;
+        routing.selected_groups = c.selected_groups;
+        w.ffn_config.experts = {modules::MoeActivation::SwiGlu, false, true, true, true, true};
+        w.ffn_config.round_routed_output = w.ffn_config.round_output = true;
         layers.push_back(std::move(w));
     }
     store.upload();
@@ -246,84 +265,17 @@ core::TensorValue build_mla(core::ModuleBuildContext & ctx, const core::TensorVa
         modules::LinearModule({c.heads * c.value_dim, c.hidden_size, false}).build(ctx, attended, w.output));
 }
 
-namespace {
-
-core::TensorValue build_shared_mlp(core::ModuleBuildContext & ctx, const core::TensorValue & input,
-                                  const ThinkerLayerWeights & w, const ThinkerConfig & c, bool routed) {
-    const int64_t middle = routed ? c.shared_intermediate_size : c.intermediate_size;
-    const auto projected = modules::LinearModule({c.hidden_size, 2 * middle, false}).build(ctx, input, w.mlp_gate_up);
-    auto gate = modules::Bf16RoundModule{}.build(ctx,
-        modules::SliceModule({2, 0, middle}).build(ctx, projected));
-    const auto up = modules::Bf16RoundModule{}.build(ctx,
-        modules::SliceModule({2, middle, middle}).build(ctx, projected));
-    gate = modules::Bf16RoundModule{}.build(ctx, modules::SiluModule{}.build(ctx, gate));
-    gate = modules::Bf16RoundModule{}.build(ctx, modules::MulModule{}.build(ctx, gate, up));
-    return modules::Bf16RoundModule{}.build(ctx,
-        modules::LinearModule({middle, c.hidden_size, false}).build(ctx, gate, w.mlp_down));
-}
-
-struct MoeRouting {
-    ggml_tensor * ids;
-    ggml_tensor * scales;
-};
-
-MoeRouting build_routing(core::ModuleBuildContext & ctx, ggml_tensor * x,
-                         const ThinkerLayerWeights & w, const ThinkerConfig & c,
-                         const core::TensorValue & group_identity) {
-    const auto steps = x->ne[1];
-    auto * router_logits = ggml_mul_mat(ctx.ggml, w.router.tensor, x);
-    ggml_mul_mat_set_prec(router_logits, GGML_PREC_F32);
-    auto * scores = ggml_sigmoid(ctx.ggml, router_logits);
-    auto * routing = ggml_add(ctx.ggml, scores, w.router_bias.tensor);
-    const int64_t per_group = c.experts / c.expert_groups;
-    auto * groups = ggml_reshape_2d(ctx.ggml, routing, per_group, c.expert_groups * steps);
-    auto * top2 = ggml_argsort_top_k(ctx.ggml, groups, 2);
-    auto * best = ggml_get_rows(ctx.ggml,
-        ggml_reshape_3d(ctx.ggml, groups, 1, per_group, c.expert_groups * steps), top2);
-    auto * group_scores = ggml_reshape_2d(ctx.ggml,
-        ggml_sum_rows(ctx.ggml, ggml_reshape_2d(ctx.ggml, best, 2, c.expert_groups * steps)), c.expert_groups, steps);
-    auto * selected_groups = ggml_argsort_top_k(ctx.ggml, group_scores, c.selected_groups);
-    auto * group_rows = ggml_get_rows(ctx.ggml, group_identity.tensor,
-        ggml_reshape_1d(ctx.ggml, ggml_cont(ctx.ggml, selected_groups), c.selected_groups * steps));
-    group_rows = ggml_reshape_3d(ctx.ggml, group_rows, c.expert_groups, c.selected_groups, steps);
-    auto * mask = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, group_rows, 1, 0, 2, 3));
-    mask = ggml_reshape_3d(ctx.ggml, ggml_sum_rows(ctx.ggml, mask), 1, c.expert_groups, steps);
-    mask = ggml_repeat(ctx.ggml, mask, ggml_reshape_3d(ctx.ggml, routing, per_group, c.expert_groups, steps));
-    mask = ggml_scale_bias(ctx.ggml, ggml_reshape_2d(ctx.ggml, mask, c.experts, steps), 1e30f, -1e30f);
-    auto * ids = ggml_argsort_top_k(ctx.ggml, ggml_add(ctx.ggml, routing, mask), c.experts_per_token);
-    auto * selected = ggml_get_rows(ctx.ggml, ggml_reshape_3d(ctx.ggml, scores, 1, c.experts, steps), ids);
-    selected = ggml_reshape_2d(ctx.ggml, selected, c.experts_per_token, steps);
-    if (c.experts_per_token > 1) {
-        auto * denominator = ggml_scale_bias(ctx.ggml, ggml_sum_rows(ctx.ggml, selected), 1.0f, 1e-20f);
-        selected = ggml_div(ctx.ggml, selected, denominator);
-    }
-    selected = ggml_scale(ctx.ggml, selected, c.routed_scaling_factor);
-    return {ids, selected};
-}
-
-// Match every explicit BF16 boundary in the Thinker expert FFN.
-const modules::MoeModule thinker_experts({modules::MoeActivation::SwiGlu,
-    false,  // fused_swiglu
-    true,   // round_projections
-    true,   // round_activation
-    true,   // round_product
-    true}); // round_output
-
-}  // namespace
-
 core::TensorValue build_thinker_mlp(core::ModuleBuildContext & ctx, const core::TensorValue & input,
-                                   const ThinkerLayerWeights & w, const ThinkerConfig & c,
-                                   const core::TensorValue & group_identity, bool routed) {
-    const auto steps = input.shape.dims[1];
-    auto shared = build_shared_mlp(ctx, input, w, c, routed);
-    if (!routed) return shared;
-    auto * x = ggml_reshape_2d(ctx.ggml, input.tensor, c.hidden_size, steps);
-    const auto routing = build_routing(ctx, x, w, c, group_identity);
-    auto * bank_ids = w.disk_store ? w.disk_store->route(ctx, ggml_cont(ctx.ggml, routing.ids), w.disk_group) : routing.ids;
-    auto * experts = thinker_experts.build(ctx, x, {routing.ids, routing.scales},
-        {w.expert_up.tensor, w.expert_gate.tensor, w.expert_down.tensor}, bank_ids);
-    auto routed_output = modules::Bf16RoundModule{}.build(ctx, core::wrap_tensor(experts, shared.shape));
-    return modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(ctx, routed_output, shared));
+    const ThinkerLayerWeights & w, const ThinkerConfig & c, bool routed) {
+    if (!routed) {
+        return modules::GatedFeedForwardModule(std::get<modules::GatedFeedForwardConfig>(*w.ffn_config.shared))
+            .build(ctx, input, std::get<modules::GatedFeedForwardWeights>(w.ffn.shared));
+    }
+    const modules::MoeFeedForwardModule ffn(w.ffn_config);
+    auto * x = ggml_reshape_2d(ctx.ggml, input.tensor, c.hidden_size, input.shape.dims[1]);
+    const auto inputs = ffn.build_inputs(ctx, x, w.ffn);
+    auto * bank_ids = w.disk_store ? w.disk_store->route(ctx, ggml_cont(ctx.ggml, inputs.routing.ids), w.disk_group) : inputs.routing.ids;
+    return core::wrap_tensor(ffn.build_output(ctx, inputs, w.ffn, bank_ids), input.shape);
 }
 
 struct Thinker::Impl {
@@ -367,7 +319,7 @@ struct Thinker::Impl {
             staged_config.tokens = steps;
             staged_config.selected = config.experts_per_token;
             staged_config.experts = config.experts;
-            staged_config.cache_slots = weights.layers.at(config.dense_layers).expert_gate.tensor->ne[2];
+            staged_config.cache_slots = weights.layers.at(config.dense_layers).ffn.experts.gate->ne[2];
             staged_config.rows_per_expert = {32};
             staged_config.scatter_index_type = GGML_TYPE_I32;
             staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, staged_config, workspace_,
@@ -425,29 +377,29 @@ struct Thinker::Impl {
                 normalized = modules::Bf16RoundModule{}.build(ctx,
                     modules::RMSNormModule(norm).build(ctx, residual, w.post_norm));
                 const bool routed = layer >= config.dense_layers;
-                auto shared = build_shared_mlp(ctx, normalized, w, config, routed);
                 if (!routed) {
+                    auto shared = build_thinker_mlp(ctx, normalized, w, config, false);
                     auto output = modules::Bf16RoundModule{}.build(ctx,
                         modules::AddModule{}.build(ctx, residual, shared));
                     ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, output.tensor, x_));
                 } else {
-                    const auto routing = build_routing(ctx,
-                        ggml_reshape_2d(ctx.ggml, normalized.tensor, h, steps), w, config, weights.group_identity);
-                    for (const auto & copy : {std::make_pair(residual.tensor, residual_), std::make_pair(shared.tensor, shared_)})
+                    const auto inputs = modules::MoeFeedForwardModule(w.ffn_config).build_inputs(ctx,
+                        ggml_reshape_2d(ctx.ggml, normalized.tensor, h, steps), w.ffn);
+                    for (const auto & copy : {std::make_pair(residual.tensor, residual_), std::make_pair(inputs.shared, shared_)})
                         ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml,
                             ggml_reshape_2d(ctx.ggml, copy.first, copy.first->ne[0], steps),
                             ggml_reshape_2d(ctx.ggml, copy.second, copy.second->ne[0], steps)));
-                    staged_moe_->build_inputs(ctx, graph, normalized.tensor, {routing.ids, routing.scales});
+                    staged_moe_->build_inputs(ctx, graph, inputs.experts, inputs.routing);
                 }
                 attention_graphs_.push_back(id);
-                if (routed) staged_layers_.push_back(staged_moe_->add_layer(thinker_experts,
-                    {w.expert_up.tensor, w.expert_gate.tensor, w.expert_down.tensor}, *w.disk_store, w.disk_group));
+                if (routed) staged_layers_.push_back(staged_moe_->add_layer(modules::MoeModule(w.ffn_config.experts),
+                    w.ffn.experts, *w.disk_store, w.disk_group));
             }
             finish_ = prepared_->add_graph("finish", small_nodes);
             auto * reduced = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
-            auto routed = modules::Bf16RoundModule{}.build(ctx, core::wrap_tensor(reduced, shape));
-            auto combined = modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(
-                ctx, routed, core::wrap_tensor(ggml_reshape_3d(ctx.ggml, shared_, h, steps, 1), shape)));
+            const auto & ffn_weights = weights.layers.at(config.dense_layers);
+            auto * ffn_output = modules::MoeFeedForwardModule(ffn_weights.ffn_config).finish(ctx, reduced, shared_, ffn_weights.ffn);
+            auto combined = core::wrap_tensor(ggml_reshape_3d(ctx.ggml, ffn_output, h, steps, 1), shape);
             combined = modules::Bf16RoundModule{}.build(ctx,
                 modules::AddModule{}.build(ctx, core::wrap_tensor(residual_, shape), combined));
             ggml_build_forward_expand(prepared_->graph(finish_), ggml_cpy(ctx.ggml, combined.tensor, x_));
@@ -676,7 +628,7 @@ struct Thinker::Impl {
             x = modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(ctx, x, output));
             normalized = modules::Bf16RoundModule{}.build(ctx,
                 modules::RMSNormModule(norm_config).build(ctx, x, w.post_norm));
-            output = build_thinker_mlp(ctx, normalized, w, c, weights.group_identity, layer >= c.dense_layers);
+            output = build_thinker_mlp(ctx, normalized, w, c, layer >= c.dense_layers);
             x = modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(ctx, x, output));
         }
         x = modules::SliceModule({1, steps - 1, 1}).build(ctx, x);

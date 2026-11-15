@@ -55,13 +55,21 @@ struct GatedFeedForwardConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     bool use_weight_type_projection_precision = false;
     bool use_fast_cuda_projection = false;
+    // Packed projections normally store [up, gate]; some checkpoints store [gate, up].
+    bool packed_gate_first = false;
+    bool fused_swiglu = false;
+    bool round_projections = false;
+    bool round_activation = false;
+    bool round_product = false;
+    bool round_output = false;
 };
 
 struct GatedFeedForwardWeights {
     LinearWeights gate_proj;
     LinearWeights up_proj;
     LinearWeights down_proj;
-    // Optional packed [up, gate] rows, replacing the two input projections.
+    // Optional packed rows, replacing the two input projections. Order is
+    // [up, gate] unless packed_gate_first is selected.
     LinearWeights up_gate_proj{};
 };
 

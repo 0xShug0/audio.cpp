@@ -10,6 +10,7 @@
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/moe_module.h"
+#include "engine/framework/modules/moe_feed_forward_module.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/staged_moe_runtime.h"
 #include "engine/framework/runtime/errors.h"
@@ -39,7 +40,7 @@ struct LayerWeights {
     TensorValue attn_norm, ffn_norm;
     TensorValue wq, wk, wv, wo, attn_temp, attn_gate;
     TensorValue ffn_up, ffn_gate, ffn_down;
-    TensorValue up_exps, gate_exps, down_exps;
+    modules::MoeFeedForwardWeights ffn;
     TensorValue router_down, router_down_b, router_mlp0, router_mlp0_b, router_mlp2, router_mlp2_b, router_mlp4;
     TensorValue router_norm, router_bias, router_eda_scale;  // router_eda_scale is absent on the first MoE layer
     bool has_eda = false;
@@ -264,13 +265,13 @@ private:
                     throw std::runtime_error("zonos2: backbone GGUF: " + p + " expert banks have inconsistent shapes");
                 }
                 w.disk_group = disk_store_->add_group(names, execution_.backend(), options_.expert_cache_size);
-                w.up_exps = disk_store_->tensor(w.disk_group, 0);
-                w.gate_exps = disk_store_->tensor(w.disk_group, 1);
-                w.down_exps = disk_store_->tensor(w.disk_group, 2);
+                w.ffn.experts.up = disk_store_->tensor(w.disk_group, 0).tensor;
+                w.ffn.experts.gate = disk_store_->tensor(w.disk_group, 1).tensor;
+                w.ffn.experts.down = disk_store_->tensor(w.disk_group, 2).tensor;
             } else {
-                w.up_exps = native(names[0], {hp_.n_expert, hidden, D});
-                w.gate_exps = native(names[1], {hp_.n_expert, hidden, D});
-                w.down_exps = native(names[2], {hp_.n_expert, D, hidden});
+                w.ffn.experts.up = native(names[0], {hp_.n_expert, hidden, D}).tensor;
+                w.ffn.experts.gate = native(names[1], {hp_.n_expert, hidden, D}).tensor;
+                w.ffn.experts.down = native(names[2], {hp_.n_expert, D, hidden}).tensor;
             }
             const auto router_shape = source.require_metadata(p + "router_down.weight").shape;  // {router_dim, D}
             if (router_shape.size() != 2 || router_shape[1] != D || router_shape[0] <= 0) {
@@ -448,8 +449,7 @@ private:
     ggml_tensor * moe(core::ModuleBuildContext & ctx, ggml_tensor * x, const LayerWeights & w, ggml_tensor *& router_state) const {
         const auto routing = route(ctx, w, x, router_state);
         auto * bank_ids = disk_store_ ? disk_store_->route(ctx, routing.ids, w.disk_group) : nullptr;
-        return modules::MoeModule({modules::MoeActivation::SwiGlu})
-            .build(ctx, x, routing, {w.up_exps.tensor, w.gate_exps.tensor, w.down_exps.tensor}, bank_ids);
+        return modules::MoeFeedForwardModule({}).build(ctx, x, w.ffn, bank_ids, &routing);
     }
 
     // output_norm, the 9 x 1026 head and the logit softcap over the last row.
@@ -586,10 +586,11 @@ private:
             has_router_state = true;
             ggml_build_forward_expand(graph, ggml_cpy(g, state, router_state));
             auto & staged = staged_for(w.top_k);
-            staged.build_inputs(ctx, graph, input, routing);
+            const auto inputs = modules::MoeFeedForwardModule({}).build_inputs(ctx, input, w.ffn, &routing);
+            staged.build_inputs(ctx, graph, inputs.experts, inputs.routing);
             ggml_build_forward_expand(graph, ggml_cpy(g, residual, residual_state));
             const auto index = staged.add_layer(modules::MoeModule({modules::MoeActivation::SwiGlu}),
-                                                {w.up_exps.tensor, w.gate_exps.tensor, w.down_exps.tensor}, *disk_store_,
+                                                w.ffn.experts, *disk_store_,
                                                 w.disk_group);
             out->staged_layers.emplace_back(&staged, index);
             const auto finish = out->prepared->add_graph("finish_" + std::to_string(layer), nodes);
