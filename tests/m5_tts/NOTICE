@@ -1,0 +1,16 @@
+M5-TTS
+
+Model architecture and reference implementation:
+https://github.com/ASLP-lab/M5-TTS
+Reference revision: 4e7cc91545ad5ecd368d7726129cefb41fc6e1d7
+
+Checkpoints (declared Apache-2.0 by their model cards):
+https://huggingface.co/ASLP-lab/M5-TTS-50M-VoiceClone
+https://huggingface.co/ASLP-lab/M5-TTS-50M-CustomVoice
+https://huggingface.co/ASLP-lab/M5-TTS-Audio-Tokenizer
+
+See LICENSE.model for the Apache License, Version 2.0.
+
+The audio.cpp integration uses its shared Llama causal-decoder and Qwen3
+speech-tokenizer runtimes. No upstream Python codec implementation is bundled
+here. The reference scripts require a separately downloaded upstream checkout.

@@ -2712,6 +2712,17 @@ audiocpp_add_model(soprano_tts
         engine::community_models::soprano_tts::make_soprano_tts_loader
 )
 
+audiocpp_add_model(m5_tts
+    SOURCES
+        src/models/m5_tts/ar.cpp
+        src/models/m5_tts/assets.cpp
+        src/models/m5_tts/session.cpp
+    INCLUDES
+        engine/models/m5_tts/session.h
+    LOADERS
+        engine::models::m5_tts::make_m5_tts_loader
+)
+
 audiocpp_add_model(mira_tts
     SOURCES
         src/community_models/mira_tts/assets.cpp
@@ -3871,6 +3882,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # Reuse GGML's CPU-reference operator harness for the opt-in backend.
         add_executable(test-backend-ops external/ggml/tests/test-backend-ops.cpp)
         target_link_libraries(test-backend-ops PRIVATE ggml Threads::Threads)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND m5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(m5_tts_components tests/m5_tts/components.cpp app/cli/args.cpp)
+        target_link_libraries(m5_tts_components PRIVATE engine_runtime ggml)
+        target_include_directories(m5_tts_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND moss_soundeffect IN_LIST AUDIOCPP_LINKED_MODELS)

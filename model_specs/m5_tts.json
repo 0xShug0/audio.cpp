@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "family": "m5_tts",
+  "display_name": "M5-TTS",
+  "description": "Multilingual autoregressive speech synthesis and reference-audio voice cloning with a Qwen3 speech codec.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "zh",
+    "yue",
+    "zh-Sichuan",
+    "en",
+    "de",
+    "fr",
+    "ja",
+    "ko"
+  ],
+  "capabilities": {
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference",
+      "long_form"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "packages": [
+    {
+      "id": "m5_tts_50m_voiceclone_f16",
+      "display_name": "M5-TTS 50M VoiceClone F16",
+      "default": true,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "M5-TTS-GGUF",
+      "files": [
+        "M5-TTS-GGUF/m5-tts-50m-voiceclone-f16.gguf"
+      ],
+      "strip_prefix": "M5-TTS-GGUF"
+    },
+    {
+      "id": "m5_tts_50m_voiceclone_q8_0",
+      "display_name": "M5-TTS 50M VoiceClone Q8_0",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "M5-TTS-GGUF",
+      "files": [
+        "M5-TTS-GGUF/m5-tts-50m-voiceclone-q8_0.gguf"
+      ],
+      "strip_prefix": "M5-TTS-GGUF"
+    },
+    {
+      "id": "m5_tts_50m_customvoice_f16",
+      "display_name": "M5-TTS 50M CustomVoice F16",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "M5-TTS-GGUF",
+      "files": [
+        "M5-TTS-GGUF/m5-tts-50m-customvoice-f16.gguf"
+      ],
+      "strip_prefix": "M5-TTS-GGUF"
+    },
+    {
+      "id": "m5_tts_50m_customvoice_q8_0",
+      "display_name": "M5-TTS 50M CustomVoice Q8_0",
+      "default": false,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "M5-TTS-GGUF",
+      "files": [
+        "M5-TTS-GGUF/m5-tts-50m-customvoice-q8_0.gguf"
+      ],
+      "strip_prefix": "M5-TTS-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": [
+      "docs/models/m5_tts.md"
+    ],
+    "recommended_package": "m5_tts_50m_voiceclone_f16"
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "required": false,
+        "description": "Speech language: zh, yue (Cantonese), zh-Sichuan (Sichuanese), en, de, fr, ja, ko. zh-Sichuan is a project-specific tag. Full names remain supported for the six base languages."
+      },
+      {
+        "name": "temperature",
+        "type": "float",
+        "required": false,
+        "default": 0.9,
+        "min": 0.001,
+        "description": "Audio token sampling temperature."
+      },
+      {
+        "name": "top_k",
+        "type": "int",
+        "required": false,
+        "default": 10,
+        "min": 1,
+        "max": 2051,
+        "description": "Audio token top-k sampling cutoff."
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "required": false,
+        "default": 500,
+        "min": 1,
+        "max": 2000,
+        "description": "Maximum generated codec frames at 12.5 frames per second."
+      },
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "required": false,
+        "default": "1",
+        "description": "Trained speaker ID for the CustomVoice checkpoint.",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "Exact transcript of the cloning reference audio."
+      },
+      {
+        "name": "instruct",
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "Checkpoint caption conditioning."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Audio-token sampling seed; -1 chooses a random seed.",
+        "required": false,
+        "default": 2026,
+        "min": -1
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form text chunk.",
+        "required": false,
+        "default": 200,
+        "min": 1
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework text chunking policy.",
+        "required": false,
+        "default": "default",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ]
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "required": false,
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0",
+          "q4_0"
+        ],
+        "description": "Language-model weight storage type."
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "required": false,
+        "default": "native",
+        "values": [
+          "native",
+          "f32",
+          "f16"
+        ],
+        "description": "Audio codec weight storage type; published native packages retain F32 codec weights."
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "required": false,
+        "default": "auto",
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
+        "description": "Shared backend attention selection."
+      }
+    ],
+    "load": []
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "codec_config": "model:codec_config.json",
+        "conditioning": "model:conditioning.json",
+        "tokenizer_json": "model:tokenizer/tokenizer.json",
+        "tokenizer_config": "model:tokenizer/tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "codec_weights": {
+          "source": "weights:",
+          "prefix": "codec"
+        }
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  }
+}

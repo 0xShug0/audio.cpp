@@ -29,7 +29,7 @@ audio.cpp is built for real end-to-end execution rather than one-off model demos
 
 ## Features
 
-⭐ **148 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
+⭐ **149 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
 
 ⭐ **Built-in WebUI.** Generate and clone voices in Studio, compare models in Arena, manage models and voice libraries, and assemble narration with reusable speakers and passage editing in the TTS app.
 
@@ -111,6 +111,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **mira_tts** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | TTS, Clone | en | [MiraTTS](docs/models/mira_tts.md) | Local conversion |
 | **moss_tts_local**<br>[@justinjohn0306](https://github.com/justinjohn0306) | TTS, Clone, Ctrl | auto, optional language hint | [MOSS-TTS-Local-Transformer-v1.5](docs/models/moss_tts_local.md) | GGUF 16/Q8 |
 | **moss_tts_nano** | TTS, Clone | auto | [MOSS-TTS-Nano-100M](docs/models/moss_tts_nano.md) | GGUF 16/Q8, Stream |
+| **m5_tts** | TTS, Clone | zh, en, de, fr, ja, ko | [M5-TTS 50M VoiceClone / CustomVoice](docs/models/m5_tts.md) | GGUF F16/Q8, Stream |
 | **moss_tts_v15** (C)<br>Chris [@christopherthompson81](https://github.com/christopherthompson81) | TTS, Clone | en, zh | [MOSS-TTS-v1.5](docs/models/moss_tts_v15.md) | GGUF |
 | **moss_ttsd** (C)<br>Chris [@christopherthompson81](https://github.com/christopherthompson81) | TTS, Clone, Dialogue | en, zh | [MOSS-TTSD](docs/models/moss_ttsd.md) | GGUF BF16/Q8/Q4 |
 | **moss_voicegen** (C)<br>Joost [@jrohde](https://github.com/jrohde) | Voice Design | en, zh | [MOSS-VoiceGenerator](docs/models/moss_voicegen.md) | GGUF |
