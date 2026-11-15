@@ -64,6 +64,56 @@ int64_t round128(int64_t n) {
     return (n + ovz::kQrows - 1) / ovz::kQrows * ovz::kQrows;
 }
 
+// FNV-1a-64 over the weight views, sampling 1 KiB every 64 KiB (whole-store
+// hashing of the ~1.1 GiB set would cost a second per load): the cache
+// fingerprint must identify the weight CONTENT, so a checkpoint replaced in
+// the same model directory can never silently reuse the packed cache of the
+// previous one.
+void fnv_mix(uint64_t & h, const void * data, int64_t elems, int elem_size) {
+    h = (h ^ static_cast<uint64_t>(elems)) * 0x100000001b3ULL;
+    const uint8_t * b = static_cast<const uint8_t *>(data);
+    const uint64_t bytes = static_cast<uint64_t>(elems) * static_cast<uint64_t>(elem_size);
+    for (uint64_t off = 0; off < bytes; off += 65536) {
+        const uint64_t n = std::min<uint64_t>(1024, bytes - off);
+        for (uint64_t i = 0; i < n; ++i) {
+            h ^= b[off + i];
+            h *= 0x100000001b3ULL;
+        }
+    }
+}
+
+std::string weight_set_hash(const OmniVoiceZeroopWeightViews & w, const OmniVoiceZeroopModelDims & d) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    const int64_t H = d.hidden, HD = d.head_dim;
+    const int64_t qkv_rows = (d.heads + 2 * d.kv_heads) * HD;
+    const int64_t gu_rows = 2 * d.intermediate;
+    for (const auto & l : w.layers) {
+        const int esz = l.qkv_is_f16 ? 2 : 4;
+        if (l.packed) {
+            fnv_mix(h, l.qkv, qkv_rows * H, esz);
+            fnv_mix(h, l.gate_up, gu_rows * H, l.gu_is_f16 ? 2 : 4);
+        } else {
+            fnv_mix(h, l.q, d.heads * HD * H, esz);
+            fnv_mix(h, l.k, d.kv_heads * HD * H, esz);
+            fnv_mix(h, l.v, d.kv_heads * HD * H, esz);
+            fnv_mix(h, l.gate, d.intermediate * H, l.gu_is_f16 ? 2 : 4);
+            fnv_mix(h, l.up, d.intermediate * H, l.gu_is_f16 ? 2 : 4);
+        }
+        fnv_mix(h, l.o, H * d.heads * HD, l.o_is_f16 ? 2 : 4);
+        fnv_mix(h, l.down, H * d.intermediate, l.down_is_f16 ? 2 : 4);
+        const int nesz = l.norms_is_f16 ? 2 : 4;
+        fnv_mix(h, l.n_in, H, nesz);
+        fnv_mix(h, l.n_post, H, nesz);
+        fnv_mix(h, l.n_qn, HD, nesz);
+        fnv_mix(h, l.n_kn, HD, nesz);
+    }
+    fnv_mix(h, w.text_embedding, w.text_embedding_rows * H, w.text_embedding_is_f16 ? 2 : 4);
+    fnv_mix(h, w.audio_embedding, w.audio_embedding_rows * H, w.audio_embedding_is_f16 ? 2 : 4);
+    char hex[17];
+    std::snprintf(hex, sizeof(hex), "%016llx", static_cast<unsigned long long>(h));
+    return hex;
+}
+
 }  // namespace
 
 struct OmniVoiceRknnZeroopGenerator::Impl {
@@ -79,7 +129,7 @@ struct OmniVoiceRknnZeroopGenerator::Impl {
     int64_t tp = 0;       // padded target rows per batch
     std::vector<float> cos2, sin2;  // [2*seq, head_dim] fp32, canvas order (prefill)
     std::vector<float> cosS, sinS;  // step-pass rope tables: plain positions, both batches
-    std::vector<float> mask_bias;   // [2, seq, seq] additive bias
+    std::vector<float> mask_p, mask_s;  // [2, seq, seq] additive, per pass: prefill / step
     std::vector<float> h_canvas, h_target, hidden;
     std::vector<uint16_t> arena;    // f32->f16 weight conversions live here
     std::vector<ovz::LayerW> layers;
@@ -127,24 +177,31 @@ struct OmniVoiceRknnZeroopGenerator::Impl {
                 sinS[static_cast<size_t>(row * hd + d + half)] = sS;
             }
         }
-        // additive mask: cond rows attend to [0, seq); the uncond batch is seen
-        // at its canvas rows [seq-tgt, seq) (prefill; content lives in the target
-        // block) and at block-local rows [0, tgt) (step), each visible only to the
-        // matching column block. The compiled-engine convention, NOT the HF canvas
-        // mask (whose target rows are self-only): an HF-mask experiment on this
-        // sampler rendered non-speech at every rung (2026-11-15), the dLLM step
-        // mask is only valid together with HF's own unmasking schedule.
-        mask_bias.assign(static_cast<size_t>(2) * seq * seq, kMaskValue);
+        // additive masks, ONE PER PASS (the compiled-engine convention, NOT the
+        // HF canvas mask whose target rows are self-only: an HF-mask experiment
+        // on this sampler rendered non-speech at every rung, 2026-11-15):
+        // prefill b0 rows attend [0, seq); prefill b1 attends with its
+        // CANVAS-TARGET rows [seq-tgt, seq) over [seq-tgt, seq); step b0 reads
+        // the same all-to-all rows (its cond batch lives at canvas positions);
+        // step b1 attends with its BLOCK-LOCAL rows [0, tgt) over [0, tgt).
+        // The two b1 conventions must not share one buffer: merged, their
+        // overlap rows (target block bigger than the prompt) get the union =
+        // full-row visibility, a third semantics no engine implements.
+        const int64_t prefix = seq - tgt;
+        mask_p.assign(static_cast<size_t>(2) * seq * seq, kMaskValue);
+        mask_s.assign(static_cast<size_t>(2) * seq * seq, kMaskValue);
         for (int64_t r = 0; r < seq; ++r) {
-            std::fill(mask_bias.data() + static_cast<size_t>(r * seq),
-                      mask_bias.data() + static_cast<size_t>((r + 1) * seq), 0.0F);
+            std::fill(mask_p.data() + static_cast<size_t>(r * seq),
+                      mask_p.data() + static_cast<size_t>((r + 1) * seq), 0.0F);
+            std::fill(mask_s.data() + static_cast<size_t>(r * seq),
+                      mask_s.data() + static_cast<size_t>((r + 1) * seq), 0.0F);
         }
-        for (int64_t r = 0; r < tgt; ++r) {
-            float * b1 = mask_bias.data() + static_cast<size_t>(seq * seq);
-            std::fill(b1 + r * seq, b1 + r * seq + tgt, 0.0F);
-            float * dst = b1 + (seq - tgt + r) * seq;
-            std::fill(dst + (seq - tgt), dst + seq, 0.0F);
-        }
+        float * p1 = mask_p.data() + static_cast<size_t>(seq * seq);
+        for (int64_t r = prefix; r < seq; ++r)
+            std::fill(p1 + r * seq + prefix, p1 + r * seq + seq, 0.0F);
+        float * s1 = mask_s.data() + static_cast<size_t>(seq * seq);
+        for (int64_t r = 0; r < tgt; ++r)
+            std::fill(s1 + r * seq, s1 + r * seq + tgt, 0.0F);
     }
 
     static void layer_hook(int l, void * ud) {
@@ -198,6 +255,9 @@ OmniVoiceRknnZeroopGenerator::OmniVoiceRknnZeroopGenerator(
         static_cast<int64_t>(weights.layers.size()) != ovz::kLayers) {
         throw std::runtime_error(std::string(kLabel) + " engine is built for the 0.6B trunk shape");
     }
+    // the caller's string is a schema tag; the cache key must also pin the
+    // weight CONTENT (size-only cache checks cannot tell two checkpoints apart)
+    fingerprint += "-" + weight_set_hash(weights, dims);
     auto to16 = [&](const void * data, bool is_f16, int64_t n) -> const uint16_t * {
         if (is_f16) {
             return static_cast<const uint16_t *>(data);
@@ -386,11 +446,11 @@ void OmniVoiceRknnZeroopGenerator::run(
         }
         // feed dumps stand on their own: a twin harness sets DUMP alone
         if (const char * dump = std::getenv("AUDIOCPP_RKNN_ZEROOP_DUMP"); dump != nullptr) {
-            const char * names[6] = {"/hcanvas.bin", "/cos2.bin", "/sin2.bin", "/mask.bin",
-                                     "/cosS.bin", "/sinS.bin"};
-            const std::vector<float> * bufs[6] = {&I.h_canvas, &I.cos2, &I.sin2, &I.mask_bias,
-                                                  &I.cosS, &I.sinS};
-            for (int f = 0; f < 6; ++f) {
+            const char * names[7] = {"/hcanvas.bin", "/cos2.bin", "/sin2.bin", "/mask.bin",
+                                     "/maskS.bin", "/cosS.bin", "/sinS.bin"};
+            const std::vector<float> * bufs[7] = {&I.h_canvas, &I.cos2, &I.sin2, &I.mask_p,
+                                                  &I.mask_s, &I.cosS, &I.sinS};
+            for (int f = 0; f < 7; ++f) {
                 const std::string path = std::string(dump) + names[f];
                 FILE * fh = std::fopen(path.c_str(), "wb");
                 if (fh != nullptr) {
@@ -400,7 +460,7 @@ void OmniVoiceRknnZeroopGenerator::run(
             }
         }
         I.hidden.assign(static_cast<size_t>(2) * sp * H, 0.0F);
-        if (I.engine.prefill(I.h_canvas.data(), I.cos2.data(), I.sin2.data(), I.mask_bias.data(),
+        if (I.engine.prefill(I.h_canvas.data(), I.cos2.data(), I.sin2.data(), I.mask_p.data(),
                              static_cast<int>(total), static_cast<int>(sp), static_cast<int>(target),
                              I.hidden.data())) {
             throw std::runtime_error(std::string(kLabel) + " prefill: " + I.engine.last_error());
@@ -423,7 +483,7 @@ void OmniVoiceRknnZeroopGenerator::run(
             I.embed_audio(I.h_target.data() + static_cast<size_t>((tp + s) * H), inputs.unconditional_ids, s);
         }
         I.hidden.assign(static_cast<size_t>(2) * tp * H, 0.0F);
-        if (I.engine.step(I.h_target.data(), I.cosS.data(), I.sinS.data(), I.mask_bias.data(),
+        if (I.engine.step(I.h_target.data(), I.cosS.data(), I.sinS.data(), I.mask_s.data(),
                           static_cast<int>(total), static_cast<int>(target), static_cast<int>(tp),
                           I.hidden.data())) {
             throw std::runtime_error(std::string(kLabel) + " step: " + I.engine.last_error());

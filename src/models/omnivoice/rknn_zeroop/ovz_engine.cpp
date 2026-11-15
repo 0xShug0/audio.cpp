@@ -417,7 +417,11 @@ struct Engine::Impl {
 };
 
 Engine::Engine() : im_(new Impl()) {}
-Engine::~Engine() { close(); }
+Engine::~Engine() {
+    close();
+    delete im_;
+    im_ = nullptr;
+}
 
 void Engine::close() {
     Impl& I = *im_;

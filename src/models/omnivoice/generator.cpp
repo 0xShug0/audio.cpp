@@ -1951,7 +1951,14 @@ OmniVoiceQwen3DiffusionRuntime::OmniVoiceQwen3DiffusionRuntime(
         OmniVoiceZeroopWeightViews views;
         const int64_t dim = head_dim(cfg.llm);
         views.layers.reserve(w.layers.size());
-        auto is_f16 = [](const core::TensorValue & t) { return t.tensor->type == GGML_TYPE_F16; };
+        auto is_f16 = [](const core::TensorValue & t) {
+            if (t.tensor->type == GGML_TYPE_F16) return true;
+            if (t.tensor->type == GGML_TYPE_F32) return false;
+            throw std::runtime_error(
+                "omnivoice.exec_plan generator impl rknn_zeroop: the vendor engine converts "
+                "only F16/F32 weight stores, got " +
+                std::string(ggml_type_name(t.tensor->type)));
+        };
         for (const auto & l : w.layers) {
             OmniVoiceZeroopLayerView v;
             v.packed = l.qkv_proj.valid();
