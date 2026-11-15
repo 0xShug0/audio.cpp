@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: MIT
+// GGML bilinear interpolation with strided F32 inputs and half-pixel/aligned coordinates.
+amdgpu.target<gfx11-generic> @ggml_bilinear_target {subgroup_size = 64}
+config.decl @ggml.bilinear.ne0 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.ne1 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.ne2 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.src_ne0 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.src_ne1 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.stride0 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.stride1 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.stride2 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.stride3 : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.bilinear.sf0 : f32
+config.decl @ggml.bilinear.sf1 : f32
+config.decl @ggml.bilinear.sf2 : f32
+config.decl @ggml.bilinear.sf3 : f32
+config.decl @ggml.bilinear.pixel_offset : f32
+kernel.def target(@ggml_bilinear_target) export("ggml_bilinear_f32") @ggml_bilinear_f32(%elements: index, %span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %elements, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%elements: index, %span: index, %input: buffer, %output: buffer) {
+  %count = index.assume %elements [range(%elements, 1, 1073741824)] : index
+  %size = index.assume %span [range(%span, 1, 1073741824)] : index
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %offset = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %one_f = scalar.constant 1.0 : f32
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %iv = buffer.view %input[%offset] : buffer -> view<[%size]xf32>
+  %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+  %ne0 = config.get @ggml.bilinear.ne0 : index
+  %ne1 = config.get @ggml.bilinear.ne1 : index
+  %ne2 = config.get @ggml.bilinear.ne2 : index
+  %src_ne0 = config.get @ggml.bilinear.src_ne0 : index
+  %src_ne1 = config.get @ggml.bilinear.src_ne1 : index
+  %stride0 = config.get @ggml.bilinear.stride0 : index
+  %stride1 = config.get @ggml.bilinear.stride1 : index
+  %stride2 = config.get @ggml.bilinear.stride2 : index
+  %stride3 = config.get @ggml.bilinear.stride3 : index
+  %sf0 = config.get @ggml.bilinear.sf0 : f32
+  %sf1 = config.get @ggml.bilinear.sf1 : f32
+  %sf2 = config.get @ggml.bilinear.sf2 : f32
+  %sf3 = config.get @ggml.bilinear.sf3 : f32
+  %pixel_offset = config.get @ggml.bilinear.pixel_offset : f32
+  scf.if %valid {
+    %i0 = index.rem %linear, %ne0 : index
+    %q0 = index.div %linear, %ne0 : index
+    %i1 = index.rem %q0, %ne1 : index
+    %q1 = index.div %q0, %ne1 : index
+    %i2 = index.rem %q1, %ne2 : index
+    %i3 = index.div %q1, %ne2 : index
+    %i0_int = index.cast %i0 : index to i32
+    %i0_f = scalar.sitofp %i0_int : i32 to f32
+    %pixel0 = scalar.addf %i0_f, %pixel_offset : f32
+    %scaled0 = scalar.divf %pixel0, %sf0 : f32
+    %coord0 = scalar.subf %scaled0, %pixel_offset : f32
+    %positive0 = scalar.maxnumf %coord0, %zero_f : f32
+    %floor0_int = scalar.fptosi %positive0 : f32 to i32
+    %floor0 = index.cast %floor0_int : i32 to index
+    %last0 = index.sub %src_ne0, %one : index
+    %inside0 = index.cmp ult, %floor0, %last0 : index
+    %lo0 = scf.select %inside0, %floor0, %last0 : index
+    %next0 = index.add %lo0, %one : index
+    %hi0_positive = scf.select %inside0, %next0, %last0 : index
+    %negative0 = scalar.cmpf olt, %coord0, %zero_f : f32
+    %hi0 = scf.select %negative0, %zero, %hi0_positive : index
+    %lo0_int = index.cast %lo0 : index to i32
+    %lo0_f = scalar.sitofp %lo0_int : i32 to f32
+    %delta0 = scalar.subf %coord0, %lo0_f : f32
+    %clamp0 = scalar.maxnumf %delta0, %zero_f : f32
+    %weight0 = scalar.minnumf %clamp0, %one_f : f32
+    %inv0 = scalar.subf %one_f, %weight0 : f32
+    %i1_int = index.cast %i1 : index to i32
+    %i1_f = scalar.sitofp %i1_int : i32 to f32
+    %pixel1 = scalar.addf %i1_f, %pixel_offset : f32
+    %scaled1 = scalar.divf %pixel1, %sf1 : f32
+    %coord1 = scalar.subf %scaled1, %pixel_offset : f32
+    %positive1 = scalar.maxnumf %coord1, %zero_f : f32
+    %floor1_int = scalar.fptosi %positive1 : f32 to i32
+    %floor1 = index.cast %floor1_int : i32 to index
+    %last1 = index.sub %src_ne1, %one : index
+    %inside1 = index.cmp ult, %floor1, %last1 : index
+    %lo1 = scf.select %inside1, %floor1, %last1 : index
+    %next1 = index.add %lo1, %one : index
+    %hi1_positive = scf.select %inside1, %next1, %last1 : index
+    %negative1 = scalar.cmpf olt, %coord1, %zero_f : f32
+    %hi1 = scf.select %negative1, %zero, %hi1_positive : index
+    %lo1_int = index.cast %lo1 : index to i32
+    %lo1_f = scalar.sitofp %lo1_int : i32 to f32
+    %delta1 = scalar.subf %coord1, %lo1_f : f32
+    %clamp1 = scalar.maxnumf %delta1, %zero_f : f32
+    %weight1 = scalar.minnumf %clamp1, %one_f : f32
+    %inv1 = scalar.subf %one_f, %weight1 : f32
+    %i2_int = index.cast %i2 : index to i32
+    %i2_f = scalar.sitofp %i2_int : i32 to f32
+    %scaled2 = scalar.divf %i2_f, %sf2 : f32
+    %src2_int = scalar.fptosi %scaled2 : f32 to i32
+    %src2 = index.cast %src2_int : i32 to index
+    %offset2 = index.mul %src2, %stride2 : index
+    %i3_int = index.cast %i3 : index to i32
+    %i3_f = scalar.sitofp %i3_int : i32 to f32
+    %scaled3 = scalar.divf %i3_f, %sf3 : f32
+    %src3_int = scalar.fptosi %scaled3 : f32 to i32
+    %src3 = index.cast %src3_int : i32 to index
+    %offset3 = index.mul %src3, %stride3 : index
+    %outer = index.add %offset2, %offset3 : index
+    %ax = index.mul %lo0, %stride0 : index
+    %ay = index.mul %lo1, %stride1 : index
+    %axy = index.add %ax, %ay : index
+    %asrc0 = index.add %axy, %outer : index
+    %asrc = index.assume %asrc0 [range(%asrc0, 0, 1073741824), lt(%asrc0, %size)] : index
+    %a = view.load %iv[%asrc] : view<[%size]xf32> -> f32
+    %bx = index.mul %hi0, %stride0 : index
+    %by = index.mul %lo1, %stride1 : index
+    %bxy = index.add %bx, %by : index
+    %bsrc0 = index.add %bxy, %outer : index
+    %bsrc = index.assume %bsrc0 [range(%bsrc0, 0, 1073741824), lt(%bsrc0, %size)] : index
+    %b = view.load %iv[%bsrc] : view<[%size]xf32> -> f32
+    %cx = index.mul %lo0, %stride0 : index
+    %cy = index.mul %hi1, %stride1 : index
+    %cxy = index.add %cx, %cy : index
+    %csrc0 = index.add %cxy, %outer : index
+    %csrc = index.assume %csrc0 [range(%csrc0, 0, 1073741824), lt(%csrc0, %size)] : index
+    %c = view.load %iv[%csrc] : view<[%size]xf32> -> f32
+    %dx = index.mul %hi0, %stride0 : index
+    %dy = index.mul %hi1, %stride1 : index
+    %dxy = index.add %dx, %dy : index
+    %dsrc0 = index.add %dxy, %outer : index
+    %dsrc = index.assume %dsrc0 [range(%dsrc0, 0, 1073741824), lt(%dsrc0, %size)] : index
+    %d = view.load %iv[%dsrc] : view<[%size]xf32> -> f32
+    %av0 = scalar.mulf %a, %inv0 : f32
+    %av = scalar.mulf %av0, %inv1 : f32
+    %bv0 = scalar.mulf %b, %weight0 : f32
+    %bv = scalar.mulf %bv0, %inv1 : f32
+    %cv0 = scalar.mulf %c, %inv0 : f32
+    %cv = scalar.mulf %cv0, %weight1 : f32
+    %dv0 = scalar.mulf %d, %weight0 : f32
+    %dv = scalar.mulf %dv0, %weight1 : f32
+    %ab = scalar.addf %av, %bv : f32
+    %abc = scalar.addf %ab, %cv : f32
+    %result = scalar.addf %abc, %dv : f32
+    %dst = index.assume %linear [lt(%linear, %count)] : index
+    view.store %result, %ov[%dst] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

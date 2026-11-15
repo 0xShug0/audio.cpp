@@ -700,6 +700,9 @@
     },
     {
       "path": "ops/convolution/col2im_f32.loom"
+    },
+    {
+      "path": "ops/copy/bilinear_f32.loom"
     }
   ],
   "exports": [
@@ -10370,6 +10373,49 @@
         "mode": "direct",
         "primary_sources": [
           "ops/convolution/col2im_f32.loom"
+        ],
+        "library_sources": []
+      },
+      "compile_dependencies": []
+    },
+    {
+      "name": "ggml_bilinear_f32",
+      "family": "loom_libs",
+      "symbol": "ggml_bilinear_f32",
+      "source": "ops/copy/bilinear_f32.loom",
+      "workload_parameters": [
+        {
+          "name": "elements",
+          "type": "index"
+        },
+        {
+          "name": "span",
+          "type": "index"
+        }
+      ],
+      "launch_parameters": [
+        {
+          "name": "elements",
+          "type": "index"
+        },
+        {
+          "name": "span",
+          "type": "index"
+        }
+      ],
+      "bindings": [
+        "input",
+        "output"
+      ],
+      "binding_access": [
+        "read",
+        "write"
+      ],
+      "target_selector": "",
+      "compile_recipe": {
+        "mode": "direct",
+        "primary_sources": [
+          "ops/copy/bilinear_f32.loom"
         ],
         "library_sources": []
       },

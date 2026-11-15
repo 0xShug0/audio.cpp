@@ -9045,6 +9045,7 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_acc(GGML_TYPE_F32, {256, 17, 2, 3}, {128, 16, 2, 3}, 2));
     test_cases.emplace_back(new test_acc(GGML_TYPE_F32, {256, 17, 2, 3}, {64, 16, 2, 3}, 3));
     test_cases.emplace_back(new test_upscale(GGML_TYPE_F32, {467, 896, 1, 1}, 4));
+    test_cases.emplace_back(new test_upscale(GGML_TYPE_F32, {467, 896, 1, 1}, 4, GGML_SCALE_MODE_BILINEAR));
     // Native small-K contractions and strided padding/attention layouts.
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 1280, 4, 192, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_Q8_0, GGML_TYPE_F32, 1024, 67, 64, {1, 1}, {1, 1}));

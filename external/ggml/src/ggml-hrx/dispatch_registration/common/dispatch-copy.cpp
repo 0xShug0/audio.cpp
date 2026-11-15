@@ -5,6 +5,9 @@
 #include "kernel-corpus/kernel-corpus-catalog-verify.h"
 
 #include <cstdint>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -235,6 +238,45 @@ static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, Disp
     return true;
 }
 
+static bool match_bilinear_f32_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    const auto * params = op_params_as<UpscaleParams>(node->params);
+    if (params == nullptr || node->inputs.size() != 1 ||
+        (params->mode & 0xff) != GGML_SCALE_MODE_BILINEAR ||
+        (params->mode & ~(0xff | GGML_SCALE_FLAG_ALIGN_CORNERS)) != 0) return false;
+    const auto * input = graph_value(context.graph, node->inputs[0]);
+    const auto * output = graph_value(context.graph, node->output);
+    if (input == nullptr || output == nullptr || input->type != GGML_TYPE_F32 ||
+        output->type != GGML_TYPE_F32 || !f32_element_strides(*input) || !packed_f32_layout(*output) ||
+        input->byte_count / sizeof(float) >= kMaximumCopyElements ||
+        output->element_count <= 0 || static_cast<uint64_t>(output->element_count) >= kMaximumCopyElements) return false;
+    const bool aligned = (params->mode & GGML_SCALE_FLAG_ALIGN_CORNERS) != 0;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_bilinear_f32"));
+    dispatch.kernel.integer_parameters.emplace("elements", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("span", input->byte_count / sizeof(float));
+    auto & config = dispatch.kernel.compile_parameters;
+    config.emplace("ggml.bilinear.pixel_offset", aligned ? "0.0" : "0.5");
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (input->nb[i] / sizeof(float) >= kMaximumCopyElements || input->ne[i] >= static_cast<int64_t>(kMaximumCopyElements)) return false;
+        const auto dim = std::to_string(i);
+        config.emplace("ggml.bilinear.stride" + dim, std::to_string(input->nb[i] / sizeof(float)));
+        if (i < 3) config.emplace("ggml.bilinear.ne" + dim, std::to_string(output->ne[i]));
+        if (i < 2) config.emplace("ggml.bilinear.src_ne" + dim, std::to_string(input->ne[i]));
+        float factor = static_cast<float>(output->ne[i]) / input->ne[i];
+        if (aligned && i < 2 && output->ne[i] > 1 && input->ne[i] > 1)
+            factor = static_cast<float>(output->ne[i] - 1) / (input->ne[i] - 1);
+        std::ostringstream value;
+        value << std::setprecision(std::numeric_limits<float>::max_digits10) << factor;
+        config.emplace("ggml.bilinear.sf" + dim, value.str());
+    }
+    dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
+    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 static bool match_pad_f32_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
     const auto * node = context.root_node;
     if (node == nullptr || node->op != GGML_OP_PAD || node->inputs.size() != 1) {
@@ -397,6 +439,8 @@ static bool match_concat_dispatch(const DispatchMatchContext & context, Dispatch
 }
 
 void register_copy_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.upscale_bilinear_f32", GGML_OP_UPSCALE, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_bilinear_f32_dispatch});
     registry.add({"common.upscale_nearest_f32", GGML_OP_UPSCALE, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_repeat_f32_dispatch});
     registry.add({"common.pad_f32", GGML_OP_PAD, DispatchMatchKind::SingleOp, 0,
