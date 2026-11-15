@@ -475,8 +475,9 @@ quality/cleanliness variant, not a speed variant of the compiled ladder.
 Measured on the board against the compiled front-shard ladder's own dumps: 28-layer
 step/prefill referee SNR 80.6-132.9 dB (the host fp32 softmax is the more precise side), the
 twin-geometry run decays smoothly against the compiled ground truth, and the render is
-whisper-clean Russian at `--guidance-scale 2.0`. Speed: 26.2 s prefill + ~7.5 s/step at the
-seq896 twin geometry, and at deep shapes (seq1536 bucket) 50.1 s prefill + ~22.9 s/step, i.e.
+whisper-clean Russian at `--guidance-scale 2.0`. Speed (medians over 32 steps; the first step of
+each run pays the geometry-context build): 25.8-26.2 s prefill + ~8.8 s/step at the seq896 twin
+geometry, and at deep shapes (seq1536 bucket) 50.1 s prefill + 22.9 s/step, i.e.
 compiled-ladder parity (23.2 s/step) with no artifact pipeline behind it. First run packs the
 weights (cached after; warm load ~1.1 s).
 
