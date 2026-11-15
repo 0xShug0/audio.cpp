@@ -293,6 +293,13 @@ OpParams import_op_params(const ggml_tensor & tensor) {
             };
         case GGML_OP_GLU:
             return GluParams{ ggml_get_glu_op(&tensor), ggml_get_op_params_i32(&tensor, 1) != 0 };
+        case GGML_OP_UPSCALE:
+            return UpscaleParams{ggml_get_op_params_i32(&tensor, 0)};
+        case GGML_OP_COL2IM_1D: {
+            Col2ImParams params;
+            for (int i = 0; i < 3; ++i) params.values[i] = ggml_get_op_params_i32(&tensor, i);
+            return params;
+        }
         case GGML_OP_IM2COL: {
             Im2ColParams params;
             for (int i = 0; i < 7; ++i) params.values[i] = ggml_get_op_params_i32(&tensor, i);
@@ -356,6 +363,16 @@ bool op_params_equivalent(ggml_op op, const OpParams & lhs, const OpParams & rhs
             return clamp_params_equivalent(lhs, rhs);
         case GGML_OP_GLU:
             return binary_params_equivalent(lhs, rhs) || glu_params_equivalent(lhs, rhs);
+        case GGML_OP_UPSCALE: {
+            const auto * a = op_params_as<UpscaleParams>(lhs);
+            const auto * b = op_params_as<UpscaleParams>(rhs);
+            return a != nullptr && b != nullptr && a->mode == b->mode;
+        }
+        case GGML_OP_COL2IM_1D: {
+            const auto * a = op_params_as<Col2ImParams>(lhs);
+            const auto * b = op_params_as<Col2ImParams>(rhs);
+            return a != nullptr && b != nullptr && a->values == b->values;
+        }
         case GGML_OP_IM2COL: {
             const auto * a = op_params_as<Im2ColParams>(lhs);
             const auto * b = op_params_as<Im2ColParams>(rhs);

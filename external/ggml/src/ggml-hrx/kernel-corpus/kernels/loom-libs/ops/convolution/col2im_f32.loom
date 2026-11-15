@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT
+amdgpu.target<gfx11-generic> @ggml_col2im_target {subgroup_size = 64}
+config.decl @ggml.col2im.frames : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.col2im.width : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.col2im.columns : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.col2im.kernel : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.col2im.stride : %v: index where [range(%v, 1, 1073741824)]
+config.decl @ggml.col2im.padding : %v: index where [range(%v, 0, 1073741824)]
+kernel.def target(@ggml_col2im_target) export("ggml_col2im_f32") @ggml_col2im_f32(%elements: index, %span: index) {
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %rounding = index.constant 255 : index
+  %rounded = index.add %elements, %rounding : index
+  %groups = index.div %rounded, %threads : index
+  kernel.launch.config workgroups(%groups, %one, %one) workgroup_size(%threads, %one, %one) : index
+} launch(%elements: index, %span: index, %input: buffer, %output: buffer) {
+  %count = index.assume %elements [range(%elements, 1, 1073741824)] : index
+  %size = index.assume %span [range(%span, 1, 1073741824)] : index
+  %zero = index.constant 0 : index
+  %one = index.constant 1 : index
+  %threads = index.constant 256 : index
+  %offset = index.constant 0 : offset
+  %zero_f = scalar.constant 0.0 : f32
+  %group = kernel.workgroup.id<x> : index
+  %thread = kernel.workitem.id<x> : index
+  %base = index.mul %group, %threads : index
+  %linear = index.add %base, %thread : index
+  %valid = index.cmp ult, %linear, %count : index
+  %frames = config.get @ggml.col2im.frames : index
+  %width = config.get @ggml.col2im.width : index
+  %columns = config.get @ggml.col2im.columns : index
+  %kernel = config.get @ggml.col2im.kernel : index
+  %stride = config.get @ggml.col2im.stride : index
+  %padding = config.get @ggml.col2im.padding : index
+  %iv = buffer.view %input[%offset] : buffer -> view<[%size]xf32>
+  %ov = buffer.view %output[%offset] : buffer -> view<[%count]xf32>
+  scf.if %valid {
+    %time = index.rem %linear, %width : index
+    %channel = index.div %linear, %width : index
+    %absolute = index.add %time, %padding : index
+    %plus_stride = index.add %absolute, %stride : index
+    %after_kernel = index.cmp uge, %plus_stride, %kernel : index
+    %delta = index.sub %plus_stride, %kernel : index
+    %nonnegative = scf.select %after_kernel, %delta, %zero : index
+    %begin = index.div %nonnegative, %stride : index
+    %last = index.div %absolute, %stride : index
+    %end0 = index.add %last, %one : index
+    %within = index.cmp ult, %end0, %frames : index
+    %end = scf.select %within, %end0, %frames : index
+    %channel_base = index.mul %channel, %kernel : index
+    %sum = scf.for %frame = [%begin to %end step %one](%acc = %zero_f : f32) -> (f32) {
+      %origin = index.mul %frame, %stride : index
+      %tap = index.sub %absolute, %origin : index
+      %frame_base = index.mul %frame, %columns : index
+      %row = index.add %frame_base, %channel_base : index
+      %src0 = index.add %row, %tap : index
+      %src = index.assume %src0 [lt(%src0, %size)] : index
+      %value = view.load %iv[%src] : view<[%size]xf32> -> f32
+      %next = scalar.addf %acc, %value : f32
+      scf.yield %next : f32
+    }
+    %dst = index.assume %linear [lt(%linear, %count)] : index
+    view.store %sum, %ov[%dst] : f32, view<[%count]xf32>
+  }
+  kernel.return
+}

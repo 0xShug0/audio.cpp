@@ -204,6 +204,11 @@ static bool match_concat_dim0_f32_dispatch(const DispatchMatchContext & context,
 static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, DispatchMatch & match) {
     const auto * node = context.root_node;
     if (node == nullptr || node->inputs.size() != 1) return false;
+    const bool upscale = node->op == GGML_OP_UPSCALE;
+    if (upscale) {
+        const auto * params = op_params_as<UpscaleParams>(node->params);
+        if (params == nullptr || params->mode != GGML_SCALE_MODE_NEAREST) return false;
+    }
     const auto * source = context.graph.values().find(node->inputs[0]);
     const auto * output = context.graph.values().find(node->output);
     if (source == nullptr || output == nullptr || source->type != GGML_TYPE_F32 ||
@@ -217,6 +222,8 @@ static bool match_repeat_f32_dispatch(const DispatchMatchContext & context, Disp
     dispatch.kernel.integer_parameters.emplace("source_span", source_span / sizeof(float));
     for (int i = 0; i < GGML_MAX_DIMS; ++i) {
         if (output->ne[i] % source->ne[i] != 0) return false;
+        dispatch.kernel.compile_parameters.emplace("ggml.repeat.scale" + std::to_string(i),
+            std::to_string(upscale ? output->ne[i] / source->ne[i] : 1));
         dispatch.kernel.compile_parameters.emplace("ggml.repeat.src_ne" + std::to_string(i), std::to_string(source->ne[i]));
         dispatch.kernel.compile_parameters.emplace("ggml.repeat.stride" + std::to_string(i), std::to_string(source->nb[i] / sizeof(float)));
         if (i < 3) dispatch.kernel.compile_parameters.emplace("ggml.repeat.ne" + std::to_string(i), std::to_string(output->ne[i]));
@@ -390,6 +397,8 @@ static bool match_concat_dispatch(const DispatchMatchContext & context, Dispatch
 }
 
 void register_copy_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.upscale_nearest_f32", GGML_OP_UPSCALE, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_repeat_f32_dispatch});
     registry.add({"common.pad_f32", GGML_OP_PAD, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_pad_f32_dispatch});
     registry.add({"common.concat_strided", GGML_OP_CONCAT, DispatchMatchKind::SingleOp, -10,

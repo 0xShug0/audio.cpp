@@ -689,7 +689,7 @@ static bool match_strided_attention_f32(const DispatchMatchContext & context, Di
     const auto * mask = node->inputs.size() == 4 ? graph_value(context.graph, node->inputs[3]) : nullptr;
     const auto * out = graph_value(context.graph, node->output);
     if (q == nullptr || k == nullptr || v == nullptr || out == nullptr ||
-        q->type != GGML_TYPE_F32 || k->type != GGML_TYPE_F32 || v->type != GGML_TYPE_F32 ||
+        q->type != GGML_TYPE_F32 || (k->type != GGML_TYPE_F32 && k->type != GGML_TYPE_F16) || v->type != k->type ||
         out->type != GGML_TYPE_F32 || !out->contiguous || q->ne[0] != k->ne[0] ||
         k->ne[1] != v->ne[1] || k->ne[2] != v->ne[2] || k->ne[3] != v->ne[3] ||
         q->ne[2] % k->ne[2] || q->ne[3] % k->ne[3]) return false;
@@ -706,7 +706,7 @@ static bool match_strided_attention_f32(const DispatchMatchContext & context, Di
     }
     auto & config = dispatch.kernel.compile_parameters;
     const std::pair<const char *, int64_t> values[] = {
-        {"d", q->ne[0]}, {"dv", v->ne[0]}, {"nq", q->ne[1]}, {"nk", k->ne[1]}, {"hq", q->ne[2]},
+        {"kv_f16", k->type == GGML_TYPE_F16}, {"d", q->ne[0]}, {"dv", v->ne[0]}, {"nq", q->ne[1]}, {"nk", k->ne[1]}, {"hq", q->ne[2]},
         {"ratioh", q->ne[2] / k->ne[2]}, {"ratiob", q->ne[3] / k->ne[3]}, {"tiles", tiles},
         {"mask_type", mask == nullptr ? 0 : mask->type == GGML_TYPE_F16 ? 2 : 1},
         {"mask_h", mask != nullptr ? mask->ne[2] : 1}, {"mask_b", mask != nullptr ? mask->ne[3] : 1},

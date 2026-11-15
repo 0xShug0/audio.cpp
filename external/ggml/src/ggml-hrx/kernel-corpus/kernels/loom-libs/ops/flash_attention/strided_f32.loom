@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Online F32 attention with strided Q/K/V and grouped-query heads.
+// Online attention with F32 queries, F32/F16 KV, strided layouts and grouped-query heads.
 amdgpu.target<gfx11-generic> @ggml_attention_f32_target {subgroup_size = 32}
 config.decl @ggml.attention_f32.d : %value: index where [range(%value, 0, 1073741824)]
 config.decl @ggml.attention_f32.dv : %value: index where [range(%value, 0, 1073741824)]
@@ -28,6 +28,7 @@ config.decl @ggml.attention_f32.ms0 : %value: index where [range(%value, 0, 1073
 config.decl @ggml.attention_f32.ms1 : %value: index where [range(%value, 0, 1073741824)]
 config.decl @ggml.attention_f32.ms2 : %value: index where [range(%value, 0, 1073741824)]
 config.decl @ggml.attention_f32.ms3 : %value: index where [range(%value, 0, 1073741824)]
+config.decl @ggml.attention_f32.kv_f16 : %value: index where [range(%value, 0, 2)]
 config.decl @ggml.attention_f32.scale : f32
 kernel.def target(@ggml_attention_f32_target) export("ggml_attention_f32") @ggml_attention_f32(%rows: index, %qspan: index, %kspan: index, %vspan: index, %mspan: index, %ospan: index) {
   %one = index.constant 1 : index
@@ -121,6 +122,8 @@ kernel.def target(@ggml_attention_f32_target) export("ggml_attention_f32") @ggml
   %mbase = index.add %mhb, %mt_offset : index
   %has_mask = index.cmp ne, %mask_type, %zero : index
   %mask_f16 = index.cmp eq, %mask_type, %two : index
+  %kv_type = config.get @ggml.attention_f32.kv_f16 : index
+  %kv_f16 = index.cmp ne, %kv_type, %zero : index
   %qview = buffer.view %query[%offset] : buffer -> view<[%qspan_bound]xf32>
   %kview = buffer.view %key[%offset] : buffer -> view<[%kspan_bound]xf32>
   %vview = buffer.view %value[%offset] : buffer -> view<[%vspan_bound]xf32>
@@ -136,7 +139,15 @@ kernel.def target(@ggml_attention_f32_target) export("ggml_attention_f32") @ggml
       %qi = index.assume %qi0 [lt(%qi0, %qspan_bound)] : index
       %ki = index.assume %ki0 [lt(%ki0, %kspan_bound)] : index
       %qval = view.load %qview[%qi] : view<[%qspan_bound]xf32> -> f32
-      %kval = view.load %kview[%ki] : view<[%kspan_bound]xf32> -> f32
+      %kval = scf.if %kv_f16 -> (f32) {
+        %kview16 = buffer.view %key[%offset] : buffer -> view<[%kspan_bound]xf16>
+        %kval16 = view.load %kview16[%ki] : view<[%kspan_bound]xf16> -> f16
+        %kval32 = scalar.extf %kval16 : f16 to f32
+        scf.yield %kval32 : f32
+      } else {
+        %kval32b = view.load %kview[%ki] : view<[%kspan_bound]xf32> -> f32
+        scf.yield %kval32b : f32
+      }
       %product = scalar.mulf %qval, %kval : f32
       %dot_next = scalar.addf %dot_acc, %product : f32
       scf.yield %dot_next : f32
@@ -176,7 +187,15 @@ kernel.def target(@ggml_attention_f32_target) export("ggml_attention_f32") @ggml
       %vi_base = index.add %vbase, %vt_offset : index
       %vi0 = index.add %vi_base, %vc_offset : index
       %vi = index.assume %vi0 [lt(%vi0, %vspan_bound)] : index
-      %vval = view.load %vview[%vi] : view<[%vspan_bound]xf32> -> f32
+      %vval = scf.if %kv_f16 -> (f32) {
+        %vview16 = buffer.view %value[%offset] : buffer -> view<[%vspan_bound]xf16>
+        %vval16 = view.load %vview16[%vi] : view<[%vspan_bound]xf16> -> f16
+        %vval32 = scalar.extf %vval16 : f16 to f32
+        scf.yield %vval32 : f32
+      } else {
+        %vval32b = view.load %vview[%vi] : view<[%vspan_bound]xf32> -> f32
+        scf.yield %vval32b : f32
+      }
       %weighted_acc = scalar.mulf %acc, %alpha : f32
       %weighted_value = scalar.mulf %vval, %beta : f32
       %new_acc = scalar.addf %weighted_acc, %weighted_value : f32

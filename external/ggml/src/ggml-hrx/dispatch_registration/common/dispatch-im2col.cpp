@@ -50,9 +50,44 @@ bool match_im2col(const DispatchMatchContext & context, DispatchMatch & match) {
     return true;
 }
 
+// One output lane gathers its contributing kernel taps in increasing input order.
+bool match_col2im(const DispatchMatchContext & context, DispatchMatch & match) {
+    const auto * node = context.root_node;
+    const auto * params = op_params_as<Col2ImParams>(node->params);
+    if (params == nullptr || node->inputs.size() != 1) return false;
+    const auto * input = context.graph.values().find(node->inputs[0]);
+    const auto * output = context.graph.values().find(node->output);
+    const auto & p = params->values;
+    constexpr int64_t limit = int64_t{1} << 30;
+    if (input == nullptr || output == nullptr || input->type != GGML_TYPE_F32 ||
+        output->type != GGML_TYPE_F32 || !input->contiguous || !output->contiguous ||
+        input->element_count <= 0 || input->element_count >= limit ||
+        output->element_count <= 0 || output->element_count >= limit || p[0] >= limit || p[2] >= limit ||
+        input->ne[2] != 1 || input->ne[3] != 1 || p[0] <= 0 || p[1] <= 0 || p[2] < 0 ||
+        input->ne[0] % p[1] != 0 || output->ne[1] != p[1] ||
+        output->ne[0] != (input->ne[1] - 1) * p[0] + input->ne[0] / p[1] - 2 * p[2]) return false;
+    Dispatch dispatch;
+    dispatch.kernel = make_kernel_specialization(GGML_HRX_KERNEL_REF("loom_libs", "ggml_col2im_f32"));
+    dispatch.kernel.integer_parameters.emplace("elements", output->element_count);
+    dispatch.kernel.integer_parameters.emplace("span", input->element_count);
+    const std::pair<const char *, int64_t> values[] = {
+        {"frames", input->ne[1]}, {"width", output->ne[0]}, {"columns", input->ne[0]},
+        {"kernel", input->ne[0] / p[1]}, {"stride", p[0]}, {"padding", p[2]},
+    };
+    for (const auto & item : values)
+        dispatch.kernel.compile_parameters.emplace(std::string("ggml.col2im.") + item.first, std::to_string(item.second));
+    dispatch.bindings.push_back({input->storage_root, input->storage_offset, input->byte_count});
+    dispatch.bindings.push_back({output->id, 0, output->byte_count});
+    match.covered_nodes.push_back(context.root_index);
+    match.dispatches.push_back(std::move(dispatch));
+    return true;
+}
+
 }  // namespace
 
 void register_im2col_dispatch(DispatchRegistryBuilder & registry) {
+    registry.add({"common.col2im", GGML_OP_COL2IM_1D, DispatchMatchKind::SingleOp, 0,
+                  DispatchSource::Common, match_col2im});
     registry.add({"common.im2col", GGML_OP_IM2COL, DispatchMatchKind::SingleOp, 0,
                   DispatchSource::Common, match_im2col});
 }

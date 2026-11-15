@@ -147,6 +147,10 @@ json op_params_json(const OpParams & params) {
                     { "op",      static_cast<int>(value.op)  },
                     { "swapped", value.swapped               }
                 };
+            } else if constexpr (std::is_same_v<T, UpscaleParams>) {
+                return {{"kind", "upscale"}, {"mode", value.mode}};
+            } else if constexpr (std::is_same_v<T, Col2ImParams>) {
+                return {{"kind", "col2im"}, {"values", value.values}};
             } else if constexpr (std::is_same_v<T, Im2ColParams>) {
                 return {{"kind", "im2col"}, {"values", value.values}};
             } else if constexpr (std::is_same_v<T, SetParams>) {
@@ -224,6 +228,12 @@ OpParams parse_op_params(const json & item) {
     if (kind == "glu") {
         return GluParams{ static_cast<ggml_glu_op>(item.value("op", static_cast<int>(GGML_GLU_OP_REGLU))),
                           item.value("swapped", false) };
+    }
+    if (kind == "upscale") {
+        return UpscaleParams{item.at("mode").get<int32_t>()};
+    }
+    if (kind == "col2im") {
+        return Col2ImParams{item.at("values").get<std::array<int32_t, 3>>()};
     }
     if (kind == "im2col") {
         return Im2ColParams{item.at("values").get<std::array<int32_t, 7>>()};

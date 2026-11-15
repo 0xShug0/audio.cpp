@@ -44,6 +44,14 @@ struct GluParams {
     bool        swapped = false;
 };
 
+struct UpscaleParams {
+    int32_t mode = 0;
+};
+
+struct Col2ImParams {
+    std::array<int32_t, 3> values{};
+};
+
 struct Im2ColParams {
     std::array<int32_t, 7> values{};
 };
@@ -151,6 +159,8 @@ using OpParams = std::variant<
     PadParams,
     DiagMaskParams,
     Im2ColParams,
+    Col2ImParams,
+    UpscaleParams,
     BinaryParams,
     UnaryParams,
     RopeParams>;

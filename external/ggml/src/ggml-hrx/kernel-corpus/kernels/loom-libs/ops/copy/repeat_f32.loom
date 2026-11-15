@@ -11,6 +11,10 @@ config.decl @ggml.repeat.stride0 : %value: index where [range(%value, 1, 1073741
 config.decl @ggml.repeat.stride1 : %value: index where [range(%value, 1, 1073741824)]
 config.decl @ggml.repeat.stride2 : %value: index where [range(%value, 1, 1073741824)]
 config.decl @ggml.repeat.stride3 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.scale0 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.scale1 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.scale2 : %value: index where [range(%value, 1, 1073741824)]
+config.decl @ggml.repeat.scale3 : %value: index where [range(%value, 1, 1073741824)]
 kernel.def target(@ggml_repeat_target) export("ggml_repeat_f32") @ggml_repeat_f32(%element_count: index, %source_span: index) {
   %one = index.constant 1 : index
   %threads = index.constant 256 : index
@@ -48,13 +52,21 @@ kernel.def target(@ggml_repeat_target) export("ggml_repeat_f32") @ggml_repeat_f3
     %q1 = index.div %q0, %ne1 : index
     %i2 = index.rem %q1, %ne2 : index
     %i3 = index.div %q1, %ne2 : index
-    %r0 = index.rem %i0, %src_ne0 : index
+    %scale0 = config.get @ggml.repeat.scale0 : index
+    %scaled0 = index.div %i0, %scale0 : index
+    %r0 = index.rem %scaled0, %src_ne0 : index
     %b0 = index.mul %r0, %stride0 : index
-    %r1 = index.rem %i1, %src_ne1 : index
+    %scale1 = config.get @ggml.repeat.scale1 : index
+    %scaled1 = index.div %i1, %scale1 : index
+    %r1 = index.rem %scaled1, %src_ne1 : index
     %b1 = index.mul %r1, %stride1 : index
-    %r2 = index.rem %i2, %src_ne2 : index
+    %scale2 = config.get @ggml.repeat.scale2 : index
+    %scaled2 = index.div %i2, %scale2 : index
+    %r2 = index.rem %scaled2, %src_ne2 : index
     %b2 = index.mul %r2, %stride2 : index
-    %r3 = index.rem %i3, %src_ne3 : index
+    %scale3 = config.get @ggml.repeat.scale3 : index
+    %scaled3 = index.div %i3, %scale3 : index
+    %r3 = index.rem %scaled3, %src_ne3 : index
     %b3 = index.mul %r3, %stride3 : index
     %b01 = index.add %b0, %b1 : index
     %b23 = index.add %b2, %b3 : index
