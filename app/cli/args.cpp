@@ -39,6 +39,8 @@ const std::set<std::string> & value_options() {
         "--guidance-scale", "--input-channels", "--input-format", "--input-rate", "--instruct",
         "--language", "--load-option", "--load-progress", "--log-file", "--lyrics", "--max-steps",
         "--max-tokens", "--mode", "--model", "--model-spec-override", "--moe-cpu-share",
+        "--moe-disk-experts", "--moe-pin-experts", "--moe-expert-cache-size",
+        "--moe-disk-expert-read-threads", "--moe-cpu-expert-layers",
         "--num-beams", "--num-inference-steps", "--out", "--out-dir", "--out-format",
         "--pitch-shift", "--pipeline", "--predict-target-prosody", "--prosody-ref",
         "--prosody-shift-steps", "--repaint-end", "--repaint-mode", "--repaint-start",
@@ -138,9 +140,36 @@ const std::unordered_map<std::string, std::string> & request_option_aliases() {
     return option_keys;
 }
 
+const std::unordered_map<std::string, std::string> & moe_session_option_aliases() {
+    static const std::unordered_map<std::string, std::string> option_keys = {
+        {"--moe-cpu-share", "moe_cpu_share"},
+        {"--moe-disk-experts", "moe_disk_experts"},
+        {"--moe-pin-experts", "moe_pin_experts"},
+        {"--moe-expert-cache-size", "moe_expert_cache_size"},
+        {"--moe-disk-expert-read-threads", "moe_disk_expert_read_threads"},
+        {"--moe-cpu-expert-layers", "moe_cpu_expert_layers"},
+    };
+    return option_keys;
+}
+
 std::set<std::string> explicit_request_option_overrides(const std::vector<std::string> & arguments) {
     const auto & option_keys = request_option_aliases();
     std::set<std::string> keys = explicit_key_value_overrides(arguments, "--request-option");
+    for (size_t i = 1; i < arguments.size(); ++i) {
+        const auto option = option_keys.find(arguments[i]);
+        if (option != option_keys.end()) {
+            keys.insert(option->second);
+            ++i;
+        } else if (value_options().count(arguments[i]) != 0 && i + 1 < arguments.size()) {
+            ++i;
+        }
+    }
+    return keys;
+}
+
+std::set<std::string> explicit_session_option_overrides(const std::vector<std::string> & arguments) {
+    std::set<std::string> keys = explicit_key_value_overrides(arguments, "--session-option");
+    const auto & option_keys = moe_session_option_aliases();
     for (size_t i = 1; i < arguments.size(); ++i) {
         const auto option = option_keys.find(arguments[i]);
         if (option != option_keys.end()) {
@@ -285,7 +314,7 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
         }
     }
 
-    const auto session_overrides = explicit_key_value_overrides(arguments, "--session-option");
+    const auto session_overrides = explicit_session_option_overrides(arguments);
     const auto request_overrides = explicit_request_option_overrides(arguments);
     const auto load_overrides = explicit_key_value_overrides(arguments, "--load-option");
     for (const auto & key : keys) {
@@ -298,6 +327,11 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
         } else if (option == "--request-option") {
             key_value_overrides = &request_overrides;
         } else {
+            const auto moe_alias = moe_session_option_aliases().find(option);
+            if (moe_alias != moe_session_option_aliases().end() &&
+                session_overrides.count(moe_alias->second) != 0) {
+                continue;
+            }
             const auto alias = request_option_aliases().find(option);
             if (alias != request_option_aliases().end() && request_overrides.count(alias->second) != 0) {
                 continue;
