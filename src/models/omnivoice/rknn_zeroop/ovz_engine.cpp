@@ -15,6 +15,7 @@
 #include <arm_neon.h>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -488,6 +489,17 @@ int Engine::pack_weights() {
         std::error_code ec;
         std::filesystem::create_directories(I.cache_dir, ec);
         if (ec) I.warn = "cache: mkdir " + I.cache_dir + ": " + ec.message();
+        // sweep temp files a process killed mid-pack left behind (only exact
+        // final names are ever read back, so those are a pure disk leak; a
+        // concurrent packer's live temp is indistinguishable and dies with it
+        // - that run repacks on its next start, concurrent cold packs of one
+        // cache dir on one NPU are not a supported board scenario anyway)
+        std::error_code SEC;
+        for (const auto& e : std::filesystem::directory_iterator(I.cache_dir, SEC))
+            if (e.path().filename().string().find(".tmp.") != std::string::npos) {
+                std::error_code REC;
+                std::filesystem::remove(e.path(), REC);
+            }
     }
     const int Mw = 2 * kQrows;  // io.B.size is M-independent; any M queries it
     for (int s = 0; s < 4; ++s) {
@@ -543,10 +555,14 @@ int Engine::pack_weights() {
                 FILE* f = fopen(fn.c_str(), "rb");
                 bool bad = !f || fread(dst, 1, wsz[s], f) != wsz[s] || fread(&cs, 1, 8, f) != 8 ||
                            cs != fnv64((const uint8_t*)dst, wsz[s]);
+                int src = bad ? 0 : rknn_mem_sync(I.wt[l][s].sync, I.wt[l][s].mem, RKNN_MEMORY_SYNC_TO_DEVICE);
                 if (f) fclose(f);
-                if (bad || rknn_mem_sync(I.wt[l][s].sync, I.wt[l][s].mem, RKNN_MEMORY_SYNC_TO_DEVICE)) {
+                if (bad || src) {  // surface the reason: an all-warm pack_ms is the operator's
+                                   // only signal, and a driver-side sync failure must not
+                                   // masquerade as a plain cache miss
+                    I.warn = "cache: warm miss at " + fn + (bad ? " (read/checksum)" : " (device sync)") +
+                             ", repacking";
                     warm = false;
-                    break;
                 }
             }
     std::vector<uint16_t> fused;
@@ -578,6 +594,9 @@ int Engine::pack_weights() {
                     break;
                 case 3: src = w.down; break;
             }
+            memset(I.wt[l][s].mem->virt_addr, 0, (size_t)wsz[s]);  // grid N1*K1*subN*subK can
+            // trail B.size (tile rounding in other librknnrt builds): zero it so the file and
+            // its trailer never carry uninitialized device-pool bytes
             pack_b(src, (uint16_t*)I.wt[l][s].mem->virt_addr, kSk[s], kSn[s],
                    I.pack_io[s].B.dims[2], I.pack_io[s].B.dims[3]);
             if (rknn_mem_sync(I.wt[l][s].sync, I.wt[l][s].mem, RKNN_MEMORY_SYNC_TO_DEVICE)) {
@@ -588,17 +607,24 @@ int Engine::pack_weights() {
                 path(l, s);
                 const uint8_t* buf = (const uint8_t*)I.wt[l][s].mem->virt_addr;
                 const uint64_t cs = fnv64(buf, wsz[s]);
-                // atomic publish: write a unique temp, fsync, rename over the
-                // final name; a half-written/crashed pack never masquerades as
-                // a complete cache file. On any failure drop the temp and
-                // warn - the engine still runs (and repacks next run).
-                const std::string tmp = fn + "." + std::to_string(getpid()) + ".tmp";
-                FILE* f = fopen(tmp.c_str(), "wb");
-                bool ok = f && fwrite(buf, 1, (size_t)wsz[s], f) == (size_t)wsz[s] &&
-                          fwrite(&cs, 1, 8, f) == 8 && fflush(f) == 0 && fsync(fileno(f)) == 0;
-                if (f) fclose(f);
-                if (!ok || rename(tmp.c_str(), fn.c_str()) != 0) {
-                    remove(tmp.c_str());
+                // atomic publish: write a unique temp (mkstemp: unique even
+                // across pid namespaces sharing a bind-mounted cache dir),
+                // fsync, rename over the final name; a half-written/crashed
+                // pack never masquerades as a complete cache file. On any
+                // failure drop the temp and warn - the engine still runs (and
+                // repacks next run).
+                std::string tmplt = fn + ".tmp.XXXXXX";
+                std::vector<char> tpl(tmplt.begin(), tmplt.end());
+                tpl.push_back('\0');
+                bool ok = false;
+                FILE* f = fdopen(mkstemp(tpl.data()), "wb");
+                if (f) {
+                    ok = fwrite(buf, 1, (size_t)wsz[s], f) == (size_t)wsz[s] &&
+                         fwrite(&cs, 1, 8, f) == 8 && fflush(f) == 0 && fsync(fileno(f)) == 0;
+                    fclose(f);
+                }
+                if (!ok || rename(tpl.data(), fn.c_str()) != 0) {
+                    remove(tpl.data());
                     if (I.warn.empty()) I.warn = "cache: write failed for " + fn;
                 }
             }
