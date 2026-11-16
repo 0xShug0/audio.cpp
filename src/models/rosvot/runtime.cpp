@@ -131,7 +131,13 @@ struct Network {
         auto key_keep = core::reshape_tensor(ctx, keep, TensorShape::from_dims({1, x.shape.dims[1]}));
         auto attention_mask = RepeatModule({TensorShape::from_dims({x.shape.dims[1], x.shape.dims[1]})}).build(
             ctx, ScaleBiasModule({1e9f, -1e9f}).build(ctx, key_keep));
-        x = ScaleBiasModule({std::sqrt(static_cast<float>(config.hidden_size)), 0}).build(ctx, core::ensure_backend_addressable_layout(ctx, x));
+        // ggml_scale requires packed outer strides even for singleton axes.
+        if (x.tensor->nb[0] != ggml_type_size(x.tensor->type) ||
+            x.tensor->nb[2] != x.tensor->nb[1] * x.tensor->ne[1] ||
+            x.tensor->nb[3] != x.tensor->nb[2] * x.tensor->ne[2]) {
+            x = core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape);
+        }
+        x = ScaleBiasModule({std::sqrt(static_cast<float>(config.hidden_size)), 0}).build(ctx, x);
         for (int64_t i = 0; i < config.conformer_layers; ++i) {
             const auto p = "net.net.mid.net.encoder_layers." + std::to_string(i);
             auto ff = [&](const TensorValue & input, const std::string & name, const std::string & n) {
@@ -533,7 +539,8 @@ Transcription RosvotRuntime::transcribe(const std::vector<float> & waveform, flo
         for (size_t n = 0; n < out.notes.size(); ++n) {
             const auto first = starts[n];
             const auto last = n + 1 == out.notes.size() ? real - 1 : starts[n + 1];
-            int64_t assigned = 0;
+            const double midpoint = 0.5 * (out.notes[n].onset_seconds + out.notes[n].offset_seconds);
+            int64_t assigned = std::upper_bound(offsets.begin(), offsets.end(), midpoint) - offsets.begin() - 1;
             if (word_ids[static_cast<size_t>(first)]) {
                 assigned = word_ids[static_cast<size_t>(first)];
                 out.notes[n].onset_seconds = offsets[static_cast<size_t>(assigned)];

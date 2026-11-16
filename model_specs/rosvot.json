@@ -54,7 +54,7 @@
       },
       {
         "name": "word_durations_file",
-        "type": "string",
+        "type": "path",
         "description": "Optional JSON array of word durations in seconds, replacing RWBD predictions.",
         "required": false
       }
