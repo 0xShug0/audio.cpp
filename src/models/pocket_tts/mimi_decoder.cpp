@@ -252,7 +252,6 @@ public:
     }
 
     ~DepthwiseConvTranspose1dRuntime() {
-        core::release_backend_graph_resources(backend_, graph_, true);
         if (galloc_ != nullptr) {
             ggml_gallocr_free(galloc_);
         }
@@ -356,7 +355,6 @@ public:
     }
 
     ~Conv1dRuntime() {
-        core::release_backend_graph_resources(backend_, graph_, true);
         if (galloc_ != nullptr) {
             ggml_gallocr_free(galloc_);
         }
@@ -466,7 +464,6 @@ public:
     }
 
     ~ConvTranspose1dRuntime() {
-        core::release_backend_graph_resources(backend_, graph_, true);
         if (galloc_ != nullptr) {
             ggml_gallocr_free(galloc_);
         }
@@ -753,7 +750,6 @@ public:
     }
 
     ~MimiFullDecoderRuntime() {
-        core::release_backend_graph_resources(backend_, graph_, true);
         if (plan_ != nullptr) {
             engine::core::free_backend_graph_plan(backend_, plan_);
         }
@@ -960,7 +956,6 @@ public:
     }
 
     ~MimiTransformerRuntime() {
-        core::release_backend_graph_resources(backend_, graph_, true);
         if (galloc_ != nullptr) {
             ggml_gallocr_free(galloc_);
         }
