@@ -81,8 +81,9 @@ int main() {
         {
             std::lock_guard<std::mutex> lock(mutex);
 #ifdef _WIN32
-            // Three metadata requests each own their client on Windows.
-            require(connections.size() == 3, "Windows inventory did not use request-local connections");
+            // The fallback file probes its resolve URL twice: without redirects,
+            // then with redirects enabled. Each of the four requests owns its client.
+            require(connections.size() == 4, "Windows inventory did not use request-local connections");
 #else
             require(connections.size() == 1, "inventory did not reuse its origin connection");
 #endif
