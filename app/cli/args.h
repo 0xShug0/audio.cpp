@@ -21,6 +21,8 @@ void require_known_args(int argc, char ** argv);
 // ignored, not that it was misspelled. Does nothing if require_known_args already ran.
 void warn_ignored_args(int argc, char ** argv);
 
+std::vector<std::string> expand_cli_args(int argc, char ** argv);
+
 std::optional<std::string> find_arg(int argc, char ** argv, const std::string & name);
 bool has_arg(int argc, char ** argv, const std::string & name);
 std::vector<std::string> collect_args(int argc, char ** argv, const std::string & name);

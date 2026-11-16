@@ -709,6 +709,28 @@ Common interface options:
 - `--device <n>` selects the backend device
 - `--threads <n>` sets backend and OpenMP worker threads
 
+CLI options can also be loaded from a YAML file with `--config-file`. Use the option name
+without its leading dashes; scalar values map to one option, sequences repeat an option, and
+boolean values enable/disable valueless flags. For scalar options supplied in both places, the
+command-line value takes precedence:
+
+```yaml
+task: tts
+family: pocket_tts
+model: /path/to/model
+backend: cuda
+text: "Hello from YAML"
+voice-id: alba
+request-option:
+  - temperature=0.7
+metrics: true
+do-sample: false
+```
+
+```bash
+build/bin/audiocpp_cli --config-file run.yaml --text "CLI text overrides YAML"
+```
+
 Examples:
 
 Text-to-speech:
