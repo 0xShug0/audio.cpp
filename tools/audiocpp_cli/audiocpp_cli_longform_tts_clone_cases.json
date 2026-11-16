@@ -633,6 +633,61 @@
           "text_chunk_size": 300
         }
       ]
+    },
+    {
+      "id": "tiny_voca_tts_longform",
+      "coverage": "tiny-voca built-in voices with repeated requests in one session, long-form text through the framework chunker, and RTF measurement",
+      "family": "tiny_voca",
+      "model": "models/tiny-voca-GGUF/tiny-voca-orig.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "tts_longform_cold",
+          "text_repeat": {
+            "text": "At dawn the harbor station opens its windows. Porters stack wooden crates, bakers cross the square, and a violinist practices under the archway. Later, the lighthouse keeper reports a calm northern channel; the station master checks every ticket before sunset. ",
+            "chars": 783
+          },
+          "language": "en",
+          "speaking_rate": 1.0,
+          "seed": 1234,
+          "text_chunk_size": 400,
+          "options": {
+            "voice_id": "M2"
+          }
+        },
+        {
+          "id": "tts_longform_repeat",
+          "text_repeat": {
+            "text": "At dawn the harbor station opens its windows. Porters stack wooden crates, bakers cross the square, and a violinist practices under the archway. Later, the lighthouse keeper reports a calm northern channel; the station master checks every ticket before sunset. ",
+            "chars": 783
+          },
+          "language": "en",
+          "speaking_rate": 1.0,
+          "seed": 1234,
+          "text_chunk_size": 400,
+          "options": {
+            "voice_id": "M2"
+          }
+        },
+        {
+          "id": "tts_longform_other_voice",
+          "text_repeat": {
+            "text": "At dawn the harbor station opens its windows. Porters stack wooden crates, bakers cross the square, and a violinist practices under the archway. Later, the lighthouse keeper reports a calm northern channel; the station master checks every ticket before sunset. ",
+            "chars": 783
+          },
+          "language": "en",
+          "speaking_rate": 1.0,
+          "seed": 1234,
+          "text_chunk_size": 400,
+          "options": {
+            "voice_id": "F2"
+          }
+        }
+      ]
     }
   ]
 }
