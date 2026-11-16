@@ -698,6 +698,7 @@ add_library(engine_core OBJECT
     src/framework/codecs/fish_dac_codec_runtime.cpp
     src/framework/codecs/mel_latent_vae44k_runtime.cpp
     src/framework/codecs/mimi_codec_runtime.cpp
+    src/framework/codecs/mimi_latent_decoder_runtime.cpp
     src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp
     src/framework/codecs/neural_audio.cpp
     src/framework/codecs/oobleck_audio_vae_runtime.cpp
@@ -1585,7 +1586,6 @@ audiocpp_add_model(pocket_tts_small
         src/models/pocket_tts_small/assets.cpp
         src/models/pocket_tts_small/conditioning.cpp
         src/models/pocket_tts_small/flow_lm.cpp
-        src/models/pocket_tts_small/mimi_decoder.cpp
         src/models/pocket_tts_small/mimi_encoder.cpp
         src/models/pocket_tts_small/session.cpp
     INCLUDES
@@ -5339,6 +5339,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         endif()
 
         if (pocket_tts_small IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(mimi_latent_decoder_lifecycle tests/codecs/mimi_latent_decoder_lifecycle.cpp app/cli/args.cpp)
+            target_link_libraries(mimi_latent_decoder_lifecycle PRIVATE engine_runtime ggml)
+            target_include_directories(mimi_latent_decoder_lifecycle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
             add_executable(pocket_tts_small_batch tests/pocket_tts_small/batch.cpp app/cli/args.cpp app/streaming/streaming.cpp)
             target_link_libraries(pocket_tts_small_batch PRIVATE engine_runtime ggml)
             target_include_directories(pocket_tts_small_batch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

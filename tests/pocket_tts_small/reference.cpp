@@ -1,6 +1,6 @@
 #include "app/cli/args.h"
 #include "engine/models/pocket_tts_small/assets.h"
-#include "engine/models/pocket_tts_small/mimi_decoder.h"
+#include "engine/framework/codecs/mimi_codec_runtime.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
@@ -69,27 +69,26 @@ int main(int argc, char ** argv) {
         }
         const auto config = assets->model_config.decoder;
         const auto frames = static_cast<int64_t>(latents.size()) / config.latent_size;
-        engine::models::pocket_tts_small::MimiDecoder decoder(config);
+        engine::codecs::MimiLatentDecoderRuntime decoder(execution, config, weights->mimi_decoder,
+            {32 << 20, 96 << 20, 64 << 20, chunk_frames, chunk_frames, 900, "pocket_tts_small.mimi"});
         const auto started = std::chrono::steady_clock::now();
         std::vector<float> actual;
         const auto fade = engine::audio::make_linear_fade_window(240, 120);
         if (mode == "offline") {
             if (texts.size() != 1) throw std::runtime_error("Offline replay expects one text chunk");
-            actual = decoder.decode(execution.backend(), 8, *assets, *weights, latents,
-                frames, 32 << 20, 96 << 20, 64 << 20, chunk_frames, 900, full_decoder);
+            actual = decoder.decode(latents, frames, full_decoder);
             for (size_t i = 0; i < std::min<size_t>(120, actual.size()); ++i) actual[i] *= fade[i];
         } else {
             const auto calls = engine::io::json::parse(index.metadata.at("decoder_calls")).as_array();
             for (const auto & call : calls) {
-                if (call.require("reset").as_bool()) decoder.reset_streaming_state();
+                if (call.require("reset").as_bool()) decoder.reset_streaming();
                 std::ostringstream name;
                 name << "decoder." << std::setw(4) << std::setfill('0') << call.require("index").as_i64() << ".latent";
                 const auto input = source->require_f32(name.str());
                 std::vector<float> samples;
                 for (size_t offset = 0; offset < input.size(); offset += config.latent_size) {
                     const std::vector<float> frame(input.begin() + offset, input.begin() + offset + config.latent_size);
-                    auto output = decoder.decode_streaming(execution.backend(), 8, *assets, *weights,
-                        frame, 32 << 20, 96 << 20, 64 << 20);
+                    auto output = decoder.decode_streaming(frame);
                     samples.insert(samples.end(), output.begin(), output.end());
                 }
                 if (samples.size() != static_cast<size_t>(call.require("samples").as_i64()))
