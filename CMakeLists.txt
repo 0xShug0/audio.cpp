@@ -5332,6 +5332,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             )
         endif()
 
+        if (pocket_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(pocket_tts_mimi_lifecycle tests/pocket_tts/mimi_lifecycle.cpp app/cli/args.cpp)
+            target_link_libraries(pocket_tts_mimi_lifecycle PRIVATE engine_runtime ggml)
+            target_include_directories(pocket_tts_mimi_lifecycle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        endif()
+
         if (pocket_tts_small IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(pocket_tts_small_batch tests/pocket_tts_small/batch.cpp app/cli/args.cpp app/streaming/streaming.cpp)
             target_link_libraries(pocket_tts_small_batch PRIVATE engine_runtime ggml)
