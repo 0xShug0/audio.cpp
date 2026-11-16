@@ -127,6 +127,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **sanotts** (C)<br>Ashish [@voidash](https://github.com/voidash) | TTS | en, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne, hi | [sanoTTS voice family](docs/models/sanotts.md) | GGUF FP32 |
 | **soprano_tts** (C)<br>[@drzsdrtfg](https://github.com/drzsdrtfg) | TTS | en | [Soprano 1.1 80M](docs/models/soprano_tts.md) | GGUF Q8, Stream |
 | **sopro_tts** (C)<br>[@Brioch](https://github.com/Brioch)<br>[@samuel-vitorino](https://github.com/samuel-vitorino) | TTS, Clone | en, pt, fr, de | [Sopro V2 Turbo (2.2.0)](docs/models/sopro_tts.md) | Safetensors, GGUF F16, Stream |
+| **tiny_voca** (C)<br>Nazeem [@n4ze3m](https://github.com/n4ze3m) | TTS | en | [tiny-voca](docs/models/tiny_voca.md) | GGUF FP32 |
 | **supertonic** | TTS | en, ko, ja, ar, bg, cs, da, de, el, es, et, fi, fr, hi, hr, hu, id, it, lt, lv, nl, pl, pt, ro, ru, sk, sl, sv, tr, uk, vi, na | [Supertonic 3](docs/tts.md#supertonic) | GGUF F32, Stream |
 | **vibevoice** | TTS, Dialogue | en, zh | [VibeVoice-1.5B](docs/tts.md#vibevoice)<br>VibeVoice-7B | GGUF 16/Q8, Stream, LoRA |
 | **vieneu_v3_turbo** (C)<br>Bảo [@pnnbao97](https://github.com/pnnbao97)<br>[@phuocnguyen90](https://github.com/phuocnguyen90) | TTS, Clone | vi, en | [VieNeu-TTS v3 Turbo](docs/models/vieneu_v3_turbo.md) | GGUF |

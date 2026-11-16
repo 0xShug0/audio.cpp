@@ -1236,6 +1236,40 @@ audiocpp_add_model(inflect_v2
         engine::models::inflect_v2::make_inflect_v2_loader
 )
 
+audiocpp_add_model(tiny_voca
+    SOURCES
+        src/community_models/tiny_voca/assets.cpp
+        src/community_models/tiny_voca/frontend.cpp
+        src/community_models/tiny_voca/runtime.cpp
+        src/community_models/tiny_voca/session.cpp
+        src/community_models/tiny_voca/source_filter.cpp
+        src/community_models/tiny_voca/dizione/align.cpp
+        src/community_models/tiny_voca/dizione/convert.cpp
+        src/community_models/tiny_voca/dizione/data.cpp
+        src/community_models/tiny_voca/dizione/engine.cpp
+        src/community_models/tiny_voca/dizione/g2p.cpp
+        src/community_models/tiny_voca/dizione/homographs.cpp
+        src/community_models/tiny_voca/dizione/json.cpp
+        src/community_models/tiny_voca/dizione/morphology.cpp
+        src/community_models/tiny_voca/dizione/normalize.cpp
+        src/community_models/tiny_voca/dizione/normalize_figures.cpp
+        src/community_models/tiny_voca/dizione/normalize_numbers.cpp
+        src/community_models/tiny_voca/dizione/pyre.cpp
+        src/community_models/tiny_voca/dizione/sentence.cpp
+        src/community_models/tiny_voca/dizione/symbols.cpp
+        src/community_models/tiny_voca/dizione/tables.cpp
+        src/community_models/tiny_voca/dizione/text.cpp
+        src/community_models/tiny_voca/dizione/unicode.cpp
+    INCLUDES
+        engine/community_models/tiny_voca/session.h
+    LOADERS
+        engine::models::tiny_voca::make_tiny_voca_loader
+)
+if (MSVC)
+    # The phonemizer's sources hold phonetic symbols and currency signs as UTF-8.
+    target_compile_options(engine_model_tiny_voca PRIVATE /utf-8)
+endif()
+
 audiocpp_add_model(piper_tts
     SOURCES
         src/community_models/piper_tts/assets.cpp
@@ -3909,6 +3943,26 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # Reuse GGML's CPU-reference operator harness for the opt-in backend.
         add_executable(test-backend-ops external/ggml/tests/test-backend-ops.cpp)
         target_link_libraries(test-backend-ops PRIVATE ggml Threads::Threads)
+    endif()
+
+    if (ENGINE_BUILD_TESTS AND tiny_voca IN_LIST AUDIOCPP_LINKED_MODELS)
+        # The parts that need no model files: text rules, sentence splitting, the dictionary index and the waveform head.
+        add_engine_unittest(tiny_voca_unit_test tests/community_models/tiny_voca/unit_test.cpp)
+        target_include_directories(tiny_voca_unit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/community_models/tiny_voca)
+        if (MSVC)
+            target_compile_options(tiny_voca_unit_test PRIVATE /utf-8)
+        endif()
+        add_test(NAME tiny_voca_unit_test COMMAND tiny_voca_unit_test)
+    endif()
+    if (ENGINE_BUILD_MODEL_TESTS AND tiny_voca IN_LIST AUDIOCPP_LINKED_MODELS)
+        # Speaks given phoneme ids with given noise, for the comparison with the Python model.
+        add_executable(tiny_voca_synth_probe tests/community_models/tiny_voca/synth_probe.cpp)
+        target_link_libraries(tiny_voca_synth_probe PRIVATE engine_runtime ggml)
+        # Compares the phonemizer with Python's; it needs the dizione sources only.
+        add_executable(tiny_voca_dizione_probe tests/community_models/tiny_voca/dizione_probe.cpp)
+        target_include_directories(tiny_voca_dizione_probe PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/community_models/tiny_voca/dizione)
+        target_link_libraries(tiny_voca_dizione_probe PRIVATE engine_runtime ggml)
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND m5_tts IN_LIST AUDIOCPP_LINKED_MODELS)

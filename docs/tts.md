@@ -50,6 +50,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | Qwen3 TTS | `qwen3_tts` | `tts`, `clon`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
+| tiny-voca | `tiny_voca` | `tts` | [tiny-voca](models/tiny_voca.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 | VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
 | VoxCPM1 | `voxcpm1` | `tts`, `clon` | [VoxCPM1](#voxcpm1) |
