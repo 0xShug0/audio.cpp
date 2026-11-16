@@ -52,6 +52,7 @@ runtime::ModelCliInterface cli(const AceStepAssets &) {
     out.request_options = {
         {"route", "text2music|complete|lego|extract|cover|cover-nofsq|repaint", "ACE-Step operation; also exposed as --task-route.", false, "text2music"},
         {"lyrics", "text", "Vocal lyrics."},
+        {"reference_audio", "wav", "Path to reference audio for timbre/style conditioning, independent of source audio."},
         {"rewrite_caption", "true|false", "Planner-only caption rewrite; requires a planner route and returns text plus the ace_step_caption_plan JSON artifact, without audio.", false, "false"},
         {"duration_sec", "float", "Target duration in seconds; a non-positive value leaves duration selection to the planner. Also exposed as --duration-seconds; legacy duration_seconds remains accepted.", false, "-1.0"},
         {"language", "code", "Vocal language; overrides text input language, otherwise defaults to en. Also exposed as --language."},

@@ -5074,6 +5074,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # Model-specific tests and probes.
         if (ace_step IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(ace_step_timbre_cache_probe tests/ace_step/timbre_cache_probe.cpp)
+            add_engine_unittest(ace_step_reference_audio_test tests/ace_step/reference_audio.cpp)
+            add_test(NAME ace_step_reference_audio_test COMMAND ace_step_reference_audio_test --log)
         endif()
         if (zipvoice IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(zipvoice_parity tests/zipvoice/zipvoice_parity_main.cpp)

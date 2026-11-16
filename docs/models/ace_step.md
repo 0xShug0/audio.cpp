@@ -21,6 +21,24 @@ audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend c
 | Prompt input | `--text` |
 | Lyrics input | `--lyrics` |
 | Source audio | Route-dependent through `--audio` |
+| Timbre reference | Optional `--request-option reference_audio=reference.wav`, independent of source audio on every route |
+
+## Timbre Reference
+
+Use `--request-option reference_audio=reference.wav` to condition the timbre and style independently of
+`--audio`, which remains the route's source audio. Server requests set `options.reference_audio` to a WAV path
+on the server filesystem. ACE-Step normalizes the reference to stereo 48 kHz,
+repeats short clips, and samples three 10-second windows from its front, middle and
+back thirds before VAE encoding. Window selection uses the request seed. Empty or
+silent references are rejected; omitting the reference preserves silence conditioning.
+This conditions timbre rather than guaranteeing an exact voice clone.
+For a vocal prompt, `use_cot_caption=false` preserves your description instead of
+letting the planner rewrite it; a rewritten instrumental caption can suppress vocals.
+`audio_cover_strength` controls cover/non-cover scheduling, not reference volume.
+
+```bash
+audiocpp_cli --task gen --family ace_step --model models/Ace-Step1.5 --backend cuda --text "acoustic folk song with clear vocals" --lyrics "The morning light is shining through the trees" --request-option reference_audio=reference.wav --request-option use_cot_caption=false --duration-seconds 30 --seed 42 --log --out song.wav
+```
 
 ## Text To Music
 

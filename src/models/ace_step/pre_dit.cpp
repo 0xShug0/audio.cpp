@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <random>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -386,6 +387,43 @@ const AceStepTaskRoute & effective_dit_route_for_plan(const AceStepTaskRoute & r
 
 }  // namespace
 
+runtime::AudioBuffer ace_step_prepare_reference_audio(const runtime::AudioBuffer & audio, uint32_t seed) {
+    auto normalized = normalize_audio_to_stereo_48k(audio);
+    if (std::any_of(normalized.samples.begin(), normalized.samples.end(),
+                    [](float sample) { return !std::isfinite(sample); })) {
+        throw std::runtime_error("ACE-Step reference audio contains non-finite samples");
+    }
+    if (std::all_of(normalized.samples.begin(), normalized.samples.end(),
+                    [](float sample) { return std::abs(sample) < 1.0e-6F; })) {
+        throw std::runtime_error("ACE-Step reference audio is silent");
+    }
+    constexpr size_t segment_frames = 10 * kAceStepAudioSampleRate;
+    constexpr size_t target_frames = 3 * segment_frames;
+    constexpr size_t channels = kAceStepAudioChannels;
+    const size_t input_frames = normalized.samples.size() / channels;
+    // Upstream repeats short clips before sampling one window from each third.
+    const size_t total_frames = input_frames < target_frames
+        ? ((target_frames + input_frames - 1) / input_frames) * input_frames : input_frames;
+    const size_t third_frames = total_frames / 3;
+    std::mt19937 rng(seed);
+    runtime::AudioBuffer digest;
+    digest.sample_rate = kAceStepAudioSampleRate;
+    digest.channels = kAceStepAudioChannels;
+    digest.samples.resize(target_frames * channels);
+    for (size_t part = 0; part < 3; ++part) {
+        const size_t begin = part * third_frames;
+        const size_t end = part == 2 ? total_frames : begin + third_frames;
+        std::uniform_int_distribution<size_t> offset(0, end - begin - segment_frames);
+        const size_t start = begin + offset(rng);
+        for (size_t frame = 0; frame < segment_frames; ++frame) {
+            const size_t source = ((start + frame) % input_frames) * channels;
+            const size_t destination = (part * segment_frames + frame) * channels;
+            std::copy_n(normalized.samples.data() + source, channels, digest.samples.data() + destination);
+        }
+    }
+    return digest;
+}
+
 AceStepPreDitRuntime::AceStepPreDitRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const AceStepAssets> assets,
@@ -640,13 +678,27 @@ AceStepPreDitInputs AceStepPreDitRuntime::prepare(
         engine::debug::elapsed_ms(lm_hints_align_start, Clock::now()));
 
     const auto timbre_slice_start = Clock::now();
-    const std::vector<float> refer_audio_acoustic_hidden_states_packed =
-        silence_latent_slice(
+    const int64_t reference_frames = assets_->config.diffusion.timbre_fix_frame;
+    std::vector<float> refer_audio_acoustic_hidden_states_packed;
+    if (request.reference && request.reference->audio) {
+        const auto reference_audio = ace_step_prepare_reference_audio(*request.reference->audio, request.generation.seed);
+        ensure_vae_encoder();
+        auto reference_latents = vae_encoder_->encode(reference_audio, request.generation.seed);
+        if (reference_latents.frames != reference_frames || reference_latents.channels != silence_latent_channels_) {
+            throw std::runtime_error("ACE-Step reference VAE latents do not match the timbre encoder shape");
+        }
+        refer_audio_acoustic_hidden_states_packed = std::move(reference_latents.values);
+        if (execution_->backend_type() == core::BackendType::Metal) {
+            release_vae_encoder();
+        }
+    } else {
+        refer_audio_acoustic_hidden_states_packed = silence_latent_slice(
             silence_latent_,
             silence_latent_frames_,
             silence_latent_channels_,
             assets_->config.diffusion.timbre_fix_frame)
             .values;
+    }
     engine::debug::timing_log_scalar(
         "ace_step.pre_dit.timbre_slice_ms",
         engine::debug::elapsed_ms(timbre_slice_start, Clock::now()));
