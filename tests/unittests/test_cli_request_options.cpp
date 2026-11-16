@@ -654,6 +654,12 @@ void test_cli_key_value_options_override_yaml() {
         config << "session-option:\n"
                << "  - confucius4_r2t2.unfixed_chunk_num=2\n"
                << "  - confucius4_r2t2.chunk_size_ms=320\n"
+               << "  - moe_cpu_share=0.1\n"
+               << "  - moe_disk_experts=true\n"
+               << "  - moe_pin_experts=false\n"
+               << "  - moe_expert_cache_size=8\n"
+               << "  - moe_disk_expert_read_threads=1\n"
+               << "  - moe_cpu_expert_layers=2\n"
                << "request-option: temperature=0.7\n";
     }
 
@@ -668,8 +674,20 @@ void test_cli_key_value_options_override_yaml() {
         "temperature=0.9",
         "--request-option",
         "top_k=10",
+        "--moe-cpu-share",
+        "0.5",
+        "--moe-disk-experts",
+        "false",
+        "--moe-pin-experts",
+        "true",
+        "--moe-expert-cache-size",
+        "16",
+        "--moe-disk-expert-read-threads",
+        "4",
+        "--moe-cpu-expert-layers",
+        "3",
     };
-    const auto expanded = minitts::cli::expand_cli_args(9, const_cast<char **>(argv));
+    const auto expanded = minitts::cli::expand_cli_args(21, const_cast<char **>(argv));
     std::vector<char *> expanded_argv;
     expanded_argv.reserve(expanded.size() + 1);
     for (const auto & arg : expanded) {
@@ -690,6 +708,27 @@ void test_cli_key_value_options_override_yaml() {
         session_options.at("confucius4_r2t2.unfixed_chunk_num"),
         std::string("2"),
         "YAML session option retained");
+    for (const auto & key : {
+             "moe_cpu_share",
+             "moe_disk_experts",
+             "moe_pin_experts",
+             "moe_expert_cache_size",
+             "moe_disk_expert_read_threads",
+             "moe_cpu_expert_layers"}) {
+        engine::test::require(session_options.count(key) == 0, "CLI MoE option overrides YAML session option");
+    }
+    for (const auto & option : {
+             std::make_pair("--moe-cpu-share", "0.5"),
+             std::make_pair("--moe-disk-experts", "false"),
+             std::make_pair("--moe-pin-experts", "true"),
+             std::make_pair("--moe-expert-cache-size", "16"),
+             std::make_pair("--moe-disk-expert-read-threads", "4"),
+             std::make_pair("--moe-cpu-expert-layers", "3")}) {
+        engine::test::require_eq(
+            minitts::cli::find_arg(expanded_argc, expanded_argv.data(), option.first).value(),
+            std::string(option.second),
+            "CLI MoE value retained");
+    }
     engine::test::require_eq(request_options.at("temperature"), std::string("0.9"), "CLI request option overrides YAML");
     engine::test::require_eq(request_options.at("top_k"), std::string("10"), "CLI-only request option retained");
     std::filesystem::remove(config_path);
