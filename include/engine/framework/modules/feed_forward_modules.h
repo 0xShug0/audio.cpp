@@ -14,6 +14,7 @@ enum class FeedForwardActivation {
     Gelu,
     Relu,
     ReluSquared,
+    Silu,
 };
 
 // Autocast uses BF16 operands, or native F16 intermediates on CUDA when F16

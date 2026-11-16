@@ -10,7 +10,9 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/conformer_modules.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/pitch_extractors/rmvpe_pitch_extractor.h"
 #include "engine/framework/modules/primitive_modules.h"
@@ -55,6 +57,8 @@ struct Network {
         const std::string & label)
         : config(c), store(execution.backend(), execution.config().type, label, 4ull << 20) {
         for (const auto & tensor : source.tensors()) {
+            // These inference-only parameters are represented by folded affine weights.
+            if (tensor.name.find(".conv_module.norm.") != std::string::npos) continue;
             weights.emplace(tensor.name, binding::tensor_from_named_source(store, source, tensor.name,
                 assets::TensorStorageType::Native));
         }
@@ -101,9 +105,9 @@ struct Network {
     }
 
     TensorValue residual(ModuleBuildContext & ctx, TensorValue x, const std::string & prefix,
-        int count, float eps = 1e-5f) const {
-        const auto mask = nonpadding(ctx, core::ensure_backend_addressable_layout(ctx, transpose_sequence(ctx, x)));
-        const auto mask_bct = transpose_sequence(ctx, mask);
+        int count, float eps = 1e-5f, const std::optional<TensorValue> & keep_mask = std::nullopt) const {
+        const auto mask_bct = keep_mask ? *keep_mask : transpose_sequence(ctx,
+            nonpadding(ctx, core::ensure_backend_addressable_layout(ctx, transpose_sequence(ctx, x))));
         for (int i = 0; i < count; ++i) {
             const auto p = prefix + ".blocks." + std::to_string(i);
             auto y = transpose_sequence(ctx, norm(ctx, transpose_sequence(ctx, x), p + ".0", eps));
@@ -119,7 +123,7 @@ struct Network {
     TensorValue conv_blocks(ModuleBuildContext & ctx, TensorValue x, const std::string & prefix, int count) const {
         const auto mask = transpose_sequence(ctx, nonpadding(ctx,
             core::ensure_backend_addressable_layout(ctx, transpose_sequence(ctx, x))));
-        x = residual(ctx, x, prefix + ".res_blocks.0", count);
+        x = residual(ctx, x, prefix + ".res_blocks.0", count, 1e-5f, mask);
         x = MulModule(true).build(ctx, x, mask);
         x = transpose_sequence(ctx, norm(ctx, transpose_sequence(ctx, x), prefix + ".last_norm"));
         x = MulModule(true).build(ctx, x, mask);
@@ -140,43 +144,42 @@ struct Network {
         x = ScaleBiasModule({std::sqrt(static_cast<float>(config.hidden_size)), 0}).build(ctx, x);
         for (int64_t i = 0; i < config.conformer_layers; ++i) {
             const auto p = "net.net.mid.net.encoder_layers." + std::to_string(i);
-            auto ff = [&](const TensorValue & input, const std::string & name, const std::string & n) {
-                auto y = norm(ctx, input, p + n, 1e-5f);
-                y = ReluModule().build(ctx, linear(ctx, y, p + name + ".w_1"));
-                y = linear(ctx, y, p + name + ".w_2");
-                return AddModule().build(ctx, input, ScaleBiasModule({0.5f, 0}).build(ctx, y));
-            };
-            x = ff(x, ".feed_forward_macaron", ".norm_ff_macaron");
-            auto y = norm(ctx, x, p + ".norm_mha", 1e-5f);
-            RelativeAttentionWeights a;
+            RelativeConformerBlockWeights w;
+            w.ffn1_norm = {weights.at(p + ".norm_ff_macaron.weight"), weights.at(p + ".norm_ff_macaron.bias")};
+            w.ffn1_fc1 = {weights.at(p + ".feed_forward_macaron.w_1.weight"), weights.at(p + ".feed_forward_macaron.w_1.bias")};
+            w.ffn1_fc2 = {weights.at(p + ".feed_forward_macaron.w_2.weight"), weights.at(p + ".feed_forward_macaron.w_2.bias")};
+            w.norm1 = {weights.at(p + ".norm_mha.weight"), weights.at(p + ".norm_mha.bias")};
             const auto ap = p + ".self_attn";
-            a.attention = {weights.at(ap + ".linear_q.weight"), weights.at(ap + ".linear_q.bias"),
+            w.self_attention.attention = {weights.at(ap + ".linear_q.weight"), weights.at(ap + ".linear_q.bias"),
                 weights.at(ap + ".linear_k.weight"), weights.at(ap + ".linear_k.bias"),
                 weights.at(ap + ".linear_v.weight"), weights.at(ap + ".linear_v.bias"), {}, {},
                 weights.at(ap + ".linear_out.weight"), weights.at(ap + ".linear_out.bias")};
-            a.pos_weight = weights.at(ap + ".linear_pos.weight");
-            a.pos_bias_u = weights.at(ap + ".pos_bias_u");
-            a.pos_bias_v = weights.at(ap + ".pos_bias_v");
-            RelativeAttentionConfig ac{config.hidden_size, 4};
-            ac.legacy_position_layout = true;
-            y = RelativeSelfAttentionModule(ac).build(ctx, y, position, a, attention_mask);
-            x = AddModule().build(ctx, x, y);
-            y = norm(ctx, x, p + ".norm_conv", 1e-5f);
-            y = linear(ctx, y, p + ".conv_module.pointwise_conv1");
-            auto first = SliceModule({2, 0, config.hidden_size}).build(ctx, y);
-            auto gate = SliceModule({2, config.hidden_size, config.hidden_size}).build(ctx, y);
-            y = MulModule().build(ctx, first, SigmoidModule().build(ctx, core::ensure_backend_addressable_layout(ctx, gate)));
-            y = transpose_sequence(ctx, y);
-            y = DepthwiseConv1dModule({config.hidden_size, config.conformer_kernel, 1,
-                static_cast<int>(config.conformer_kernel / 2)}).build(ctx, y,
-                {weights.at(p + ".conv_module.depthwise_conv.weight"), weights.at(p + ".conv_module.depthwise_conv.bias")});
-            y = transpose_sequence(ctx, y);
-            const auto & bn = batch_norms.at(p + ".conv_module.norm");
-            y = AddModule(false, true).build(ctx, MulModule(true).build(ctx, y, bn.scale), bn.bias);
-            y = linear(ctx, SiluModule().build(ctx, y), p + ".conv_module.pointwise_conv2");
-            x = AddModule().build(ctx, x, y);
-            x = ff(x, ".feed_forward", ".norm_ff");
-            x = norm(ctx, x, p + ".norm_final", 1e-5f);
+            w.self_attention.pos_weight = weights.at(ap + ".linear_pos.weight");
+            w.self_attention.pos_bias_u = weights.at(ap + ".pos_bias_u");
+            w.self_attention.pos_bias_v = weights.at(ap + ".pos_bias_v");
+            w.conv.norm = {weights.at(p + ".norm_conv.weight"), weights.at(p + ".norm_conv.bias")};
+            w.conv.pointwise_in = {core::reshape_tensor(ctx, weights.at(p + ".conv_module.pointwise_conv1.weight"),
+                TensorShape::from_dims({2 * config.hidden_size, config.hidden_size})),
+                weights.at(p + ".conv_module.pointwise_conv1.bias")};
+            w.conv.depthwise = {weights.at(p + ".conv_module.depthwise_conv.weight"), weights.at(p + ".conv_module.depthwise_conv.bias")};
+            w.conv.depthwise_norm = batch_norms.at(p + ".conv_module.norm");
+            w.conv.pointwise_out = {core::reshape_tensor(ctx, weights.at(p + ".conv_module.pointwise_conv2.weight"),
+                TensorShape::from_dims({config.hidden_size, config.hidden_size})),
+                weights.at(p + ".conv_module.pointwise_conv2.bias")};
+            w.norm2 = {weights.at(p + ".norm_ff.weight"), weights.at(p + ".norm_ff.bias")};
+            w.ffn2_fc1 = {weights.at(p + ".feed_forward.w_1.weight"), weights.at(p + ".feed_forward.w_1.bias")};
+            w.ffn2_fc2 = {weights.at(p + ".feed_forward.w_2.weight"), weights.at(p + ".feed_forward.w_2.bias")};
+            w.final_norm = {weights.at(p + ".norm_final.weight"), weights.at(p + ".norm_final.bias")};
+            // The checkpoint stores FFN projections as width-one convolutions.
+            for (auto * projection : {&w.ffn1_fc1, &w.ffn1_fc2, &w.ffn2_fc1, &w.ffn2_fc2}) {
+                projection->weight = core::reshape_tensor(ctx, projection->weight,
+                    TensorShape::from_dims({projection->weight.shape.dims[0], projection->weight.shape.dims[1]}));
+            }
+            ConformerBlockConfig block{config.hidden_size, 4, w.ffn1_fc1.weight.shape.dims[0], config.conformer_kernel};
+            block.contiguous_glu_gate = true;
+            block.ffn_activation = FeedForwardActivation::Relu;
+            block.legacy_position_layout = true;
+            x = RelativeConformerBlockModule(block).build(ctx, x, position, w, attention_mask);
         }
         return MulModule(true).build(ctx, norm(ctx, x, "net.net.mid.net.layer_norm"), keep);
     }
@@ -186,13 +189,18 @@ struct Network {
         const TensorValue & position) const {
         auto x = conv_blocks(ctx, conv(ctx, transpose_sequence(ctx, mel), "mel_proj"), "mel_encoder", 2);
         x = transpose_sequence(ctx, x);
-        const auto shape = TensorShape::from_dims({1, mel.shape.dims[1], config.hidden_size});
-        auto pe = core::wrap_tensor(ggml_get_rows(ctx.ggml, weights.at("pitch_embed.weight").tensor, pitch.tensor), shape);
-        auto ue = core::wrap_tensor(ggml_get_rows(ctx.ggml, weights.at("uv_embed.weight").tensor, uv.tensor), shape);
+        const auto indices_shape = TensorShape::from_dims({1, mel.shape.dims[1]});
+        const auto & pitch_weight = weights.at("pitch_embed.weight");
+        const auto & uv_weight = weights.at("uv_embed.weight");
+        auto pe = PitchEmbedModule({pitch_weight.shape.dims[0], config.hidden_size}).build(
+            ctx, core::reshape_tensor(ctx, pitch, indices_shape), pitch_weight);
+        auto ue = EmbeddingModule({uv_weight.shape.dims[0], config.hidden_size}).build(
+            ctx, core::reshape_tensor(ctx, uv, indices_shape), uv_weight);
         x = AddModule().build(ctx, AddModule().build(ctx, x, pe), ue);
         if (word_boundary) {
-            auto we = core::wrap_tensor(ggml_get_rows(ctx.ggml, weights.at("word_bd_embed.weight").tensor,
-                word_boundary->tensor), shape);
+            const auto & word_weight = weights.at("word_bd_embed.weight");
+            auto we = EmbeddingModule({word_weight.shape.dims[0], config.hidden_size}).build(
+                ctx, core::reshape_tensor(ctx, *word_boundary, indices_shape), word_weight);
             x = AddModule().build(ctx, x, we);
         }
         x = conv_blocks(ctx, transpose_sequence(ctx, x), "cond_encoder", 1);
@@ -267,18 +275,18 @@ struct FrameGraph {
             pe[static_cast<size_t>(r * net.config.hidden_size + c)] = std::sin(angle);
             pe[static_cast<size_t>(r * net.config.hidden_size + c + 1)] = std::cos(angle);
         }
-        ggml_backend_tensor_set(position.tensor, pe.data(), 0, pe.size() * sizeof(float));
+        core::write_tensor_f32(position, pe);
 
     }
     std::vector<float> run(const std::vector<float> & m, const std::vector<int32_t> & p,
         const std::vector<int32_t> & u, const std::vector<int32_t> & w = {}) {
-        ggml_backend_tensor_set(mel.tensor, m.data(), 0, m.size() * sizeof(float));
-        ggml_backend_tensor_set(pitch.tensor, p.data(), 0, p.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(uv.tensor, u.data(), 0, u.size() * sizeof(int32_t));
-        if (word.valid()) ggml_backend_tensor_set(word.tensor, w.data(), 0, w.size() * sizeof(int32_t));
+        core::write_tensor_f32(mel, m);
+        core::write_tensor_i32(pitch, p);
+        core::write_tensor_i32(uv, u);
+        if (word.valid()) core::write_tensor_i32(word, w);
         owner.compute();
         std::vector<float> out(static_cast<size_t>(frames));
-        ggml_backend_tensor_get(boundary.tensor, out.data(), 0, out.size() * sizeof(float));
+        core::read_tensor_f32_into(boundary.tensor, out);
         return out;
     }
 };
@@ -493,7 +501,7 @@ Transcription RosvotRuntime::transcribe(const std::vector<float> & waveform, flo
     auto boundaries = regulate_boundary(s.note_graph->run(mel, coarse, uv, word), note_threshold,
         s.assets->notes.boundary_gap, real, word, s.assets->notes.reference_gap);
     std::vector<float> attention(static_cast<size_t>(frames));
-    ggml_backend_tensor_get(s.note_graph->attention.tensor, attention.data(), 0, attention.size() * sizeof(float));
+    core::read_tensor_f32_into(s.note_graph->attention.tensor, attention);
     debug::timing_log_scalar("rosvot.encoder_ms", debug::elapsed_ms(encoder_start));
     std::vector<int64_t> starts{0};
     for (int64_t t = 1; t < frames; ++t) if (boundaries[static_cast<size_t>(t)]) starts.push_back(t);
@@ -509,12 +517,12 @@ Transcription RosvotRuntime::transcribe(const std::vector<float> & waveform, flo
     }
     const auto decoder_start = Clock::now();
     if (!s.pitch_graph || s.pitch_graph->notes != count) s.pitch_graph = std::make_unique<PitchGraph>(s.execution, s.notes, s.note_graph->feature, count);
-    ggml_backend_tensor_set(s.pitch_graph->pooling.tensor, pooling.data(), 0, pooling.size() * sizeof(float));
-    ggml_backend_tensor_set(s.pitch_graph->denominator.tensor, denominators.data(), 0, denominators.size() * sizeof(float));
+    core::write_tensor_f32(s.pitch_graph->pooling, pooling);
+    core::write_tensor_f32(s.pitch_graph->denominator, denominators);
     s.pitch_graph->owner.compute();
     const int64_t classes = s.assets->notes.note_num + 4;
     std::vector<float> logits(static_cast<size_t>(count * classes));
-    ggml_backend_tensor_get(s.pitch_graph->logits.tensor, logits.data(), 0, logits.size() * sizeof(float));
+    core::read_tensor_f32_into(s.pitch_graph->logits.tensor, logits);
     int64_t word_index = 1;
     for (int64_t n = 0; n < count; ++n) {
         const auto offset = logits.begin() + n * classes;
