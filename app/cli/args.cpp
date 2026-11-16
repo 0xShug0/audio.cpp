@@ -29,6 +29,34 @@ const std::set<std::string> & boolean_flags() {
     return flags;
 }
 
+const std::set<std::string> & value_options() {
+    // expand_cli_args runs before runtime lookups populate value_names().
+    static const std::set<std::string> options = {
+        "--audio", "--audio-chunk-mode", "--audio-chunk-seconds", "--audio-converter", "--backend",
+        "--backend-impl", "--batch-audio-dir", "--batch-audio-role", "--batch-manifest-out",
+        "--batch-merge-audio", "--batch-text-dir", "--batch-text-file", "--config", "--device",
+        "--do-sample", "--duration-seconds", "--emotion", "--energy-scale", "--family",
+        "--guidance-scale", "--input-channels", "--input-format", "--input-rate", "--instruct",
+        "--language", "--load-option", "--load-progress", "--log-file", "--lyrics", "--max-steps",
+        "--max-tokens", "--mode", "--model", "--model-spec-override", "--moe-cpu-share",
+        "--num-beams", "--num-inference-steps", "--out", "--out-dir", "--out-format",
+        "--pitch-shift", "--pipeline", "--predict-target-prosody", "--prosody-ref",
+        "--prosody-shift-steps", "--repaint-end", "--repaint-mode", "--repaint-start",
+        "--repaint-strength", "--repetition-penalty", "--registry-config", "--reference-duration-seconds",
+        "--reference-text", "--recipe", "--recipe-family", "--recipe-model", "--request-option",
+        "--request-sequence", "--resample-kernel-cache-mb", "--seed", "--segments-out",
+        "--session-option", "--source-audio", "--source-shift-steps", "--speaker", "--speaking-rate",
+        "--style-language", "--style-ref", "--style-ref-text", "--style-shift-steps", "--style-tag",
+        "--target-duration-seconds", "--target-text", "--target-voice", "--task", "--task-route",
+        "--temperature", "--text", "--text-chunk-mode", "--text-chunk-size", "--text-out",
+        "--threads", "--top-k", "--top-p", "--track-name", "--turns-out", "--use-pitch-shift",
+        "--use-prosody-code", "--vad-chunk-max-seconds", "--vad-chunk-merge-gap-seconds",
+        "--vad-chunk-padding-seconds", "--vad-chunks-out", "--voice-id", "--voice-ref",
+        "--voice-state-out", "--weight", "--workflow-input", "--words-out",
+    };
+    return options;
+}
+
 std::string normalize_config_option(std::string key) {
     if (key.rfind("--", 0) == 0) {
         key.erase(0, 2);
@@ -49,6 +77,9 @@ std::set<std::string> explicit_key_value_overrides(
     std::set<std::string> keys;
     for (size_t i = 1; i + 1 < arguments.size(); ++i) {
         if (arguments[i] != option) {
+            if (value_options().count(arguments[i]) != 0 && i + 1 < arguments.size()) {
+                ++i;
+            }
             continue;
         }
         const auto separator = arguments[i + 1].find('=');
@@ -56,6 +87,68 @@ std::set<std::string> explicit_key_value_overrides(
             keys.insert(arguments[i + 1].substr(0, separator));
         }
         ++i;
+    }
+    return keys;
+}
+
+const std::unordered_map<std::string, std::string> & request_option_aliases() {
+    static const std::unordered_map<std::string, std::string> option_keys = {
+        {"--language", "language"},
+        {"--task-route", "route"},
+        {"--source-audio", "source_audio"},
+        {"--target-voice", "target_voice"},
+        {"--prosody-ref", "prosody_ref"},
+        {"--style-ref", "style_ref"},
+        {"--target-text", "target_text"},
+        {"--style-ref-text", "style_ref_text"},
+        {"--lyrics", "lyrics"},
+        {"--track-name", "track_name"},
+        {"--speaker", "speaker"},
+        {"--duration-seconds", "duration_sec"},
+        {"--repaint-start", "repainting_start"},
+        {"--repaint-end", "repainting_end"},
+        {"--repaint-mode", "repaint_mode"},
+        {"--repaint-strength", "repaint_strength"},
+        {"--seed", "seed"},
+        {"--max-tokens", "max_tokens"},
+        {"--max-steps", "max_steps"},
+        {"--temperature", "temperature"},
+        {"--top-k", "top_k"},
+        {"--top-p", "top_p"},
+        {"--repetition-penalty", "repetition_penalty"},
+        {"--do-sample", "do_sample"},
+        {"--num-beams", "num_beams"},
+        {"--guidance-scale", "guidance_scale"},
+        {"--num-inference-steps", "num_inference_steps"},
+        {"--text-chunk-size", "text_chunk_size"},
+        {"--text-chunk-mode", "text_chunk_mode"},
+        {"--audio-chunk-seconds", "audio_chunk_duration_sec"},
+        {"--audio-chunk-mode", "audio_chunk_mode"},
+        {"--use-prosody-code", "use_prosody_code"},
+        {"--predict-target-prosody", "predict_target_prosody"},
+        {"--use-pitch-shift", "use_pitch_shift"},
+        {"--source-shift-steps", "source_shift_steps"},
+        {"--prosody-shift-steps", "prosody_shift_steps"},
+        {"--style-shift-steps", "style_shift_steps"},
+        {"--target-duration-seconds", "target_duration_seconds"},
+        {"--reference-duration-seconds", "reference_duration_seconds"},
+        {"--reference-text", "reference_text"},
+        {"--instruct", "instruct"},
+    };
+    return option_keys;
+}
+
+std::set<std::string> explicit_request_option_overrides(const std::vector<std::string> & arguments) {
+    const auto & option_keys = request_option_aliases();
+    std::set<std::string> keys = explicit_key_value_overrides(arguments, "--request-option");
+    for (size_t i = 1; i < arguments.size(); ++i) {
+        const auto option = option_keys.find(arguments[i]);
+        if (option != option_keys.end()) {
+            keys.insert(option->second);
+            ++i;
+        } else if (value_options().count(arguments[i]) != 0 && i + 1 < arguments.size()) {
+            ++i;
+        }
     }
     return keys;
 }
@@ -148,7 +241,8 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
 
     std::optional<std::string> config_path;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--config-file") {
+        const std::string token = argv[i];
+        if (token == "--config-file") {
             if (i + 1 >= argc) {
                 throw std::runtime_error("--config-file requires a YAML file path");
             }
@@ -157,7 +251,10 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
             }
             config_path = argv[++i];
         } else {
-            arguments.emplace_back(argv[i]);
+            arguments.push_back(token);
+            if (value_options().count(token) != 0 && i + 1 < argc) {
+                arguments.emplace_back(argv[++i]);
+            }
         }
     }
     if (!config_path.has_value()) {
@@ -189,14 +286,22 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
     }
 
     const auto session_overrides = explicit_key_value_overrides(arguments, "--session-option");
-    const auto request_overrides = explicit_key_value_overrides(arguments, "--request-option");
+    const auto request_overrides = explicit_request_option_overrides(arguments);
+    const auto load_overrides = explicit_key_value_overrides(arguments, "--load-option");
     for (const auto & key : keys) {
         const auto option = normalize_config_option(key);
         const std::set<std::string> * key_value_overrides = nullptr;
         if (option == "--session-option") {
             key_value_overrides = &session_overrides;
+        } else if (option == "--load-option") {
+            key_value_overrides = &load_overrides;
         } else if (option == "--request-option") {
             key_value_overrides = &request_overrides;
+        } else {
+            const auto alias = request_option_aliases().find(option);
+            if (alias != request_option_aliases().end() && request_overrides.count(alias->second) != 0) {
+                continue;
+            }
         }
         const auto scalar = config.scalars.find(key);
         if (scalar != config.scalars.end()) {

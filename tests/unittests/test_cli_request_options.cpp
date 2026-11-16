@@ -695,6 +695,93 @@ void test_cli_key_value_options_override_yaml() {
     std::filesystem::remove(config_path);
 }
 
+void test_cli_option_aliases_and_load_options_override_yaml() {
+    const auto config_path = std::filesystem::temp_directory_path() /
+                             ("audiocpp-cli-config-alias-overrides-" +
+                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                              ".yaml");
+    {
+        std::ofstream config(config_path);
+        config << "request-option: temperature=0.7\n"
+               << "temperature: 0.6\n"
+               << "load-option:\n"
+               << "  - engine=fp16\n"
+               << "  - threads=4\n";
+    }
+
+    const std::string config_argument = config_path.string();
+    const char * alias_argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--temperature",
+        "0.9",
+        "--load-option",
+        "engine=q8",
+    };
+    const auto alias_expanded = minitts::cli::expand_cli_args(7, const_cast<char **>(alias_argv));
+    std::vector<char *> alias_expanded_argv;
+    for (const auto & arg : alias_expanded) {
+        alias_expanded_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    alias_expanded_argv.push_back(nullptr);
+    const int alias_expanded_argc = static_cast<int>(alias_expanded.size());
+    const auto alias_request_options =
+        minitts::cli::collect_key_value_args(alias_expanded_argc, alias_expanded_argv.data(), "--request-option");
+    const auto alias_load_options =
+        minitts::cli::collect_key_value_args(alias_expanded_argc, alias_expanded_argv.data(), "--load-option");
+    engine::test::require(alias_request_options.empty(), "CLI request alias overrides YAML request-option");
+    engine::test::require_eq(
+        minitts::cli::find_arg(alias_expanded_argc, alias_expanded_argv.data(), "--temperature").value(),
+        std::string("0.9"),
+        "CLI request alias value retained");
+    const auto alias_request = minitts::cli::build_request_from_cli(alias_expanded_argc, alias_expanded_argv.data());
+    engine::test::require_eq(alias_request.options.at("temperature"), std::string("0.9"), "CLI request alias wins");
+    engine::test::require_eq(alias_load_options.at("engine"), std::string("q8"), "CLI load option overrides YAML");
+    engine::test::require_eq(alias_load_options.at("threads"), std::string("4"), "non-overridden YAML load option retained");
+
+    const char * request_option_argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--request-option",
+        "temperature=0.9",
+        "--load-option",
+        "engine=q8",
+    };
+    const auto request_option_expanded = minitts::cli::expand_cli_args(7, const_cast<char **>(request_option_argv));
+    std::vector<char *> request_option_expanded_argv;
+    for (const auto & arg : request_option_expanded) {
+        request_option_expanded_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    request_option_expanded_argv.push_back(nullptr);
+    const int request_option_expanded_argc = static_cast<int>(request_option_expanded.size());
+    const auto request_options =
+        minitts::cli::collect_key_value_args(request_option_expanded_argc, request_option_expanded_argv.data(), "--request-option");
+    const auto load_options =
+        minitts::cli::collect_key_value_args(request_option_expanded_argc, request_option_expanded_argv.data(), "--load-option");
+    const auto request_option_request =
+        minitts::cli::build_request_from_cli(request_option_expanded_argc, request_option_expanded_argv.data());
+    engine::test::require_eq(request_options.at("temperature"), std::string("0.9"), "CLI request-option overrides YAML alias");
+    engine::test::require_eq(
+        request_option_request.options.at("temperature"),
+        std::string("0.9"),
+        "CLI request-option wins over YAML request alias");
+    engine::test::require(
+        !minitts::cli::find_arg(request_option_expanded_argc, request_option_expanded_argv.data(), "--temperature").has_value(),
+        "overridden YAML request alias omitted");
+    engine::test::require_eq(load_options.at("engine"), std::string("q8"), "CLI load option retained");
+    engine::test::require_eq(load_options.at("threads"), std::string("4"), "non-overridden YAML load option retained");
+    std::filesystem::remove(config_path);
+}
+
+void test_config_file_token_used_as_option_value() {
+    const char * argv[] = {"audiocpp_cli", "--help", "--log", "--text", "--config-file"};
+    const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+    engine::test::require_eq(expanded.size(), size_t{5}, "config-file token retained as text value");
+    engine::test::require_eq(expanded.back(), std::string("--config-file"), "config-file token not parsed as option");
+}
+
 }  // namespace
 
 int main() {
@@ -712,6 +799,8 @@ int main() {
     test_non_negative_int_flag_values();
     test_cli_arguments_can_be_loaded_from_yaml();
     test_cli_key_value_options_override_yaml();
+    test_cli_option_aliases_and_load_options_override_yaml();
+    test_config_file_token_used_as_option_value();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }
