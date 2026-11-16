@@ -80,7 +80,12 @@ int main() {
         require(json::require_string(row, "remote_revision") == "revision", "revision lost");
         {
             std::lock_guard<std::mutex> lock(mutex);
+#ifdef _WIN32
+            // Three metadata requests each own their client on Windows.
+            require(connections.size() == 3, "Windows inventory did not use request-local connections");
+#else
             require(connections.size() == 1, "inventory did not reuse its origin connection");
+#endif
             require(cdn_heads == 1, "metadata redirects should skip CDN; missing metadata must fall back");
         }
         manager.install("demo", false, nullptr, nullptr);
