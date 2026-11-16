@@ -20,6 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--rocblas', action='store_true', help='Build the rocBLAS compatibility variant without hipBLASLt')
     args = parser.parse_args()
     source = args.source.resolve()
     output = args.output.resolve()
@@ -83,6 +84,8 @@ def main():
                '-DAUDIOCPP_BUILD_C_API=OFF', '-DAUDIOCPP_USE_SYSTEM_OPENSSL=OFF',
                '-DENGINE_ENABLE_CUDA_GRAPHS=ON', f'-DAUDIOCPP_VERSION={version.removeprefix("v")}',
                f'-DGPU_TARGETS={targets}', f'-DCMAKE_PREFIX_PATH={rocm_cmake}']
+    if args.rocblas:
+        command += ['-DGGML_HIP_HIPBLASLT=OFF']
     if windows:
         llvm = rocm / 'lib' / 'llvm' / 'bin'
         env['HIP_DEVICE_LIB_PATH'] = str(rocm / 'lib' / 'llvm' / 'amdgcn' / 'bitcode')
@@ -106,7 +109,8 @@ def main():
         run(['pwsh', '-NoProfile', '-File', source / 'scripts/build_windows_hip.ps1',
              '-RocmPath', rocm, '-GpuTargets', targets, '-BuildDir', build,
              '-BuildType', 'Release', '-NoNativeCpu', '-DeploymentBuild',
-             '-NativeModelManager', '-Graphs', '-ConfigureOnly'], 'configure-hip')
+             '-NativeModelManager', '-Graphs', '-ConfigureOnly',
+             *(['-NoHipblasLt'] if args.rocblas else [])], 'configure-hip')
     run(command, 'configure')
     run(['cmake', '--build', build, '--parallel', str(min(os.cpu_count() or 2, 16)),
          '--target', 'audiocpp_cli', 'audiocpp_server', 'audiocpp_gguf'], 'build')
@@ -115,7 +119,8 @@ def main():
     if not (list(binary_dir.glob('ggml-hip*.dll')) if windows else list(build.rglob('libggml-hip.a'))):
         raise RuntimeError('HIP backend library was not produced')
     suffix = 'windows-x64' if windows else 'ubuntu-x64'
-    stage = output / f'audio-{version}-bin-{suffix}-rocm{rocm_version}-test'
+    variant = '-rocblas' if args.rocblas else ''
+    stage = output / f'audio-{version}-bin-{suffix}-rocm{rocm_version}{variant}-test'
     stage.mkdir()
     for path in binary_dir.iterdir():
         runtime_library = path.suffix == '.dll' if windows else '.so' in path.name
@@ -140,8 +145,15 @@ def main():
                     rocm_version=rocm_version, gpu_targets=targets.split(';'),
                     cpu='runtime dispatch' if windows else 'AVX2/FMA/F16C',
                     hip_backend='dynamic' if windows else 'linked', deployment=True, full_model_build=True)
+    if args.rocblas:
+        manifest['hip_blas'] = 'rocblas'
     (stage / 'BUILD.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     readme = Path(__file__).with_name('hip_release_README.md').read_text(encoding='utf-8')
+    if args.rocblas:
+        readme += ('\n## rocBLAS compatibility build\n\n'
+                   'This variant uses hipBLAS/rocBLAS for GEMM and is built with '
+                   '`GGML_HIP_HIPBLASLT=OFF`. It does not require hipBLASLt GPU kernel data. '
+                   'The matching ROCm runtime and rocBLAS device kernels are still required.\n')
     (stage / 'README.md').write_text(readme.replace('@ROCM_VERSION@', rocm_version), encoding='utf-8')
     if windows:
         archive = output / (stage.name + '.zip')

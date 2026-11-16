@@ -26,7 +26,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2022]
     runs-on: ${{ fromJSON(matrix.os == 'windows-2022' && '["self-hosted", "windows", "devlab-dispatch", "strix-halo"]' || '["self-hosted", "linux", "devlab-dispatch", "strix-halo"]') }}
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       ROCM_VERSION: '10.0.0'
       SOURCE_REPOSITORY: ${{ inputs.source_repository }}
@@ -67,7 +67,8 @@ jobs:
           key: hip-release-${{ runner.os }}-rocm10
           max-size: 2G
           install: ${{ runner.os == 'Linux' && 'no' || 'binary' }}
-      - name: Build and package deployment binaries
+      - name: Build and package hipBLASLt deployment binaries
+        id: hipblaslt
         run: python scripts/ci/build_hip_release.py --source source --output dist
       - uses: actions/upload-artifact@v4
         if: always()
@@ -75,11 +76,31 @@ jobs:
           name: hip-build-logs-${{ runner.os }}
           path: dist/logs/
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.hipblaslt.outcome == 'success' }}
         with:
           name: hip-release-${{ runner.os }}
           path: |
             dist/*.tar.gz
             dist/*.zip
             dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+      - name: Build and package rocBLAS deployment binaries
+        id: rocblas
+        if: ${{ !cancelled() }}
+        run: python scripts/ci/build_hip_release.py --source source --output dist-rocblas --rocblas
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hip-build-logs-${{ runner.os }}-rocblas
+          path: dist-rocblas/logs/
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.rocblas.outcome == 'success' }}
+        with:
+          name: hip-release-${{ runner.os }}-rocblas
+          path: |
+            dist-rocblas/*.tar.gz
+            dist-rocblas/*.zip
+            dist-rocblas/SHA256SUMS
           if-no-files-found: error
           compression-level: 0
