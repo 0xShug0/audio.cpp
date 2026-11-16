@@ -572,6 +572,10 @@ public:
             ctx,
             GGML_TYPE_F32,
             core::TensorShape::from_dims({1, 1, transformed_frames_, cache_steps_ + transformed_frames_}));
+        // Initialized once and reused across chunks. Keep these constants out
+        // of the allocator's reusable scratch after their last graph use.
+        ggml_set_output(positions_.tensor);
+        ggml_set_output(attention_mask_.tensor);
 
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
         for (int64_t layer = 0; layer < config_.transformer_layers; ++layer) {
@@ -586,6 +590,8 @@ public:
                     ctx,
                     GGML_TYPE_F32,
                     core::TensorShape::from_dims({1, cache_steps_, config_.num_heads, head_dim_}));
+                ggml_set_output(prefix_key->tensor);
+                ggml_set_output(prefix_value->tensor);
                 zero_prefix_keys_.push_back(*prefix_key);
                 zero_prefix_values_.push_back(*prefix_value);
             }
@@ -888,6 +894,15 @@ public:
 
         output_bct_ = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
         ggml_set_output(output_bct_.tensor->view_src != nullptr ? output_bct_.tensor->view_src : output_bct_.tensor);
+
+        ggml_set_input(input_bct_.tensor);
+        ggml_set_output(input_bct_.tensor);
+        ggml_set_input(positions_.tensor);
+        ggml_set_output(positions_.tensor);
+        ggml_set_output(attention_mask_.tensor);
+        for (const auto * tensors : {&attention_masks_, &zero_prefix_keys_, &zero_prefix_values_}) {
+            for (const auto & tensor : *tensors) ggml_set_output(tensor.tensor);
+        }
 
         if (core::is_host_backend(backend_)) {
             params_buffer_ = ggml_backend_alloc_ctx_tensors(ggml_ctx_, backend_);
