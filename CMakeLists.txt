@@ -1661,6 +1661,12 @@ audiocpp_add_model(moss_voicegen
         moss
 )
 
+audiocpp_add_model(rosvot
+    SOURCES src/models/rosvot/runtime.cpp src/models/rosvot/session.cpp
+    INCLUDES engine/models/rosvot/session.h
+    LOADERS engine::models::rosvot::make_rosvot_loader
+)
+
 audiocpp_add_model(muscriptor
     SOURCES
         src/models/muscriptor/assets.cpp
@@ -3279,18 +3285,22 @@ endif()
 
 if (ENGINE_ENABLE_CUDA AND NOT ENGINE_ENABLE_HIP)
     target_sources(engine_runtime PRIVATE
+        src/framework/modules/pitch_extractors/rmvpe_cuda_runtime.cu
         src/framework/audio/istft_cuda_runtime.cu
         src/framework/sampling/torch_random_cuda_runtime.cu
     )
     set_source_files_properties(
+        src/framework/modules/pitch_extractors/rmvpe_cuda_runtime.cu
         src/framework/audio/istft_cuda_runtime.cu
         src/framework/sampling/torch_random_cuda_runtime.cu
         PROPERTIES
         CUDA_STANDARD 17
         CUDA_STANDARD_REQUIRED ON
     )
-    target_compile_definitions(engine_core PRIVATE ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
-    target_compile_definitions(engine_runtime PUBLIC ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
+    set_source_files_properties(src/framework/modules/pitch_extractors/rmvpe_cuda_runtime.cu
+        PROPERTIES COMPILE_OPTIONS "--use_fast_math")
+    target_compile_definitions(engine_core PRIVATE ENGINE_HAS_CUDA_RMVPE=1 ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
+    target_compile_definitions(engine_runtime PUBLIC ENGINE_HAS_CUDA_RMVPE=1 ENGINE_HAS_CUDA_ISTFT=1 ENGINE_HAS_CUDA_TORCH_RANDOM=1)
     target_link_libraries(engine_runtime PRIVATE CUDA::cudart CUDA::cufft)
 endif()
 
@@ -3870,6 +3880,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
     if (ENGINE_BUILD_MODEL_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(index_tts2_text_controls_probe tests/index_tts2/text_controls_probe.cpp)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND rosvot IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(rosvot_components tests/rosvot/components.cpp)
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND omnivoice IN_LIST AUDIOCPP_LINKED_MODELS)

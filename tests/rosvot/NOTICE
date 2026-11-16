@@ -1,0 +1,5 @@
+ROSVOT and RWBD: Copyright (c) 2024 Ruiqi Li, MIT license.
+Reference implementation: https://github.com/RickyL-2000/ROSVOT
+Checkpoint distribution: https://huggingface.co/Soul-AILab/SoulX-Singer-Preprocess
+The package includes RMVPE pitch-extraction weights from that distribution.
+The model port reuses audio.cpp's RMVPE, DSP, graph and MIDI implementations.

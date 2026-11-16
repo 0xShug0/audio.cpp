@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "family": "rosvot",
+  "display_name": "ROSVOT",
+  "description": "Singing voice transcription into note pitches, durations and word-aligned MIDI using ROSVOT, RWBD and RMVPE.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "midi"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "music"
+  ],
+  "capabilities": {},
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "session": [],
+    "request": [
+      {
+        "name": "output_format",
+        "type": "enum",
+        "values": [
+          "midi",
+          "json"
+        ],
+        "default": "midi",
+        "description": "Output MIDI or JSON note events, including rest intervals in JSON.",
+        "required": false
+      },
+      {
+        "name": "note_boundary_threshold",
+        "type": "float",
+        "default": 0.85,
+        "min": 0.0,
+        "max": 1.0,
+        "description": "Note-boundary probability threshold; must be in [0, 1].",
+        "required": false
+      },
+      {
+        "name": "word_boundary_threshold",
+        "type": "float",
+        "default": 0.5,
+        "min": 0.0,
+        "max": 1.0,
+        "description": "RWBD probability threshold when word durations are not supplied.",
+        "required": false
+      },
+      {
+        "name": "word_durations_file",
+        "type": "path",
+        "description": "Optional JSON array of word durations in seconds, replacing RWBD predictions.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "rosvot_f32",
+      "display_name": "ROSVOT F32",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "ROSVOT-GGUF",
+      "files": [
+        "ROSVOT-GGUF/rosvot-f32.gguf"
+      ],
+      "strip_prefix": "ROSVOT-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/rosvot.md"
+    ],
+    "recommended_package": "rosvot_f32"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "note_weights": {
+          "source": "weights:",
+          "prefix": "rosvot"
+        },
+        "word_weights": {
+          "source": "weights:",
+          "prefix": "rwbd"
+        },
+        "pitch_weights": {
+          "source": "weights:",
+          "prefix": "rmvpe"
+        }
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/SoulX-Singer-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  }
+}

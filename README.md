@@ -210,6 +210,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **mel_band_roformer** | Sep | lang agnostic | [Mel-Band RoFormer](docs/audio_tools.md#mel-band-roformer) | GGUF 16/Q8 |
 | **miocodec** | Codec, VC | lang agnostic | [MioCodec v2](docs/audio_tools.md#miocodec) | GGUF 16/Q8 |
 | **mossformer2** | Sep, S2S · Enhancement / Super-resolution | lang agnostic | [MossFormer2 SS 16K / SE 48K / SR 48K](docs/models/mossformer2.md) | GGUF F32/F16 |
+| **rosvot** | MIDI | music | [ROSVOT singing transcription](docs/models/rosvot.md) | GGUF F32 |
 | **muscriptor** | MIDI | music | [MuScriptor Small/Medium/Large](docs/models/muscriptor.md) | GGUF F32, Stream |
 | **realtime_reuse** (C) | S2S · Speech enhancement | lang agnostic | [Real-time RE-USE](docs/models/realtime_reuse.md) | GGUF F32, Stream |
 | **reuse** (C) | S2S · Speech restoration | lang agnostic | [RE-USE](docs/models/reuse.md) | GGUF F32/F16/Q8_0 |

@@ -632,6 +632,43 @@ void test_relative_attention_fused_qkv_matches_split_and_cached_pos() {
     require_allclose(fused_values, cached_values, 1.0e-5f, "relative attention cached projected pos");
 }
 
+void test_legacy_relative_position_layout() {
+    CpuModuleRunner runner;
+    const auto shape = engine::core::TensorShape::from_dims({1, 2, 2});
+    auto input = runner.make_f32(shape), position = runner.make_f32(shape);
+    engine::modules::RelativeAttentionWeights w;
+    const auto matrix = engine::core::TensorShape::from_dims({2, 2});
+    w.attention.q_weight = runner.make_f32(matrix);
+    w.attention.k_weight = runner.make_f32(matrix);
+    w.attention.v_weight = runner.make_f32(matrix);
+    w.attention.out_weight = runner.make_f32(matrix);
+    w.pos_weight = runner.make_f32(matrix);
+    w.pos_bias_u = runner.make_f32(engine::core::TensorShape::from_dims({1, 2}));
+    w.pos_bias_v = runner.make_f32(engine::core::TensorShape::from_dims({1, 2}));
+    engine::modules::RelativeAttentionConfig config{2, 1, false};
+    bool rejected = false;
+    try { engine::modules::RelativeSelfAttentionModule(config).build(runner.ctx, input, position, w); }
+    catch (const std::runtime_error &) { rejected = true; }
+    require(rejected, "Default relative attention must retain its 2*T-1 position contract");
+    config.legacy_position_layout = true;
+    auto output = engine::modules::RelativeSelfAttentionModule(config).build(runner.ctx, input, position, w);
+    runner.allocate_tensors();
+    const std::vector<float> identity{1, 0, 0, 1};
+    for (const auto & value : {w.attention.q_weight, w.attention.k_weight, w.attention.v_weight, w.attention.out_weight, w.pos_weight})
+        engine::core::write_tensor_f32(value, identity);
+    engine::core::write_tensor_f32(w.pos_bias_u, {0, 0});
+    engine::core::write_tensor_f32(w.pos_bias_v, {0, 0});
+    engine::core::write_tensor_f32(input, {1, 2, 3, 4});
+    engine::core::write_tensor_f32(position, {0.2f, 0.4f, 0.6f, 0.8f});
+    // Independent two-row reference. QK^T=[[5,11],[11,25]]. The original
+    // ESPnet shift maps QP^T to [[2.2,0],[2.2,5]]. Q,K,V and output are identity.
+    const double p0 = 1.0 / (1.0 + std::exp((11.0 - 7.2) / std::sqrt(2.0)));
+    const double p1 = 1.0 / (1.0 + std::exp((30.0 - 13.2) / std::sqrt(2.0)));
+    require_allclose(runner.run_f32(output),
+        {float(3-2*p0), float(4-2*p0), float(3-2*p1), float(4-2*p1)}, 1e-6f,
+        "Legacy relative position independent reference");
+}
+
 void test_conformer_conv_pad_mask_ignores_dirty_padded_frames() {
     const int64_t batch = 1;
     const int64_t frames = 5;
@@ -1448,6 +1485,7 @@ int main(int argc, char ** argv) {
         test_graph_optimizer_two_sided_broadcast_binary_matches_repeat();
         test_graph_optimizer_unary_broadcast_scale_matches_repeat();
         test_relative_attention_fused_qkv_matches_split_and_cached_pos();
+        test_legacy_relative_position_layout();
         test_relative_attention_specialized_flash_matches_reference_on_realistic_shapes();
         test_conformer_conv_pad_mask_ignores_dirty_padded_frames();
         std::cout << "encoder_module_test: ok\n";
