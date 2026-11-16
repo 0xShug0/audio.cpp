@@ -669,6 +669,69 @@ void test_legacy_relative_position_layout() {
         "Legacy relative position independent reference");
 }
 
+void test_relative_conformer_ffn_activation_reference() {
+    using namespace engine;
+    for (const bool relu : {false, true}) {
+        CpuModuleRunner runner;
+        std::vector<std::pair<core::TensorValue, std::vector<float>>> tensors;
+        auto make = [&](core::TensorShape shape, std::vector<float> data) {
+            auto value = runner.make_f32(shape);
+            tensors.emplace_back(value, std::move(data));
+            return value;
+        };
+        const std::vector<float> input_values{-1.2f, 0.3f, 1.1f, 2.4f, 0.8f, -0.5f, 1.7f, -1.1f};
+        auto input = make(core::TensorShape::from_dims({1, 2, 4}), input_values);
+        auto position = make(core::TensorShape::from_dims({1, relu ? 2 : 3, 4}), std::vector<float>((relu ? 2 : 3) * 4, 0));
+        const auto matrix = core::TensorShape::from_dims({4, 4});
+        auto zero = make(matrix, std::vector<float>(16, 0));
+        auto identity = make(matrix, {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
+        auto projection = make(matrix, {0.5f,0,0,0, 0,1,0,0, 0,0,-0.5f,0, 0,0,0,1.5f});
+        auto scale = make(core::TensorShape::from_dims({4}), {1,1,1,1});
+        auto bias = make(core::TensorShape::from_dims({4}), {0,0,0,0});
+        modules::RelativeConformerBlockWeights w;
+        w.ffn1_norm = w.norm1 = w.conv.norm = w.norm2 = w.final_norm = {scale, bias};
+        w.ffn1_fc1 = w.ffn2_fc1 = {identity, std::nullopt};
+        w.ffn1_fc2 = w.ffn2_fc2 = {projection, std::nullopt};
+        w.self_attention.attention.q_weight = w.self_attention.attention.k_weight =
+            w.self_attention.attention.v_weight = w.self_attention.attention.out_weight = zero;
+        w.self_attention.pos_weight = zero;
+        w.self_attention.pos_bias_u = w.self_attention.pos_bias_v =
+            core::reshape_tensor(runner.ctx, bias, core::TensorShape::from_dims({1,4}));
+        w.conv.pointwise_in = {make(core::TensorShape::from_dims({8,4}), std::vector<float>(32, 0)), std::nullopt};
+        w.conv.depthwise = {make(core::TensorShape::from_dims({4,1,3}), std::vector<float>(12, 0)), std::nullopt};
+        w.conv.depthwise_norm = {scale, bias};
+        w.conv.pointwise_out = {zero, std::nullopt};
+        modules::ConformerBlockConfig config{4, 1, 4, 3};
+        config.use_bias = false;
+        config.legacy_position_layout = relu;
+        if (relu) config.ffn_activation = modules::FeedForwardActivation::Relu;
+        auto output = modules::RelativeConformerBlockModule(config).build(runner.ctx, input, position, w);
+        runner.allocate_tensors();
+        for (const auto & entry : tensors) core::write_tensor_f32(entry.first, entry.second);
+
+        // Scalar oracle: attention and convolution projections are zero, so the
+        // block is two normalized FFN residuals followed by final layer norm.
+        std::vector<float> expected;
+        const double diagonal[] = {0.5, 1, -0.5, 1.5};
+        for (size_t row = 0; row < 2; ++row) {
+            double x[4];
+            for (size_t c = 0; c < 4; ++c) x[c] = input_values[row * 4 + c];
+            for (int phase = 0; phase < 3; ++phase) {
+                double mean = 0, variance = 0;
+                for (double value : x) mean += value / 4;
+                for (double value : x) variance += (value - mean) * (value - mean) / 4;
+                for (size_t c = 0; c < 4; ++c) {
+                    const double n = (x[c] - mean) / std::sqrt(variance + 1e-5);
+                    if (phase == 2) expected.push_back(static_cast<float>(n));
+                    else x[c] += 0.5 * diagonal[c] * (relu ? std::max(0.0, n) : n / (1 + std::exp(-n)));
+                }
+            }
+        }
+        require_allclose(runner.run_f32(output), expected, 2e-6f,
+            relu ? "relative Conformer ReLU and T positions" : "relative Conformer default SiLU and 2T-1 positions");
+    }
+}
+
 void test_conformer_conv_pad_mask_ignores_dirty_padded_frames() {
     const int64_t batch = 1;
     const int64_t frames = 5;
@@ -1487,6 +1550,7 @@ int main(int argc, char ** argv) {
         test_relative_attention_fused_qkv_matches_split_and_cached_pos();
         test_legacy_relative_position_layout();
         test_relative_attention_specialized_flash_matches_reference_on_realistic_shapes();
+        test_relative_conformer_ffn_activation_reference();
         test_conformer_conv_pad_mask_ignores_dirty_padded_frames();
         std::cout << "encoder_module_test: ok\n";
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));

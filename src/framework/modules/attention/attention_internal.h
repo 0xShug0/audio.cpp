@@ -448,6 +448,7 @@ inline core::TensorValue build_feed_forward_impl(
     switch (config.activation) {
         case FeedForwardActivation::Gelu: hidden = gelu.build(ctx, hidden); break;
         case FeedForwardActivation::Relu: hidden = ReluModule().build(ctx, hidden); break;
+        case FeedForwardActivation::Silu: hidden = SiluModule().build(ctx, hidden); break;
         case FeedForwardActivation::ReluSquared:
             hidden = ReluModule().build(ctx, hidden);
             hidden = core::wrap_tensor(ggml_sqr(ctx.ggml, hidden.tensor), hidden.shape, hidden.type);
