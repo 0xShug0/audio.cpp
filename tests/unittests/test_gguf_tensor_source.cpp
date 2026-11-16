@@ -197,6 +197,48 @@ void test_safetensors_to_gguf_roundtrip() {
     std::filesystem::remove_all(root);
 }
 
+// Hugging Face cache snapshots are symlinks to extensionless, content-addressed blobs, and path
+// canonicalisation resolves them. The container must then be identified from the file contents.
+void test_extensionless_tensor_source_is_sniffed() {
+    using engine::test::require;
+    const auto root = std::filesystem::temp_directory_path() / "audiocpp_extensionless_source_test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "blobs");
+
+    const auto gguf_blob = root / "blobs" / "5fb838f03bc1e532";
+    gguf_context_ptr fixture(gguf_init_empty());
+    gguf_set_val_str(fixture.get(), "architecture", "test");
+    require(gguf_write_to_file(fixture.get(), gguf_blob.string().c_str(), false), "failed to write GGUF fixture");
+    require(engine::assets::open_tensor_source(gguf_blob) != nullptr, "extensionless GGUF was not sniffed");
+
+    const auto safetensors_blob = root / "blobs" / "a1b2c3d4e5f60718";
+    const std::string header = "{\"__metadata__\":{}}";
+    {
+        std::ofstream out(safetensors_blob, std::ios::binary);
+        const uint64_t header_size = header.size();
+        out.write(reinterpret_cast<const char *>(&header_size), sizeof(header_size));
+        out.write(header.data(), static_cast<std::streamsize>(header.size()));
+    }
+    require(
+        engine::assets::open_tensor_source(safetensors_blob) != nullptr,
+        "extensionless safetensors was not sniffed");
+
+    const auto unknown_blob = root / "blobs" / "0000000000000000";
+    {
+        std::ofstream out(unknown_blob, std::ios::binary);
+        out << "not a tensor container";
+    }
+    bool rejected = false;
+    try {
+        (void) engine::assets::open_tensor_source(unknown_blob);
+    } catch (const std::runtime_error &) {
+        rejected = true;
+    }
+    require(rejected, "unrecognised extensionless file must still be rejected");
+
+    std::filesystem::remove_all(root);
+}
+
 void test_source_policy_cache_and_views() {
     using namespace engine::assets;
     const auto root = std::filesystem::temp_directory_path() / "audiocpp_source_policy_test";
@@ -828,6 +870,7 @@ int main() {
         test_typed_gguf_metadata();
         test_safetensors_to_gguf_roundtrip();
         test_concurrent_storage_release();
+        test_extensionless_tensor_source_is_sniffed();
         test_source_policy_cache_and_views();
         test_packed_multi_source_gguf();
         test_all_rank0_gguf();
