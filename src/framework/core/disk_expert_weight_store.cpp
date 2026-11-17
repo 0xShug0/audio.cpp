@@ -49,6 +49,8 @@ public:
         std::vector<ggml_tensor *> tensors;
         std::vector<int32_t> expert_ids;
         std::vector<uint64_t> last_used;
+        std::vector<uint64_t> frequency;
+        uint64_t accesses = 0;
         std::unique_ptr<ggml_context, ContextDeleter> host_context;
         std::vector<ggml_tensor *> host_tensors;
         std::vector<std::unique_ptr<ggml_backend_buffer, BufferDeleter>> host_views;
@@ -110,6 +112,42 @@ public:
         mapped_file = io::read_binary_blob(path, true);
     }
 
+    void prepare_frequency(Group & group) {
+        group.frequency.assign(static_cast<size_t>(group.projections.front().experts), 0);
+    }
+    void touch_frequency(Group & group, const std::unordered_set<int32_t> & required) {
+        if (++group.accesses % decay_steps == 0)
+            for (auto & count : group.frequency) count /= 2;
+        for (auto id : required) ++group.frequency[id];
+    }
+    void reset_frequency(Group & group) {
+        std::fill(group.frequency.begin(), group.frequency.end(), 0);
+        group.accesses = 0;
+    }
+
+    size_t evict_lru(const Group & group, const std::vector<int32_t> & ids,
+        const std::unordered_set<int32_t> & required) const {
+        size_t slot = ids.size();
+        for (size_t candidate = 0; candidate < ids.size(); ++candidate) {
+            if (required.count(ids[candidate])) continue;
+            if (slot == ids.size() || group.last_used[candidate] < group.last_used[slot]) slot = candidate;
+        }
+        return slot;
+    }
+
+    size_t evict_frequency(const Group & group, const std::vector<int32_t> & ids,
+        const std::unordered_set<int32_t> & required) const {
+        size_t slot = ids.size();
+        for (size_t candidate = 0; candidate < ids.size(); ++candidate) {
+            if (required.count(ids[candidate])) continue;
+            if (ids[candidate] < 0) return candidate;
+            if (slot == ids.size() || group.frequency[ids[candidate]] < group.frequency[ids[slot]] ||
+                (group.frequency[ids[candidate]] == group.frequency[ids[slot]] &&
+                 group.last_used[candidate] < group.last_used[slot])) slot = candidate;
+        }
+        return slot;
+    }
+
     std::vector<int32_t> stage(std::vector<int32_t> ids, size_t index) {
         const auto stage_started = std::chrono::steady_clock::now();
         auto & group = *groups.at(index);
@@ -119,6 +157,7 @@ public:
             if (id < 0 || id >= group.projections.front().experts) throw std::runtime_error("disk expert routing ID out of range");
         }
         ++clock;
+        if (touch_policy) (this->*touch_policy)(group, required);
         struct Miss { int32_t id; size_t slot; };
         std::vector<Miss> misses;
         auto planned_ids = group.expert_ids;
@@ -129,11 +168,7 @@ public:
                 slot = static_cast<size_t>(found - planned_ids.begin());
                 ++stats.cache_hits;
             } else {
-                slot = planned_ids.size();
-                for (size_t candidate = 0; candidate < planned_ids.size(); ++candidate) {
-                    if (required.count(planned_ids[candidate])) continue;
-                    if (slot == planned_ids.size() || group.last_used[candidate] < group.last_used[slot]) slot = candidate;
-                }
+                slot = (this->*evict_policy)(group, planned_ids, required);
                 planned_ids[slot] = id;
                 misses.push_back({id, slot});
                 // This slot must not remain a hit if a later read/upload fails.
@@ -201,6 +236,8 @@ public:
                     (!pin_experts || misses[end].id == misses[end - 1].id + 1)) ++end;
                 const auto * data = pin_experts ? projection.host_data + static_cast<size_t>(misses[begin].id) * bytes
                                                : staging + offset + begin * bytes;
+                ++stats.upload_calls;
+                stats.uploaded_bytes += (end - begin) * bytes;
                 ggml_backend_tensor_set_async(group.backend, group.tensors[p], data,
                     misses[begin].slot * bytes, (end - begin) * bytes);
                 begin = end;
@@ -231,6 +268,11 @@ public:
     std::map<std::string, size_t> routes;
     std::map<ggml_backend_t, std::unique_ptr<Staging>> host_staging;
     uint64_t clock = 0;
+    uint64_t decay_steps = 0;
+    void (Impl::*prepare_policy)(Group &) = nullptr;
+    void (Impl::*touch_policy)(Group &, const std::unordered_set<int32_t> &) = nullptr;
+    size_t (Impl::*evict_policy)(const Group &, const std::vector<int32_t> &, const std::unordered_set<int32_t> &) const = &Impl::evict_lru;
+    void (Impl::*reset_policy)(Group &) = nullptr;
     uint64_t cache_epoch = 0;
     Statistics stats;
 };
@@ -243,6 +285,8 @@ ExecutionContext * DiskExpertWeightStore::cpu_execution() const noexcept { retur
 DiskExpertWeightStore::~DiskExpertWeightStore() {
     debug::timing_log_scalar("disk_experts.bytes_read", impl_->stats.bytes_read);
     debug::timing_log_scalar("disk_experts.expert_loads", impl_->stats.expert_loads);
+    debug::timing_log_scalar("disk_experts.upload_calls", impl_->stats.upload_calls);
+    debug::timing_log_scalar("disk_experts.uploaded_bytes", impl_->stats.uploaded_bytes);
     debug::timing_log_scalar("disk_experts.cache_hits", impl_->stats.cache_hits);
     debug::timing_log_scalar("disk_experts.buffer_mb", double(impl_->stats.buffer_bytes) / (1024 * 1024));
     debug::timing_log_scalar("disk_experts.host_buffer_mb", double(impl_->stats.host_buffer_bytes) / (1024 * 1024));
@@ -276,6 +320,7 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     ggml_backend_buffer_clear(group->buffer, 0);
     group->expert_ids.assign(static_cast<size_t>(slots), -1);
     group->last_used.assign(static_cast<size_t>(slots), 0);
+    if (impl_->prepare_policy) (impl_.get()->*impl_->prepare_policy)(*group);
     auto stats = impl_->stats;
     std::unique_ptr<Impl::Staging> replacement_staging;
     const auto staging = impl_->host_staging.find(backend);
@@ -420,11 +465,29 @@ std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vecto
     return impl_->stage(expert_ids, group);
 }
 
+void DiskExpertWeightStore::use_frequency_cache(uint64_t decay_steps) {
+    if (!decay_steps || !impl_->groups.empty())
+        throw std::invalid_argument("frequency cache must be configured with positive decay_steps before registering groups");
+    impl_->decay_steps = decay_steps;
+    impl_->prepare_policy = &Impl::prepare_frequency;
+    impl_->touch_policy = &Impl::touch_frequency;
+    impl_->evict_policy = &Impl::evict_frequency;
+    impl_->reset_policy = &Impl::reset_frequency;
+}
+
+void DiskExpertWeightStore::configure_cache(const MoePolicyConfig & policy) {
+    switch (policy.cache) {
+    case MoeCache::Lru: break;
+    case MoeCache::FrequencyAware: use_frequency_cache(policy.decay_steps); break;
+    }
+}
+
 void DiskExpertWeightStore::invalidate_cache() {
     ++impl_->cache_epoch;
     for (auto & group : impl_->groups) {
         std::fill(group->expert_ids.begin(), group->expert_ids.end(), -1);
         std::fill(group->last_used.begin(), group->last_used.end(), 0);
+        if (impl_->reset_policy) (impl_.get()->*impl_->reset_policy)(*group);
     }
     impl_->clock = 0;
 }

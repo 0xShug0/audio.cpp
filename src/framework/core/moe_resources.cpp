@@ -40,11 +40,12 @@ MoeExecutionPolicy resolve_moe_execution_policy(
         policy.cpu_layers.resize(static_cast<size_t>(*value));
         for (size_t i = 0; i < policy.cpu_layers.size(); ++i) policy.cpu_layers[i] = i;
     }
-    if (const auto share = runtime::parse_finite_float_option(options, {"moe_cpu_share"})) policy.cpu_share = *share;
+    const auto selected_policy = parse_moe_policy(options);
+    policy.cpu_share = selected_policy.cpu_share;
     if (!std::isfinite(policy.cpu_share) || policy.cpu_share < 0 || policy.cpu_share > 1)
-        throw std::invalid_argument("moe_cpu_share must be between zero and one");
-    if (policy.cpu_share > 0 && policy.residency != MoeExpertResidency::Staged)
-        throw std::invalid_argument("moe_cpu_share requires staged MoE experts");
+        throw std::invalid_argument("MoE CPU share must be between zero and one");
+    if (selected_policy.active() && policy.residency != MoeExpertResidency::Staged)
+        throw std::invalid_argument("selected moe_policy requires staged MoE experts");
     auto layers = policy.cpu_layers;
     std::sort(layers.begin(), layers.end());
     if (std::adjacent_find(layers.begin(), layers.end()) != layers.end() ||
@@ -75,15 +76,17 @@ public:
         if (policy.cache_slots <= 0 || policy.read_threads < 1 || policy.read_threads > 64 ||
             !std::isfinite(policy.cpu_share) || policy.cpu_share < 0 || policy.cpu_share > 1)
             throw std::invalid_argument("invalid MoE resource policy");
-        if (policy.cpu_share > 0 && policy.residency != MoeExpertResidency::Staged)
-            throw std::invalid_argument("moe_cpu_share requires staged MoE experts");
-        if (policy.cpu_share != primary.moe_cpu_share())
+        if (primary.moe_policy().active() && policy.residency != MoeExpertResidency::Staged)
+            throw std::invalid_argument("selected moe_policy requires staged MoE experts");
+        if (policy.cpu_share != primary.moe_policy().cpu_share)
             throw std::invalid_argument("MoE policy CPU share must match the execution context");
+        if (primary.moe_policy().hybrid() && is_host_backend(primary.backend()))
+            throw std::invalid_argument("MoE placement policy requires a GPU primary backend");
         auto ordinals = policy.cpu_layers;
         std::sort(ordinals.begin(), ordinals.end());
         if (std::adjacent_find(ordinals.begin(), ordinals.end()) != ordinals.end())
             throw std::invalid_argument("duplicate MoE CPU layer ordinal");
-        if (!policy.cpu_layers.empty() || policy.cpu_share > 0) {
+        if (!policy.cpu_layers.empty() || primary.moe_policy().hybrid()) {
             if (!is_host_backend(primary.backend())) {
                 BackendConfig host;
                 host.threads = primary.config().threads;
@@ -94,6 +97,7 @@ public:
             disk = std::make_unique<DiskExpertWeightStore>(source.source_path(), policy.pin_host_weights,
                 static_cast<size_t>(policy.read_threads), cpu ? cpu.get() :
                     (is_host_backend(primary.backend()) ? &primary : nullptr), primary.backend());
+        if (disk) disk->configure_cache(primary.moe_policy());
         primary.register_moe_resources();
     }
 };

@@ -5,7 +5,7 @@ namespace engine::runtime {
 
 RuntimeSessionBase::RuntimeSessionBase(const SessionOptions & options)
     : options_(options),
-      execution_context_(options.backend, parse_finite_float_option(options.options, {"moe_cpu_share"}).value_or(0)),
+      execution_context_(options.backend, core::parse_moe_policy(options.options)),
       graph_executor_(execution_context_) {}
 
 engine::core::ExecutionContext & RuntimeSessionBase::execution_context() noexcept {
@@ -52,11 +52,11 @@ void RuntimeSessionBase::mark_prepared() {
     for (const auto & [key, value] : options_.options) {
         (void) value;
         if (key.rfind("moe_", 0) != 0) continue;
-        if (key != "moe_cpu_share" && key != "moe_disk_experts" && key != "moe_pin_experts" &&
+        if (key != "moe_policy" && key.rfind("moe_policy_params.", 0) != 0 && key != "moe_disk_experts" && key != "moe_pin_experts" &&
             key != "moe_expert_cache_size" && key != "moe_disk_expert_read_threads" && key != "moe_cpu_expert_layers")
             throw std::invalid_argument("unknown shared MoE session option: " + key);
-        // Explicit zero preserves the existing disabled behavior on non-MoE sessions.
-        if (key == "moe_cpu_share" && execution_context_.moe_cpu_share() == 0) continue;
+        // Explicit default does not require MoE resources.
+        if ((key == "moe_policy" || key.rfind("moe_policy_params.", 0) == 0) && !execution_context_.moe_policy().active()) continue;
         if (!execution_context_.has_moe_resources())
             throw std::invalid_argument("session does not support shared MoE resources: " + key);
     }

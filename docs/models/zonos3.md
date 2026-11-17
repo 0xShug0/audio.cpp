@@ -211,7 +211,6 @@ Explicit speaker embeddings and reference codes remain the reference for every c
 | `moe_expert_cache_size` | `int` 4..64 | `16` | Expert slots per MoE layer with `disk_experts`. |
 | `moe_disk_expert_read_threads` | `int` 1..64 | `1` | Host threads copying selected experts when `pin_experts` is off. |
 | `moe_cpu_expert_layers` | `int` 0..routed layers | `0` | Place the first N routed expert layers on CPU. Dense backbone operations remain on the selected backend. |
-| `moe_cpu_share` | `float` 0..1 | `0` | With staged experts, share remaining cache misses with CPU after cache hits and vacant GPU slots are handled. |
 
 The four older `zonos3.disk_experts`, `zonos3.pin_experts`,
 `zonos3.expert_cache_size` and `zonos3.disk_expert_read_threads` spellings remain

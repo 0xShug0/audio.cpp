@@ -13,6 +13,7 @@
 namespace engine::core {
 
 class ExecutionContext;
+struct MoePolicyConfig;
 
 // Session-owned, bounded native-format expert cache. GGUF expert payloads are
 // read by range only after routing, or explicitly pinned in host RAM at load.
@@ -26,6 +27,8 @@ public:
     struct Statistics {
         uint64_t bytes_read = 0;
         uint64_t expert_loads = 0;
+        uint64_t upload_calls = 0;
+        uint64_t uploaded_bytes = 0;
         uint64_t cache_hits = 0;
         size_t buffer_bytes = 0;
         size_t host_buffer_bytes = 0;
@@ -42,6 +45,10 @@ public:
     ~DiskExpertWeightStore();
     DiskExpertWeightStore(const DiskExpertWeightStore &) = delete;
     DiskExpertWeightStore & operator=(const DiskExpertWeightStore &) = delete;
+
+    // Select before registering groups; default LRU remains unchanged.
+    void use_frequency_cache(uint64_t decay_steps);
+    void configure_cache(const MoePolicyConfig & policy);
 
     // Borrowed CPU execution context; its owner must outlive staged runtimes and this store.
     ExecutionContext * cpu_execution() const noexcept;

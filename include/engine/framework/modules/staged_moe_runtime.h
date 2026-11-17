@@ -6,6 +6,7 @@
 #include "engine/framework/modules/moe_module.h"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace engine::modules {
@@ -13,11 +14,30 @@ namespace engine::modules {
 // Opt-in execution policy, separate from weight residency. GPU hits precede
 // misses, so bounded staging cannot evict a hit that has not been consumed.
 // Storage is reserved once; updates reuse it. Cache invalidation resets credit.
+struct StagedMoeConfig;
+
+// Measured costs for this prepared layer/shape. CPU entries match its actual
+// graphs; zero means unsampled. Native GPU nullopt means no original region.
+struct MoePlacementCosts {
+    struct CpuBucket { int64_t rows; double ms; };
+    std::vector<CpuBucket> cpu;
+    double cpu_scale = 1;
+    double gpu_ms_per_row = 0;
+    double upload_ms_per_expert = 0;
+    double mixed_upload_ms_per_expert = 0;
+    double serial_ms = 0;
+    std::optional<double> native_gpu_ms_per_row;
+};
+
 class MoePlacementPlan {
 public:
     explicit MoePlacementPlan(size_t experts);
     void update(const std::vector<int32_t> & ids, const std::vector<int32_t> & resident,
         uint64_t cache_epoch, float cpu_share);
+    // Distinct logical experts; assignments retain original output-lane indices.
+    void update_cost_aware(const std::vector<int32_t> & ids, const std::vector<int32_t> & resident,
+        const std::vector<std::vector<int32_t>> & assignments,
+        const MoePlacementCosts & costs, const StagedMoeConfig & config);
     std::vector<int32_t> gpu;
     std::vector<int32_t> cpu;
 private:
@@ -79,6 +99,11 @@ public:
     // A graph-region executor already has host routing IDs.
     // Avoid uploading and reading the same IDs back through the device.
     uint64_t run(size_t layer, const std::vector<int32_t> & ids);
+    // Region execution separates placement from execution. A native GPU region
+    // is eligible only when its complete route fits the bounded expert bank.
+    bool prepare_route(size_t layer, const std::vector<int32_t> & ids);
+    uint64_t run_prepared(size_t layer);
+    ggml_status run_native(size_t layer, ggml_cgraph * graph, ggml_tensor * bank_ids);
     size_t workspace_bytes() const;
     Statistics statistics() const;
 private:

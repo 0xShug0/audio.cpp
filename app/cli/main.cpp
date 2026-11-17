@@ -81,7 +81,6 @@ void print_task_list_help() {
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
-        << "    --moe-cpu-share <0..1>             session CPU share of disk-expert cache misses; default 0\n"
         << "    --moe-disk-experts <bool>         stage expert weights through bounded caches\n"
         << "    --moe-pin-experts <bool>          pin staged expert banks in host RAM\n"
         << "    --moe-expert-cache-size <int>     expert slots per routed layer\n"
@@ -793,11 +792,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
         }
 
         auto common_session_options = collect_key_value_args(argc, argv, "--session-option");
-        if (const auto value = find_arg(argc, argv, "--moe-cpu-share")) {
-            const auto moe_cpu_share = engine::runtime::parse_finite_float_option({{"moe_cpu_share", *value}}, {"moe_cpu_share"}).value();
-            if (moe_cpu_share < 0 || moe_cpu_share > 1) throw std::runtime_error("--moe-cpu-share must be between zero and one");
-            common_session_options["moe_cpu_share"] = *value;
-        }
+        if (find_arg(argc, argv, "--moe-cpu-share"))
+            throw std::invalid_argument("--moe-cpu-share was removed; use --session-option moe_policy=placement_cpu_share and --session-option moe_policy_params.share=<value>");
         for (const auto & entry : {
                  std::make_pair("--moe-disk-experts", "moe_disk_experts"),
                  std::make_pair("--moe-pin-experts", "moe_pin_experts"),
@@ -849,10 +845,8 @@ int audiocpp_cli_main(int argc, char ** argv) {
         }
         if (recipe_arg.has_value()) {
             for (const auto & option : common_session_options) {
-                // Preserve the previously accepted disabled global option;
-                // active MoE placement still needs an explicit recipe role.
-                if (option.first == "moe_cpu_share" &&
-                    engine::runtime::parse_finite_float_option(common_session_options, {"moe_cpu_share"}).value() == 0)
+                // Active MoE policies need an explicit recipe role.
+                if (option.first == "moe_policy" && option.second == "default")
                     continue;
                 if (option.first.compare(0, 4, "moe_") == 0)
                     throw std::runtime_error("recipes require role-scoped MoE options: --session-option <role>." + option.first + "=<value>");

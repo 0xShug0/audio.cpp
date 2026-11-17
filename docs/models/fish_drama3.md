@@ -257,7 +257,7 @@ Legacy `fish_drama3.disk_experts`, `.pin_experts`, `.expert_cache_size`,
 `.disk_expert_read_threads`, and `.cpu_expert_layers` aliases remain accepted;
 supplying both a canonical key and its alias is an error, even with equal values.
 CPU counts select the first N MoE ordinals, skipping dense-only backbone layers.
-CPU-selected layers override `moe_cpu_share` and retain bounded CPU caches in
+CPU-selected layers override hybrid placement policies and retain bounded CPU caches in
 staged mode. Both `moe_pin_experts=true` and `fish_drama3.pin_experts=true`
 are rejected without staging, preserving alias equivalence.
 
@@ -275,7 +275,6 @@ are rejected without staging, preserving alias equivalence.
 | `fish_drama3.profile_first_audio` | `bool` | `false` | Emit first-audio stage timings to stderr for performance diagnosis. Disabled by default. |
 | `fish_drama3.context_length` | `int` | `2048` | Cache capacity for prompt plus generated frames; includes references and history. Declared range: minimum 1. |
 | `moe_cpu_expert_layers` | `int` | `4` | Number of the 40 expert banks kept and evaluated on CPU; use 4 for a 24 GB profile or 24 for a 16 GB profile. Dense layers and the tower use the selected backend. Declared range: minimum 0, maximum 40. |
-| `moe_cpu_share` | `float` | `0` | CPU share of eligible staged GPU misses, 0–1; requires `moe_disk_experts=true`. CPU-selected layers take precedence. |
 | `moe_disk_experts` | `bool` | `false` | Read routed expert weights from GGUF on demand into a bounded cache instead of keeping full expert banks resident. Trades speed for memory; default false. |
 | `moe_pin_experts` | `bool` | `false` | Keep full expert banks in pinned host RAM for direct cache-miss uploads. Requires staged mode and pinned host-buffer support. Both canonical and legacy spellings reject true without staging. |
 | `moe_expert_cache_size` | `int` | `32` | Resident expert slots per layer in disk_experts mode; 8 to 256. Larger caches trade memory for fewer disk reads; ignored in resident mode. Declared range: minimum 8, maximum 256. |

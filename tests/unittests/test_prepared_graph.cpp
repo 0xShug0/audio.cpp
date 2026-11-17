@@ -35,18 +35,19 @@ void check_session_moe_option() {
     options.backend.type = core::BackendType::Cpu;
     options.backend.threads = 8;
     Session ordinary(options);
-    require(ordinary.execution_context().moe_cpu_share() == 0, "omitted session option must disable hybrid execution");
+    require(ordinary.execution_context().moe_policy().cpu_share == 0, "omitted session option must disable hybrid execution");
     ordinary.mark_prepared();
-    for (const char * value : {"0", "0.0", "-0", "0e0"}) {
-        auto disabled_options = options;
-        disabled_options.options["moe_cpu_share"] = value;
-        Session disabled(disabled_options);
-        disabled.mark_prepared();
-        disabled.require_prepared("disabled MoE option regression test");
-        require(disabled.execution_context().moe_cpu_share() == 0 &&
-                !disabled.execution_context().has_moe_resources(),
-                "explicit zero must not require or create MoE resources");
-    }
+    auto disabled_options = options;
+    disabled_options.options["moe_policy"] = "default";
+    Session disabled(disabled_options);
+    disabled.mark_prepared();
+    require(!disabled.execution_context().moe_policy().hybrid(), "default policy enabled hybrid resources");
+    auto zero_options = options;
+    zero_options.options["moe_policy"] = "placement_cpu_share";
+    zero_options.options["moe_policy_params.share"] = "0";
+    Session zero(zero_options);
+    zero.mark_prepared();
+    require(!zero.execution_context().moe_policy().active(), "zero share requires unsupported MoE resources");
     for (const char * key : {"moe_disk_experts", "moe_pin_experts", "moe_expert_cache_size",
              "moe_disk_expert_read_threads", "moe_cpu_expert_layers"}) {
         auto unsupported_options = options;
@@ -59,7 +60,8 @@ void check_session_moe_option() {
         }
         require(rejected, "session silently accepted MoE controls without resource integration");
     }
-    options.options["moe_cpu_share"] = "0.5";
+    options.options["moe_policy"] = "placement_cpu_share";
+    options.options["moe_policy_params.share"] = "0.5";
     Session enabled(options);
     bool active_rejected = false;
     try { enabled.mark_prepared(); }
@@ -67,8 +69,8 @@ void check_session_moe_option() {
         active_rejected = std::string(error.what()).find("does not support shared MoE resources") != std::string::npos;
     }
     require(active_rejected, "unsupported active MoE CPU share was accepted");
-    require(enabled.execution_context().moe_cpu_share() == 0.5F, "session option did not reach execution context");
-    require(ordinary.execution_context().moe_cpu_share() == 0, "session option leaked across sessions");
+    require(enabled.execution_context().moe_policy().cpu_share == 0.5F, "session option did not reach execution context");
+    require(ordinary.execution_context().moe_policy().cpu_share == 0, "session option leaked across sessions");
     Session independent(engine::runtime::SessionOptions{options});
     for (bool registered : {false, true}) {
         if (registered) {
@@ -103,12 +105,12 @@ void check_session_moe_option() {
         require(ordinary.acquire_moe_execution().owns_lock(), "completed execution did not release session ownership");
     }
     core::ExecutionContext moved(std::move(enabled.execution_context()));
-    require(moved.moe_cpu_share() == 0.5F, "move lost session execution policy");
+    require(moved.moe_policy().cpu_share == 0.5F, "move lost session execution policy");
     for (const char * value : {"-0.1", "1.1", "nan", "typo"}) {
-        options.options["moe_cpu_share"] = value;
+        options.options["moe_policy_params.share"] = value;
         bool rejected = false;
         try { Session invalid(options); } catch (const std::exception & error) {
-            rejected = std::string(error.what()).find("moe_cpu_share") != std::string::npos;
+            rejected = std::string(error.what()).find("share") != std::string::npos;
         }
         require(rejected, "invalid session CPU share was accepted");
     }
@@ -120,7 +122,7 @@ void check_owner_allocation_failures() {
     core::BackendConfig backend;
     backend.type = core::BackendType::Cpu;
     backend.threads = 8;
-    core::ExecutionContext execution(backend, 0.5F);
+    core::ExecutionContext execution(backend, {core::MoePlacement::CpuShare, 0.5F});
     auto * handle = execution.backend();
     auto * original = handle->device;
     ggml_backend_device device = *original;

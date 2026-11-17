@@ -111,7 +111,7 @@ speaks its answer. `prompt` overrides the Thinker instruction; `voice_id` or
 
 Shared MoE controls apply to ASR and speech-to-speech sessions, which use the
 Thinker. TTS and voice-cloning sessions use only the Talker and accept explicit
-`moe_cpu_share=0` as disabled. They reject positive CPU shares and other shared
+`moe_policy=default` as disabled. They reject active policies and other shared
 `moe_*` controls. Existing family-prefixed
 expert controls remain accepted but inactive for those Talker-only tasks.
 
@@ -124,7 +124,7 @@ and `.disk_expert_read_threads` aliases remain accepted.
 For CPU-layer placement, use the shared `moe_cpu_expert_layers` key.
 Supplying both a canonical key and its alias is an error, even with equal values.
 CPU counts select the first N MoE ordinals, skipping dense-only backbone layers.
-CPU-selected layers override `moe_cpu_share` and retain bounded CPU caches in
+CPU-selected layers override hybrid placement policies and retain bounded CPU caches in
 staged mode. Pinning is accepted but inactive without staging.
 
 | Option | Type / values | Default | Description |
@@ -134,7 +134,6 @@ staged mode. Pinning is accepted but inactive without staging.
 | `moe_expert_cache_size` | `int` | `8` | With disk_experts, number of cached expert slots per routed Thinker layer. Declared range: minimum 8, maximum 128. |
 | `moe_disk_expert_read_threads` | `int` | `1` | Host workers for copying selected GGUF experts into staging when disk_experts is enabled and pin_experts is false. Default 1 preserves serial reads; values above 1 use OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
 | `moe_cpu_expert_layers` | `int` | `0` | First N routed MoE layers on CPU; dense-only layers do not count. |
-| `moe_cpu_share` | `float` | `0` | CPU share of eligible staged GPU misses, 0–1; requires `moe_disk_experts=true`. CPU-selected layers take precedence. |
 | `ming3_audio.reference_cache` | `bool` | `true` | Reuse speaker features and seeded acoustic conditioning for the most recent reference waveform. |
 
 ## Usage Notes

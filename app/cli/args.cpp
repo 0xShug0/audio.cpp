@@ -142,7 +142,6 @@ const std::unordered_map<std::string, std::string> & request_option_aliases() {
 
 const std::unordered_map<std::string, std::string> & moe_session_option_aliases() {
     static const std::unordered_map<std::string, std::string> option_keys = {
-        {"--moe-cpu-share", "moe_cpu_share"},
         {"--moe-disk-experts", "moe_disk_experts"},
         {"--moe-pin-experts", "moe_pin_experts"},
         {"--moe-expert-cache-size", "moe_expert_cache_size"},

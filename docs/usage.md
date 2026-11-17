@@ -20,7 +20,6 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--device` | integer | `0` | Backend device index. |
 | `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` to select one. Add `--json` for [machine-readable output](#listing-devices) with PCI ids and memory. |
 | `--threads` | integer | `4` | Backend/OpenMP worker threads. |
-| `--moe-cpu-share` | number, `0`–`1` | `0` | Global CPU share of disk-backed MoE expert-cache misses. |
 | `--log` | flag | off | Print progress and timing logs to stdout. |
 | `--log-file` | path | not set | Stream progress and timing logs to a file. |
 | `--metrics` | flag | off | Print compact offline wall time, audio duration, RTF, realtime speed, sample rate, and channel metrics. |
@@ -230,8 +229,8 @@ option. Availability depends on the build and device; see [HIP](build/HIP.md).
 Drama 3, Ming3 Audio (Thinker), and Nemotron Transcribe (decoder) accept these
 canonical session options. Each CLI flag is equivalent to
 `--session-option <key>=<value>`; boolean flags take `true` or `false`.
-Explicit `moe_cpu_share=0` remains accepted as disabled on sessions without MoE
-resources; positive shares require a supported MoE execution path.
+Select experimental optimizations with `moe_policy` and `moe_policy_params.<name>`
+through the existing session-option interface.
 
 | Session key | CLI flag | Meaning |
 |---|---|---|
@@ -240,7 +239,7 @@ resources; positive shares require a supported MoE execution path.
 | `moe_expert_cache_size` | `--moe-expert-cache-size` | Slots per staged layer; at least top-k and at most the expert count. |
 | `moe_disk_expert_read_threads` | `--moe-disk-expert-read-threads` | Host staging readers, 1–64; parallel reads require OpenMP or Apple dispatch. |
 | `moe_cpu_expert_layers` | `--moe-cpu-expert-layers` | First N routed MoE layers execute on CPU. |
-| `moe_cpu_share` | `--moe-cpu-share` | Fractional share of eligible staged GPU cache misses assigned to CPU, 0–1. |
+| `moe_policy` | `--session-option moe_policy=<name>` | Select one experimental MoE policy; omission preserves ordinary execution. |
 
 | Model | Disk | Pin | Cache slots | Read threads | CPU layers | CPU share |
 |---|---|---|---|---|---|---|
@@ -250,9 +249,9 @@ resources; positive shares require a supported MoE execution path.
 
 The CPU-layer count selects MoE ordinals `0..N-1`, not backbone indices;
 dense-only layers do not count. CPU-selected layers take precedence over
-`moe_cpu_share`. They retain full CPU banks in resident mode and bounded CPU
+placement policies. They retain full CPU banks in resident mode and bounded CPU
 caches in staged mode; selecting CPU does not implicitly pin full banks.
-Positive `moe_cpu_share` requires `moe_disk_experts=true`.
+Active policies require `moe_disk_experts=true`.
 Ming3 Audio and Nemotron accept pinning as inactive in resident mode. Drama 3
 rejects `pin=true` without staging for both `moe_pin_experts` and
 `fish_drama3.pin_experts`, preserving alias equivalence.
@@ -284,31 +283,47 @@ model's `session_options`, not at the top level or in request options:
 }
 ```
 
-### Experimental hybrid MoE execution
+### Experimental MoE policies
 
-`--moe-cpu-share 0.5` lets eligible GPU sessions compute half of subsequent
-expert-cache misses on CPU. It is a common model session option, equivalent to
-`--session-option moe_cpu_share=0.5`. Recipes select a role explicitly with
-`--session-option <role>.moe_cpu_share=0.5`; workflows can set it in a step's
-`session_options`. In server configuration, set
-`"moe_cpu_share": 0.5` inside the selected model's `session_options` object.
-It is not a top-level server setting or a backend option.
+Policy selection uses ordinary session options, not backend options or new CLI flags:
 
-Enable `moe_disk_experts=true` first. Shared `MoeModule`
-and `StagedMoeRuntime` paths participate through the session-owned build context.
-Graph builders composing a new `ModuleBuildContext` must copy
-`PreparedGraph::build_context()` to retain its explicit region recorder; raw
-GGML contexts are not discovered through a global registry. Resident
-expert banks and CPU-only execution keep their ordinary paths. The cache fills
-first, hits execute on GPU before new uploads, and the fractional share carries
-per prepared expert binding until cache invalidation.
-Native host weights are borrowed without expanding the complete bank to F32;
-CPU threads follow `--threads` or the server's `threads` setting.
+```bash
+--session-option moe_policy=placement_cost_aware
+```
 
-Zero, the default, preserves ordinary execution. Computing experts on CPU can
-cost more than uploading them, so measure the target workload. Native quantized
-CPU/GPU arithmetic differs and can change generated tokens and speech quality.
-This is not a parity-preserving option: short Drama3 requests can omit speech.
-Validate task outputs before enabling it in a pipeline.
-Automatic region execution currently requires F32 activations and a region
-contained in one scheduler split; incompatible registered regions fail explicitly.
+```json
+"session_options": {
+  "moe_disk_experts": "true",
+  "moe_policy": "placement_cpu_share",
+  "moe_policy_params.share": "0.5"
+}
+```
+
+| Policy | Parameters | Effect |
+|---|---|---|
+| `default` | None | Existing placement and LRU caching; no hybrid worker. |
+| `placement_cpu_share` | Required `share`, 0–1 | Existing fractional assignment of eligible GPU-cache misses. |
+| `placement_cost_aware` | Optional positive `cpu_cost_scale`, default 1 | Compare measured CPU bucket latency with warmed GPU computation and expert staging; higher scale discourages CPU placement. GPU executions establish a warmed baseline before CPU candidates are sampled; initialization and capture calls are excluded from throughput estimates. |
+| `cache_frequency_aware` | Optional positive integer `decay_steps`, default 128 | Evict by aged cache-access frequency with LRU tie-breaking. Counts halve every N staging calls per layer. |
+
+Unknown names, unknown parameters, parameters without an active policy, and
+active policies without staged experts are errors. `moe_cpu_share` and its
+convenience CLI flag have been removed; use the policy/parameter pair above.
+Active CPU/GPU sharing requires a GPU primary backend. Frequency caching also supports
+staged CPU caches. Parameters are parsed during preparation, not expert execution. Select one policy per
+session. Cache policy leaves placement unchanged; placement policy leaves LRU
+unchanged. Whole-layer CPU selection retains precedence over hybrid placement.
+
+Native expert weights, router choices and ordered combination are preserved.
+All-GPU routes that fit the bank use the original expert graph; mixed routes use staged execution.
+A zero CPU share disables placement without requiring staged experts.
+CPU/GPU arithmetic can nevertheless differ; validate generated speech and ASR
+outputs before enabling hybrid placement. Gains depend on workload and backend;
+fully resident execution does not benefit from these staged-expert policies.
+Frequency history resets with cache invalidation at independent request boundaries.
+
+Recipes use role-scoped options such as
+`--session-option <role>.moe_policy=placement_cost_aware`; workflows and server
+configuration use the selected model's `session_options`. Models without shared
+MoE resources reject active policies. Graph builders must retain the region
+recorder from `PreparedGraph::build_context()` for automatic hybrid execution.

@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <condition_variable>
+#include <cstddef>
 #include <exception>
 #include <limits>
 #include <map>
@@ -64,6 +65,103 @@ void MoePlacementPlan::update(const std::vector<int32_t> & ids, const std::vecto
     gpu.insert(gpu.end(), misses_.begin(), misses_.end());
 }
 
+void MoePlacementPlan::update_cost_aware(const std::vector<int32_t> & ids,
+    const std::vector<int32_t> & resident, const std::vector<std::vector<int32_t>> & assignments,
+    const MoePlacementCosts & costs, const StagedMoeConfig & config) {
+    gpu.clear(); cpu.clear(); misses_.clear();
+    for (auto id : ids) {
+        if (std::find(resident.begin(), resident.end(), id) != resident.end()) gpu.push_back(id);
+        else misses_.push_back(id);
+    }
+    gpu.insert(gpu.end(), misses_.begin(), misses_.end());
+    if (misses_.empty()) return;
+    // Establish the warmed GPU baseline before probing CPU alternatives.
+    // One-use graphs then perform no speculative CPU work; repeated graphs
+    // supply their normal direct/capture/replay executions for calibration.
+    if (costs.gpu_ms_per_row == 0 &&
+        (!costs.native_gpu_ms_per_row || *costs.native_gpu_ms_per_row == 0)) return;
+    if (costs.native_gpu_ms_per_row && *costs.native_gpu_ms_per_row == 0 &&
+        costs.gpu_ms_per_row > 0 && gpu.size() <= static_cast<size_t>(config.cache_slots)) return;
+    const auto gpu_work = [&] {
+        size_t work = 0;
+        for (size_t first = 0; first < gpu.size(); first += config.cache_slots) {
+            size_t maximum = 0;
+            for (size_t i = first; i < std::min(gpu.size(), first + static_cast<size_t>(config.cache_slots)); ++i)
+                maximum = std::max(maximum, assignments[gpu[i]].size());
+            for (size_t begin = 0; begin < maximum; begin += config.rows_per_expert.back()) {
+                const auto needed = std::min(maximum - begin, static_cast<size_t>(config.rows_per_expert.back()));
+                work += config.cache_slots * *std::lower_bound(config.rows_per_expert.begin(), config.rows_per_expert.end(), needed);
+            }
+        }
+        return work;
+    };
+    double best = gpu_work() * costs.gpu_ms_per_row + misses_.size() * costs.upload_ms_per_expert;
+    if (costs.native_gpu_ms_per_row && *costs.native_gpu_ms_per_row > 0 &&
+        gpu.size() <= static_cast<size_t>(config.cache_slots)) {
+        size_t rows = 0;
+        for (auto id : gpu) rows += assignments[id].size();
+        best = rows * *costs.native_gpu_ms_per_row + misses_.size() * costs.upload_ms_per_expert;
+    }
+    size_t rows = 0, best_count = 0;
+    // Compare complete batches, including batches whose first individual move
+    // is unprofitable. Prepared CPU graph costs are not linear in row count.
+    for (auto it = misses_.rbegin(); it != misses_.rend(); ++it) {
+        const auto id = *it;
+        gpu.erase(std::find(gpu.begin(), gpu.end(), id));
+        cpu.push_back(id);
+        rows += assignments[id].size();
+        const auto bucket = std::lower_bound(costs.cpu.begin(), costs.cpu.end(), rows,
+            [](const auto & entry, size_t count) { return static_cast<size_t>(entry.rows) < count; });
+        if (bucket == costs.cpu.end()) throw std::logic_error("MoE cost model has no prepared CPU bucket for route");
+        // Sample an actual candidate once instead of extrapolating another
+        // graph's timing. Nonempty GPU work simultaneously calibrates staging.
+        const auto gpu_misses = misses_.size() - cpu.size();
+        if (bucket->ms == 0 || (!gpu.empty() && costs.gpu_ms_per_row == 0) ||
+            (gpu_misses && costs.mixed_upload_ms_per_expert == 0)) return;
+        const double cpu_ms = bucket->ms * costs.cpu_scale;
+        const double gpu_ms = gpu_work() * costs.gpu_ms_per_row +
+            gpu_misses * costs.mixed_upload_ms_per_expert;
+        const double completion = costs.serial_ms + std::max(cpu_ms, gpu_ms);
+        if (completion < best) { best = completion; best_count = cpu.size(); }
+    }
+    cpu.resize(best_count);
+    gpu.clear();
+    for (auto id : ids)
+        if (std::find(resident.begin(), resident.end(), id) != resident.end()) gpu.push_back(id);
+    gpu.insert(gpu.end(), misses_.begin(), misses_.end() - static_cast<std::ptrdiff_t>(best_count));
+}
+
+namespace {
+struct MoeExecutionSample {
+    size_t cpu_rows = 0;
+    double input_ms = 0, cpu_ms = 0, merge_ms = 0, handoff_ms = 0;
+};
+
+struct MoeCostModel {
+    MoePlacementCosts values;
+    unsigned native_executions = 0, staged_executions = 0;
+    static void observe(double & estimate, double sample) {
+        estimate = estimate == 0 ? sample : 0.8 * estimate + 0.2 * sample;
+    }
+    void observe_gpu(size_t rows, uint64_t loads, double stage_ms, double elapsed_ms, bool mixed) {
+        // Initial direct execution and capture are not steady graph throughput.
+        if (rows) {
+            if (staged_executions < 2) ++staged_executions;
+            else observe(values.gpu_ms_per_row, (elapsed_ms - stage_ms) / rows);
+        }
+        if (loads) observe(mixed ? values.mixed_upload_ms_per_expert : values.upload_ms_per_expert, stage_ms / loads);
+    }
+    void observe_cpu(const MoeExecutionSample & sample) {
+        const auto bucket = std::lower_bound(values.cpu.begin(), values.cpu.end(), sample.cpu_rows,
+            [](const auto & entry, size_t rows) { return static_cast<size_t>(entry.rows) < rows; });
+        if (bucket == values.cpu.end() || static_cast<size_t>(bucket->rows) != sample.cpu_rows)
+            throw std::logic_error("MoE CPU execution did not match a prepared cost bucket");
+        observe(bucket->ms, sample.cpu_ms);
+        observe(values.serial_ms, sample.input_ms + sample.merge_ms + sample.handoff_ms);
+    }
+};
+} // namespace
+
 class StagedMoeRuntime::Impl {
 public:
     struct Layer {
@@ -74,6 +172,7 @@ public:
         std::vector<ggml_tensor *> cpu_outputs;
         std::unique_ptr<MoePlacementPlan> placement;
         bool cpu_staged = false;
+        MoeCostModel cost{};
     };
     struct Hybrid {
         core::ExecutionContext & execution;
@@ -93,6 +192,8 @@ public:
         size_t bucket = 0;
         std::exception_ptr error;
         double compute_ms = 0;
+        std::chrono::steady_clock::time_point submitted;
+        MoeExecutionSample * sample = nullptr;
 
         Hybrid(core::ExecutionContext & cpu_execution, const StagedMoeConfig & config)
             : execution(cpu_execution),
@@ -130,17 +231,20 @@ public:
                     try { graphs.compute(layer->cpu_graphs[bucket]); }
                     catch (...) { error = std::current_exception(); }
                     compute_ms = debug::elapsed_ms(started);
+                    if (sample) sample->cpu_ms = debug::elapsed_ms(submitted);
                     lock.lock();
                     pending = false;
                     finished.notify_one();
                 }
             });
         }
-        void launch(Layer & next_layer, size_t next_bucket) {
+        void launch(Layer & next_layer, size_t next_bucket, MoeExecutionSample * observation) {
             {
                 std::lock_guard<std::mutex> lock(mutex);
                 layer = &next_layer;
                 bucket = next_bucket;
+                sample = observation;
+                if (sample) submitted = std::chrono::steady_clock::now();
                 error = nullptr;
                 pending = true;
             }
@@ -186,6 +290,7 @@ public:
     const core::ExecutionContext & execution;
     StagedMoeConfig config;
     float cpu_share = 0;
+    bool hybrid_enabled = false;
     std::unique_ptr<ggml_context, decltype(&ggml_free)> context{nullptr, ggml_free}, inputs{nullptr, ggml_free};
     std::unique_ptr<std::remove_pointer_t<ggml_backend_buffer_t>, decltype(&ggml_backend_buffer_free)> buffer{nullptr, ggml_backend_buffer_free};
     std::shared_ptr<core::GraphWorkspace> workspace;
@@ -205,16 +310,57 @@ public:
 
     uint64_t run_cpu_staged(Layer & binding, const std::vector<int32_t> & experts);
     uint64_t run_gpu(Layer & binding, const std::vector<int32_t> & experts);
+    void select_route(Layer & binding);
+    void select_region_route(Layer & binding);
     uint64_t run(Layer & binding);
-    uint64_t run_hybrid(Layer & binding, const MoePlacementPlan & placement);
+    std::vector<int32_t> routed_experts;
+    uint64_t run_hybrid(Layer & binding, const MoePlacementPlan & placement, MoeExecutionSample * sample = nullptr);
+    uint64_t run_cpu_share(Layer & binding, const std::vector<int32_t> & experts);
+    uint64_t run_cost_aware(Layer & binding, const std::vector<int32_t> & experts);
+    uint64_t run_gpu_observed(Layer & binding, const std::vector<int32_t> & experts);
+    using Executor = uint64_t (Impl::*)(Layer &, const std::vector<int32_t> &);
+    Executor execute = &Impl::run_gpu;
+    Executor gpu_execute = &Impl::run_gpu;
+    double observed_input_ms = 0, observed_merge_ms = 0, observed_handoff_ms = 0, observed_planning_ms = 0;
+    double observed_native_upload_ms = 0, observed_mixed_upload_ms = 0;
+    uint64_t observed_native_loads = 0, observed_mixed_loads = 0;
+    using Selector = void (Impl::*)(Layer &);
+    void select_gpu(Layer &) {}
+    void select_cpu_share(Layer & binding) {
+        binding.placement->update(routed_experts, binding.store->cached_experts(binding.group),
+            binding.store->cache_epoch(), cpu_share);
+    }
+    void select_cost_aware(Layer & binding) {
+        auto & cost = binding.cost;
+        const auto started = std::chrono::steady_clock::now();
+        binding.placement->update_cost_aware(routed_experts, binding.store->cached_experts(binding.group), assignments,
+            cost.values, config);
+        observed_planning_ms += debug::elapsed_ms(started);
+    }
+    Selector select = &Impl::select_gpu;
+    void configure_policy() {
+        switch (execution.moe_policy().placement) {
+        case core::MoePlacement::Default: break;
+        case core::MoePlacement::CpuShare:
+            if (hybrid_enabled) { execute = &Impl::run_cpu_share; select = &Impl::select_cpu_share; }
+            break;
+        case core::MoePlacement::CostAware:
+            select = &Impl::select_cost_aware;
+            execute = &Impl::run_cost_aware;
+            gpu_execute = &Impl::run_gpu_observed;
+            break;
+        }
+    }
 
     Impl(const core::ExecutionContext & e, StagedMoeConfig c, std::shared_ptr<core::GraphWorkspace> shared_workspace,
         core::ExecutionContext * cpu_execution)
         : execution(e), config(std::move(c)), workspace(std::move(shared_workspace)), cpu_execution(cpu_execution) {
         if (!workspace) throw std::invalid_argument("staged MoE requires a caller-owned graph workspace");
-        cpu_share = core::is_host_backend(execution.backend()) ? 0 : execution.moe_cpu_share();
-        if (cpu_share > 0 && (!cpu_execution || !core::is_host_backend(cpu_execution->backend())))
+        cpu_share = core::is_host_backend(execution.backend()) ? 0 : execution.moe_policy().cpu_share;
+        hybrid_enabled = !core::is_host_backend(execution.backend()) && execution.moe_policy().hybrid();
+        if (hybrid_enabled && (!cpu_execution || !core::is_host_backend(cpu_execution->backend())))
             throw std::invalid_argument("hybrid MoE requires a borrowed host execution context");
+        configure_policy();
         if (config.input_size == 0) config.input_size = config.hidden_size;
         if (config.hidden_size <= 0 || config.input_size <= 0 || config.tokens <= 0 || config.selected <= 0 || config.experts < config.selected ||
             config.cache_slots <= 0 || config.cache_slots > config.experts || config.rows_per_expert.empty() ||
@@ -231,7 +377,7 @@ public:
         if (config.tokens > std::numeric_limits<int32_t>::max() / config.selected ||
             rows > std::numeric_limits<int32_t>::max() - config.tokens * config.selected)
             throw std::invalid_argument("staged MoE assignments exceed indexed graph limits");
-        if (cpu_share > 0 && config.tokens * config.selected > std::numeric_limits<int32_t>::max() / 2)
+        if (hybrid_enabled && config.tokens * config.selected > std::numeric_limits<int32_t>::max() / 2)
             throw std::invalid_argument("hybrid MoE assignments exceed indexed graph limits");
         int64_t slot_rows = 0;
         for (auto count : config.rows_per_expert) slot_rows += config.cache_slots * count;
@@ -242,7 +388,7 @@ public:
         hidden = ggml_new_tensor_2d(g, GGML_TYPE_F32, config.input_size, config.tokens);
         ids = ggml_new_tensor_2d(g, GGML_TYPE_I32, config.selected, config.tokens);
         weights = ggml_new_tensor_2d(g, GGML_TYPE_F32, config.selected, config.tokens);
-        const auto padding_rows = cpu_share > 0 ? std::max(rows, config.selected * config.tokens) : rows;
+        const auto padding_rows = hybrid_enabled ? std::max(rows, config.selected * config.tokens) : rows;
         outputs = ggml_new_tensor_2d(g, GGML_TYPE_F32, config.hidden_size, config.selected * config.tokens + padding_rows);
         source = ggml_new_tensor_1d(g, GGML_TYPE_I32, rows);
         target = ggml_new_tensor_1d(g, config.scatter_index_type, rows);
@@ -250,7 +396,7 @@ public:
         result = ggml_view_3d(g, outputs, config.hidden_size, config.selected, config.tokens,
             config.hidden_size * sizeof(float), config.hidden_size * config.selected * sizeof(float), 0);
         for (auto * t : {hidden, ids, weights, outputs, source, target, slots}) ggml_set_input(t);
-        if (cpu_share > 0) {
+        if (hybrid_enabled) {
             cpu_output = ggml_new_tensor_2d(g, GGML_TYPE_F32, config.hidden_size, config.selected * config.tokens);
             cpu_target = ggml_new_tensor_1d(g, config.scatter_index_type, config.selected * config.tokens);
             ggml_set_input(cpu_output);
@@ -273,6 +419,7 @@ public:
         }
         ggml_backend_tensor_set(slots, slot_ids.data(), 0, slot_ids.size() * sizeof(int32_t));
         assignments.resize(static_cast<size_t>(config.experts));
+        routed_experts.reserve(static_cast<size_t>(config.experts));
     }
 
     ~Impl() {
@@ -284,6 +431,18 @@ public:
             for (auto * graph : scatter) core::release_backend_graph_resources(execution.backend(), graph, true);
         }
         cpu_stage.reset();
+        if (observed_planning_ms) {
+            debug::timing_log_scalar("framework.moe.planning_ms", observed_planning_ms);
+        }
+        if (observed_input_ms || observed_merge_ms) {
+            debug::timing_log_scalar("framework.moe.input_ms", observed_input_ms);
+            debug::timing_log_scalar("framework.moe.merge_ms", observed_merge_ms);
+            debug::timing_log_scalar("framework.moe.handoff_ms", observed_handoff_ms);
+        }
+        if (observed_native_loads)
+            debug::timing_log_scalar("framework.moe.native_upload_mean_ms", observed_native_upload_ms / observed_native_loads);
+        if (observed_mixed_loads)
+            debug::timing_log_scalar("framework.moe.mixed_upload_mean_ms", observed_mixed_upload_ms / observed_mixed_loads);
         if (has_cpu_execution) {
             debug::timing_log_scalar("framework.moe.cpu_assignments", stats.cpu_assignments);
             debug::timing_log_scalar("framework.moe.gpu_assignments", stats.gpu_assignments);
@@ -338,7 +497,7 @@ size_t StagedMoeRuntime::add_layer(const MoeModule & module, const MoeExpertWeig
     }
     if (backend != s.execution.backend())
         throw std::invalid_argument("staged MoE cache backend does not match execution");
-    if (s.cpu_share > 0 && !s.hybrid) {
+    if (s.hybrid_enabled && !s.hybrid) {
         s.hybrid = std::make_unique<Impl::Hybrid>(*s.cpu_execution, s.config);
         for (auto count : s.hybrid->buckets) {
             auto * graph = ggml_new_graph_custom(s.context.get(), 128, false);
@@ -350,6 +509,11 @@ size_t StagedMoeRuntime::add_layer(const MoeModule & module, const MoeExpertWeig
         }
     }
     if (s.hybrid) layer.placement = std::make_unique<MoePlacementPlan>(static_cast<size_t>(s.config.experts));
+    if (s.gpu_execute == &Impl::run_gpu_observed) {
+        layer.cost.values.cpu_scale = s.execution.moe_policy().cpu_cost_scale;
+        layer.cost.values.cpu.reserve(s.hybrid->buckets.size());
+        for (auto rows : s.hybrid->buckets) layer.cost.values.cpu.push_back({rows, 0});
+    }
     core::ModuleBuildContext ctx{s.context.get(), "framework.moe.staged", s.execution.backend_type()};
     size_t slot_offset = 0;
     for (auto count : s.config.rows_per_expert) {
@@ -431,6 +595,7 @@ uint64_t StagedMoeRuntime::run(size_t layer) {
     if (!s.prepared) throw std::logic_error("staged MoE graphs must be prepared before execution");
     auto & binding = s.layers.at(layer);
     ggml_backend_tensor_get(s.ids, s.logical_ids.data(), 0, s.logical_ids.size() * sizeof(int32_t));
+    s.select_route(binding);
     return s.run(binding);
 }
 
@@ -439,25 +604,131 @@ uint64_t StagedMoeRuntime::run(size_t layer, const std::vector<int32_t> & ids) {
     if (!s.prepared || ids.size() != s.logical_ids.size())
         throw std::logic_error("hybrid MoE requires prepared graphs and matching routing IDs");
     std::copy(ids.begin(), ids.end(), s.logical_ids.begin());
-    return s.run(s.layers.at(layer));
+    auto & binding = s.layers.at(layer);
+    s.select_route(binding);
+    return s.run(binding);
+}
+
+void StagedMoeRuntime::Impl::select_route(Layer & binding) {
+    // Ordinary staged callers keep their existing assignment preparation.
+    for (auto & pairs : assignments) pairs.clear();
+    for (size_t pair = 0; pair < logical_ids.size(); ++pair)
+        assignments.at(static_cast<size_t>(logical_ids[pair])).push_back(static_cast<int32_t>(pair));
+    routed_experts.clear();
+    for (size_t expert = 0; expert < assignments.size(); ++expert)
+        if (!assignments[expert].empty()) routed_experts.push_back(static_cast<int32_t>(expert));
+    std::stable_sort(routed_experts.begin(), routed_experts.end(), [&](int32_t a, int32_t b) {
+        return assignments[a].size() > assignments[b].size();
+    });
+    if (!binding.cpu_staged) (this->*select)(binding);
+}
+
+void StagedMoeRuntime::Impl::select_region_route(Layer & binding) {
+    auto & s = *this;
+    auto & experts = s.routed_experts;
+    for (auto expert : experts) s.assignments[expert].clear();
+    experts.clear();
+    for (size_t pair = 0; pair < s.logical_ids.size(); ++pair) {
+        const auto expert = s.logical_ids[pair];
+        auto & assignments = s.assignments.at(static_cast<size_t>(expert));
+        if (assignments.empty()) experts.push_back(expert);
+        assignments.push_back(static_cast<int32_t>(pair));
+    }
+    // Preserve the original stable-sort order: descending assignment count,
+    // then ascending logical ID. Only selected experts need to be visited.
+    std::sort(experts.begin(), experts.end(), [&](int32_t a, int32_t b) {
+        const auto na = s.assignments[a].size(), nb = s.assignments[b].size();
+        return na != nb ? na > nb : a < b;
+    });
+    if (!binding.cpu_staged) (this->*select)(binding);
 }
 
 uint64_t StagedMoeRuntime::Impl::run(Layer & binding) {
-    auto & s = *this;
-    for (auto & pairs : s.assignments) pairs.clear();
-    for (size_t pair = 0; pair < s.logical_ids.size(); ++pair)
-        s.assignments.at(static_cast<size_t>(s.logical_ids[pair])).push_back(static_cast<int32_t>(pair));
-    std::vector<int32_t> experts;
-    for (size_t expert = 0; expert < s.assignments.size(); ++expert)
-        if (!s.assignments[expert].empty()) experts.push_back(static_cast<int32_t>(expert));
-    std::stable_sort(experts.begin(), experts.end(), [&](int32_t a, int32_t b) { return s.assignments[a].size() > s.assignments[b].size(); });
-    if (binding.cpu_staged) return s.run_cpu_staged(binding, experts);
-    if (s.hybrid) {
-        binding.placement->update(experts, binding.store->cached_experts(binding.group),
-            binding.store->cache_epoch(), s.cpu_share);
-        return s.run_hybrid(binding, *binding.placement);
+    if (binding.cpu_staged) return run_cpu_staged(binding, routed_experts);
+    return (this->*execute)(binding, routed_experts);
+}
+
+bool StagedMoeRuntime::prepare_route(size_t layer, const std::vector<int32_t> & ids) {
+    auto & s = *impl_;
+    if (!s.prepared || ids.size() != s.logical_ids.size())
+        throw std::logic_error("MoE route requires prepared graphs and matching IDs");
+    std::copy(ids.begin(), ids.end(), s.logical_ids.begin());
+    auto & binding = s.layers.at(layer);
+    if (s.gpu_execute == &Impl::run_gpu_observed && !binding.cost.values.native_gpu_ms_per_row)
+        binding.cost.values.native_gpu_ms_per_row = 0;
+    s.select_region_route(binding);
+    return !binding.cpu_staged && binding.placement && binding.placement->cpu.empty() &&
+        s.routed_experts.size() <= static_cast<size_t>(s.config.cache_slots);
+}
+
+uint64_t StagedMoeRuntime::run_prepared(size_t layer) {
+    return impl_->run(impl_->layers.at(layer));
+}
+
+ggml_status StagedMoeRuntime::run_native(size_t layer, ggml_cgraph * graph, ggml_tensor * bank_ids) {
+    auto & s = *impl_;
+    auto & binding = s.layers.at(layer);
+    const bool observe = s.gpu_execute == &Impl::run_gpu_observed;
+    const bool warming = observe && binding.cost.values.native_gpu_ms_per_row == 0;
+    const bool calibrate = warming && binding.cost.native_executions >= 2;
+    const auto before = binding.store->statistics();
+    const auto started = calibrate ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto mapped = binding.store->stage(binding.group, s.logical_ids);
+    ggml_backend_tensor_set(bank_ids, mapped.data(), 0, mapped.size() * sizeof(int32_t));
+    // Calibrate this prepared shape once. Steady execution must retain the
+    // scheduler's asynchronous submission, not synchronize after every region.
+    const auto status = calibrate ? ggml_backend_graph_compute(s.execution.backend(), graph)
+        : ggml_backend_graph_compute_async(s.execution.backend(), graph);
+    const auto after = binding.store->statistics();
+    if (observe) {
+        const auto stage_ms = after.stage_ms - before.stage_ms;
+        if (calibrate)
+            binding.cost.values.native_gpu_ms_per_row = (debug::elapsed_ms(started) - stage_ms) / s.logical_ids.size();
+        if (warming) ++binding.cost.native_executions;
+        const auto loads = after.expert_loads - before.expert_loads;
+        if (loads) {
+            MoeCostModel::observe(binding.cost.values.upload_ms_per_expert, stage_ms / loads);
+            s.observed_native_upload_ms += stage_ms;
+            s.observed_native_loads += loads;
+        }
     }
-    return s.run_gpu(binding, experts);
+    s.stats.gpu_assignments += s.logical_ids.size();
+    return status;
+}
+
+uint64_t StagedMoeRuntime::Impl::run_cpu_share(Layer & binding, const std::vector<int32_t> & experts) {
+    (void) experts;
+    return run_hybrid(binding, *binding.placement);
+}
+
+uint64_t StagedMoeRuntime::Impl::run_cost_aware(Layer & binding, const std::vector<int32_t> & experts) {
+    auto & cost = binding.cost;
+    (void) experts;
+    MoeExecutionSample sample;
+    const auto work = run_hybrid(binding, *binding.placement, &sample);
+    if (sample.cpu_rows) {
+        cost.observe_cpu(sample);
+        observed_input_ms += sample.input_ms;
+        observed_merge_ms += sample.merge_ms;
+        observed_handoff_ms += sample.handoff_ms;
+    }
+    return work;
+}
+
+uint64_t StagedMoeRuntime::Impl::run_gpu_observed(Layer & binding, const std::vector<int32_t> & experts) {
+    const auto before = binding.store->statistics();
+    const auto started = std::chrono::steady_clock::now();
+    const auto work = run_gpu(binding, experts);
+    const auto after = binding.store->statistics();
+    const auto loads = after.expert_loads - before.expert_loads;
+    const auto stage_ms = after.stage_ms - before.stage_ms;
+    const bool mixed = !binding.placement->cpu.empty();
+    binding.cost.observe_gpu(static_cast<size_t>(work), loads, stage_ms, debug::elapsed_ms(started), mixed);
+    if (loads) {
+        (mixed ? observed_mixed_upload_ms : observed_native_upload_ms) += stage_ms;
+        (mixed ? observed_mixed_loads : observed_native_loads) += loads;
+    }
+    return work;
 }
 
 uint64_t StagedMoeRuntime::Impl::run_cpu_staged(Layer & binding, const std::vector<int32_t> & experts) {
@@ -553,12 +824,13 @@ uint64_t StagedMoeRuntime::Impl::run_gpu(Layer & binding, const std::vector<int3
     return work_rows;
 }
 
-uint64_t StagedMoeRuntime::Impl::run_hybrid(Layer & binding, const MoePlacementPlan & placement) {
+uint64_t StagedMoeRuntime::Impl::run_hybrid(Layer & binding, const MoePlacementPlan & placement, MoeExecutionSample * sample) {
     auto & host = *hybrid;
     for (auto expert : placement.gpu) stats.gpu_assignments += assignments[expert].size();
     size_t cpu_rows = 0;
     for (auto expert : placement.cpu) cpu_rows += assignments[expert].size();
-    if (cpu_rows == 0) return run_gpu(binding, placement.gpu);
+    if (cpu_rows == 0) return (this->*gpu_execute)(binding, placement.gpu);
+    const auto input_started = sample ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto found = std::lower_bound(host.buckets.begin(), host.buckets.end(), static_cast<int64_t>(cpu_rows));
     const auto bucket = static_cast<size_t>(found - host.buckets.begin());
     const auto rows = static_cast<size_t>(*found);
@@ -577,16 +849,29 @@ uint64_t StagedMoeRuntime::Impl::run_hybrid(Layer & binding, const MoePlacementP
     }, host.target_rows);
     // Only activations cross the device boundary; expert payloads stay native
     // in the mapped/pinned host bank. CPU work overlaps uploads/GPU execution.
-    ggml_backend_tensor_get(hidden, host.hidden->data, 0, ggml_nbytes(hidden));
+    ggml_backend_tensor_get_async(execution.backend(), hidden, host.hidden->data, 0, ggml_nbytes(hidden));
+    ggml_backend_synchronize(execution.backend());
     ggml_backend_tensor_set(host.source, host.source_rows.data(), 0, rows * sizeof(int32_t));
     ggml_backend_tensor_set(host.ids, host.expert_ids.data(), 0, rows * sizeof(int32_t));
-    host.launch(binding, bucket);
+    if (sample) {
+        sample->cpu_rows = rows;
+        sample->input_ms = debug::elapsed_ms(input_started);
+    }
+    const auto parallel_started = sample ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    host.launch(binding, bucket, sample);
     uint64_t work_rows;
-    try { work_rows = run_gpu(binding, placement.gpu); }
+    try { work_rows = (this->*gpu_execute)(binding, placement.gpu); }
     catch (...) { host.wait(); throw; }
+    const auto gpu_ms = sample ? debug::elapsed_ms(parallel_started) : 0;
     host.wait();
+    if (sample) {
+        // Account for launch/notification and the main thread resuming after
+        // worker completion. Neither branch's compute timer includes this gap.
+        sample->handoff_ms = debug::elapsed_ms(parallel_started) - std::max(sample->cpu_ms, gpu_ms);
+    }
     stats.cpu_assignments += cpu_rows;
     stats.cpu_ms += host.compute_ms;
+    const auto merge_started = sample ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto * output = binding.cpu_outputs[bucket];
     ggml_backend_tensor_set_async(execution.backend(), cpu_output, output->data, 0, ggml_nbytes(output));
     auto * scatter = host.scatter[bucket];
@@ -594,6 +879,7 @@ uint64_t StagedMoeRuntime::Impl::run_hybrid(Layer & binding, const MoePlacementP
         throw std::runtime_error("hybrid MoE output scatter failed");
     // The synchronous merge also completes the upload before the next CPU
     // graph can reuse its scratch. Mixing remains in original logical order.
+    if (sample) sample->merge_ms = debug::elapsed_ms(merge_started);
     return work_rows + rows;
 }
 
@@ -695,9 +981,10 @@ struct MoeGraphState {
 class MoeRegionExecutor final : public core::GraphRegionExecutor {
 public:
     MoeRegionExecutor(std::shared_ptr<MoeGraphState> state, size_t binding) : state_(std::move(state)), binding_(binding) {}
-    void prepare(ggml_backend_t backend, ggml_cgraph *) override {
+    void prepare(ggml_backend_t backend, ggml_cgraph * graph) override {
         if (backend != state_->execution.backend()) throw std::runtime_error("hybrid MoE region must execute on its primary backend");
         state_->prepare();
+        native_graph_ = graph;
         active_ = true;
         ++state_->active;
     }
@@ -705,10 +992,16 @@ public:
         auto & binding = state_->bindings[binding_];
         ggml_backend_tensor_get(binding.bank_ids, binding.ids.data(), 0, binding.ids.size() * sizeof(int32_t));
         auto & batch = *state_->batches[binding.batch];
+        if (batch.prepare_route(binding.layer, binding.ids))
+            // The scheduler may give the expert op a backend-local routing
+            // copy. Write physical slots to the consumer, not its source.
+            return batch.run_native(binding.layer, native_graph_, binding.first->src[2]);
         auto * backend = state_->execution.backend();
-        const auto status = ggml_backend_graph_compute(backend, state_->copies->graph(binding.input_copy));
+        // The following CPU readback or staged compute already waits for
+        // this stream. An additional boundary-copy synchronization is redundant.
+        const auto status = ggml_backend_graph_compute_async(backend, state_->copies->graph(binding.input_copy));
         if (status != GGML_STATUS_SUCCESS) return status;
-        batch.run(binding.layer, binding.ids);
+        batch.run_prepared(binding.layer);
         ++state_->hybrid_regions;
         return ggml_backend_graph_compute_async(backend, state_->copies->graph(binding.output_copy));
     }
@@ -722,6 +1015,7 @@ public:
 private:
     std::shared_ptr<MoeGraphState> state_;
     size_t binding_;
+    ggml_cgraph * native_graph_ = nullptr;
     bool active_ = false;
 };
 

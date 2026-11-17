@@ -184,7 +184,7 @@ and `.disk_expert_read_threads` aliases remain accepted.
 For CPU-layer placement, use the shared `moe_cpu_expert_layers` key.
 Supplying both a canonical key and its alias is an error, even with equal values.
 CPU counts select the first N MoE ordinals, skipping dense-only backbone layers.
-CPU-selected layers override `moe_cpu_share` and retain bounded CPU caches in
+CPU-selected layers override hybrid placement policies and retain bounded CPU caches in
 staged mode. Pinning is accepted but inactive without staging.
 
 | Option | Type / values | Default | Description |
@@ -194,7 +194,6 @@ staged mode. Pinning is accepted but inactive without staging.
 | `moe_expert_cache_size` | `int` | `8` | Resident expert slots per routed layer with disk_experts. Must cover the model's experts per token and cannot exceed its expert count. Declared range: minimum 1. |
 | `moe_disk_expert_read_threads` | `int` | `4` | Host workers for staging GGUF expert ranges when disk_experts is true and pin_experts is false. Parallel reads require OpenMP or Apple dispatch. Declared range: minimum 1, maximum 64. |
 | `moe_cpu_expert_layers` | `int` | `0` | First N routed MoE layers on CPU; dense-only layers do not count. |
-| `moe_cpu_share` | `float` | `0` | CPU share of eligible staged GPU misses, 0–1; requires `moe_disk_experts=true`. CPU-selected layers take precedence. |
 | `nemotron_transcribe.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Native preserves mixed packaged tensor types. Changing this may greatly increase model memory. |
 | `nemotron_transcribe.max_context` | `int` | `73728` | Combined text, audio and output context, bounded by backbone positions. Matches native SALM serving default. Declared range: minimum 1. |
 | `nemotron_transcribe.prefill_batch_size` | `int` | `64` | Text/audio rows per decoder prefill graph. Declared range: minimum 1, maximum 2048. |
