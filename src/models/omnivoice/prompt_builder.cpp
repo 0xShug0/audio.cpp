@@ -542,6 +542,22 @@ private:
     std::vector<uint32_t> breakpoints_;
 
     double char_weight(uint32_t codepoint) const {
+        // Classical Latin long vowels count twice as much as plain letters.
+        // For decomposed text, the combining macron adds the extra weight to
+        // the base vowel, which has already counted once.
+        switch (codepoint) {
+            case 0x0100: case 0x0101: // Ā ā
+            case 0x0112: case 0x0113: // Ē ē
+            case 0x012A: case 0x012B: // Ī ī
+            case 0x014C: case 0x014D: // Ō ō
+            case 0x016A: case 0x016B: // Ū ū
+            case 0x0232: case 0x0233: // Ȳ ȳ
+                return weights_.at("latin") * 2.0;
+            case 0x0304: // combining macron (NFD)
+                return weights_.at("latin");
+            default:
+                break;
+        }
         if ((codepoint >= 'A' && codepoint <= 'Z') || (codepoint >= 'a' && codepoint <= 'z')) {
             return weights_.at("latin");
         }
