@@ -356,8 +356,7 @@ runtime::TaskResult VoxCPM1SessionBase::run_offline_request(const runtime::TaskR
       release_guard(this, release_runtime_memory);
 
   const auto wall_start = Clock::now();
-  // Traditional -> Simplified conversion (OpenCC TSCharacters) unless language is Cantonese/Yue.
-  // Mirrors audio8_tts fix: keep Traditional only for yue/cantonese/zh-HK/zh-MO.
+  // Apply the shared language-aware Chinese-script normalization policy.
   const auto language = extract_request_language(request);
   auto maybe_convert = [&](std::string_view text) -> std::string {
     return engine::text::maybe_convert_traditional_to_simplified_opt(text, language);

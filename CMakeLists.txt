@@ -4607,6 +4607,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(text_normalization_test tests/unittests/test_text_normalization.cpp)
         add_test(NAME text_normalization_test COMMAND text_normalization_test)
 
+        add_engine_unittest(chinese_variant_test tests/unittests/test_chinese_variant.cpp)
+        add_test(NAME chinese_variant_test COMMAND chinese_variant_test)
+
         if (crisperwhisper IN_LIST AUDIOCPP_LINKED_MODELS)
             add_engine_unittest(crisperwhisper_transcript_alignment_test
                 tests/unittests/test_crisperwhisper_transcript_alignment.cpp)

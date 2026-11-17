@@ -111,7 +111,7 @@
       {
         "name": "language",
         "type": "string",
-        "description": "Language hint for Chinese-script normalization; Cantonese/yue preserves Traditional characters. Inherits structured transcript or voice language when provided.",
+        "description": "Language hint for Chinese-script normalization. Mandarin converts Traditional to Simplified; Cantonese/yue and explicit non-Chinese languages preserve text. Auto preserves text containing kana; kanji-only Japanese requires ja. Inherits structured transcript or voice language when provided.",
         "required": false
       }
     ],

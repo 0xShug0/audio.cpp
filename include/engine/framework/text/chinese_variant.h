@@ -21,21 +21,20 @@ bool contains_traditional_characters(std::string_view text);
 // throws std::runtime_error (label: "chinese variant text").
 std::string convert_traditional_to_simplified(std::string_view text);
 
-// If `language` is Cantonese/Yue, returns text unchanged.
-// Otherwise converts Traditional -> Simplified.
-// Empty / "auto" / "zh" etc. are treated as non-Cantonese (convert).
+// Convert Traditional -> Simplified for Mandarin/Chinese language hints.
+// Preserve Cantonese and explicit non-Chinese languages. With no language or
+// "auto"/"none", preserve text containing kana; otherwise convert as before.
+// Kanji-only Japanese needs an explicit Japanese language hint.
 std::string maybe_convert_traditional_to_simplified(
     std::string_view text,
     std::string_view language);
 
-// Helper for optional language: std::nullopt / empty means convert.
+// Missing language uses the same auto-detection policy as an empty hint.
 inline std::string maybe_convert_traditional_to_simplified_opt(
     std::string_view text,
     const std::optional<std::string> & language) {
-    if (!language.has_value() || language->empty()) {
-        return convert_traditional_to_simplified(text);
-    }
-    return maybe_convert_traditional_to_simplified(text, std::string_view(*language));
+    return maybe_convert_traditional_to_simplified(
+        text, language ? std::string_view(*language) : std::string_view());
 }
 
 }  // namespace engine::text
