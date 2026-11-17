@@ -2,6 +2,7 @@
 #include "engine/models/pocket_tts_small/assets.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/audio/chunking.h"
 #include "engine/framework/core/attention_fallback.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
@@ -498,10 +499,22 @@ Session::Session(
       text_conditioner_(make_text_config(*manifest_)),
       voice_conditioner_(make_flow_config(*manifest_, runtime_config_)),
       acoustic_model_(make_flow_config(*manifest_, runtime_config_)),
-      audio_decoder_(manifest_->model_config.decoder, manifest_->model_config.fade_in_samples),
+      audio_decoder_(execution_context(), manifest_->model_config.decoder, weights_->mimi_decoder,
+          {runtime_config_.mimi_conv_graph_context_bytes, runtime_config_.mimi_transformer_graph_context_bytes,
+           runtime_config_.mimi_tail_graph_context_bytes, runtime_config_.mimi_chunk_frames,
+           runtime_config_.mimi_chunk_frames, runtime_config_.mimi_stage2_chunk_frames, "pocket_tts_small.mimi"}),
       cached_voice_states_(resolve_voice_state_cache_slots(this->options())),
       prompt_capacity_controller_(runtime_config_.prompt_mode),
       generation_capacity_controller_(runtime_config_.generation_mode) {
+    if (weights_->host.emb_mean.size() != static_cast<size_t>(audio_decoder_.config().latent_size) ||
+        weights_->host.emb_std.size() != weights_->host.emb_mean.size()) {
+        throw std::runtime_error("PocketTTS latent normalization stats must match Mimi latent_size");
+    }
+    const int fade_samples = manifest_->model_config.fade_in_samples;
+    if (fade_samples > 0) {
+        decoder_fade_in_ = audio::make_linear_fade_window(2 * fade_samples, fade_samples);
+        decoder_fade_in_.resize(static_cast<size_t>(fade_samples));
+    }
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning) {
         throw std::runtime_error("PocketTTS supports TTS and voice cloning");
@@ -906,11 +919,13 @@ std::vector<runtime::TaskResult> Session::run_batch(const std::vector<runtime::T
         for (size_t slot = 0; slot < indices.size(); ++slot) {
             decode_ms += debug::measure_ms([&]() {
                 const auto & acoustic = acoustics[slot];
-                auto audio = audio_decoder_.decode(execution_context().backend(), options().backend.threads,
-                    *manifest_, *weights_, acoustic.latents, acoustic.generated_steps,
-                    runtime_config_.mimi_conv_graph_context_bytes, runtime_config_.mimi_transformer_graph_context_bytes,
-                    runtime_config_.mimi_tail_graph_context_bytes, runtime_config_.mimi_chunk_frames,
-                    runtime_config_.mimi_stage2_chunk_frames, runtime_config_.mimi_use_full_sequence_path);
+                auto latents = acoustic.latents;
+                const size_t channels = weights_->host.emb_mean.size();
+                for (size_t i = 0; i < latents.size(); ++i) {
+                    latents[i] = latents[i] * weights_->host.emb_std[i % channels] + weights_->host.emb_mean[i % channels];
+                }
+                auto audio = audio_decoder_.decode(latents, acoustic.generated_steps, runtime_config_.mimi_use_full_sequence_path);
+                for (size_t i = 0; i < std::min(audio.size(), decoder_fade_in_.size()); ++i) audio[i] *= decoder_fade_in_[i];
                 auto & output = results[indices[slot]].audio_output->samples;
                 output.insert(output.end(), audio.begin(), audio.end());
             });
@@ -944,7 +959,8 @@ void Session::start_stream(const runtime::TaskRequest & request) {
     const auto voice_plan = resolve_voice_conditioning_plan(model_dir_, stream_request_);
     stream_voice_state_ = resolve_prepared_voice_state(voice_plan);
     stream_merged_audio_ = runtime::AudioBuffer{manifest_->model_config.sample_rate, 1, {}};
-    audio_decoder_.reset_streaming_state();
+    audio_decoder_.reset_streaming();
+    first_decoder_chunk_ = true;
     stream_started_at_ = std::chrono::steady_clock::now();
     stream_started_ = true;
     trace_text_chunking("pocket_tts_small.streaming.", stream_request_, stream_text_chunks_.size());
@@ -965,15 +981,15 @@ std::optional<runtime::StreamEvent> Session::next_stream_event() {
             stream_acoustic_state_.reset();
             continue;
         }
-        auto audio = audio_decoder_.decode_streaming_step(
-            execution_context().backend(),
-            options().backend.threads,
-            *manifest_,
-            *weights_,
-            acoustic_step->next_latent,
-            runtime_config_.mimi_conv_graph_context_bytes,
-            runtime_config_.mimi_transformer_graph_context_bytes,
-            runtime_config_.mimi_tail_graph_context_bytes);
+        auto & latent = acoustic_step->next_latent;
+        for (size_t i = 0; i < latent.size(); ++i) {
+            latent[i] = latent[i] * weights_->host.emb_std[i] + weights_->host.emb_mean[i];
+        }
+        auto audio = audio_decoder_.decode_streaming(latent);
+        if (first_decoder_chunk_ && !audio.empty()) {
+            for (size_t i = 0; i < std::min(audio.size(), decoder_fade_in_.size()); ++i) audio[i] *= decoder_fade_in_[i];
+            first_decoder_chunk_ = false;
+        }
         runtime::AudioBuffer chunk{
             manifest_->model_config.sample_rate,
             1,
@@ -1014,7 +1030,8 @@ void Session::reset() {
     stream_text_chunks_.clear();
     stream_text_chunk_index_ = 0;
     stream_acoustic_state_.reset();
-    audio_decoder_.reset_streaming_state();
+    audio_decoder_.reset_streaming();
+    first_decoder_chunk_ = true;
     stream_merged_audio_ = {};
     stream_audio_chunk_index_ = 0;
     stream_started_ = false;
@@ -1073,7 +1090,8 @@ bool Session::start_next_stream_text_chunk() {
         capacities.generation_capacity,
         runtime_config_.flow_weights_view_context_bytes,
         runtime_config_.flow_step_graph_context_bytes);
-    audio_decoder_.reset_streaming_state();
+    audio_decoder_.reset_streaming();
+    first_decoder_chunk_ = true;
     stream_acoustic_state_ = acoustic_model_.start_stream(
         acoustic_runtime,
         *manifest_,
@@ -1187,19 +1205,14 @@ GenerationResult Session::generate(const GenerationRequest & request) {
         });
         std::vector<float> chunk_audio;
         audio_decode_ms += engine::debug::measure_ms([&]() {
-            chunk_audio = audio_decoder_.decode(
-                execution_context().backend(),
-                options().backend.threads,
-                manifest,
-                *weights_,
-                acoustic.latents,
-                acoustic.generated_steps,
-                runtime_config_.mimi_conv_graph_context_bytes,
-                runtime_config_.mimi_transformer_graph_context_bytes,
-                runtime_config_.mimi_tail_graph_context_bytes,
-                runtime_config_.mimi_chunk_frames,
-                runtime_config_.mimi_stage2_chunk_frames,
+            auto & latents = acoustic.latents;
+            const size_t channels = weights_->host.emb_mean.size();
+            for (size_t i = 0; i < latents.size(); ++i) {
+                latents[i] = latents[i] * weights_->host.emb_std[i % channels] + weights_->host.emb_mean[i % channels];
+            }
+            chunk_audio = audio_decoder_.decode(latents, acoustic.generated_steps,
                 runtime_config_.mimi_use_full_sequence_path);
+            for (size_t i = 0; i < std::min(chunk_audio.size(), decoder_fade_in_.size()); ++i) chunk_audio[i] *= decoder_fade_in_[i];
         });
         audio.insert(audio.end(), chunk_audio.begin(), chunk_audio.end());
     }

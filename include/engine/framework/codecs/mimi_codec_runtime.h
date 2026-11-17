@@ -10,6 +10,7 @@
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
+#include "engine/framework/modules/transformers/transformer_blocks.h"
 #include "engine/framework/runtime/session.h"
 
 #include "ggml-backend.h"
@@ -20,7 +21,67 @@
 #include <string>
 #include <vector>
 
+namespace engine::core { class ExecutionContext; }
+
 namespace engine::codecs {
+
+struct MimiLatentDecoderConfig {
+    int64_t latent_size = 0;
+    int64_t hidden_size = 0;
+    int64_t num_heads = 0;
+    int64_t intermediate_size = 0;
+    int64_t transformer_layers = 0;
+    int64_t encoder_upsample_stride = 0;
+    int64_t context = 0;
+    std::vector<int64_t> stage_strides;
+    modules::GeluApproximation gelu_approximation = modules::GeluApproximation::ExactErf;
+};
+
+struct MimiLatentDecoderWeights {
+    // Keeps all borrowed tensor headers and backend buffers alive.
+    std::shared_ptr<core::BackendWeightStore> store;
+    std::vector<modules::TransformerEncoderBlockWeights> transformer_layers;
+    core::TensorValue quantizer_output_proj_weight;
+    core::TensorValue encoder_upsample_weight;
+    SEANetDecoderWeights seanet;
+};
+
+struct MimiLatentDecoderExecutionConfig {
+    size_t conv_graph_context_bytes = 16 * 1024 * 1024;
+    size_t transformer_graph_context_bytes = 32 * 1024 * 1024;
+    size_t tail_graph_context_bytes = 16 * 1024 * 1024;
+    // Latent frames per bounded offline block (last block is zero padded).
+    int64_t offline_block_frames = 1;
+    // Transformer-output frames per host full-sequence tail block.
+    int64_t tail_chunk_frames = 16;
+    // Input frames per final SEANet stage block in the bounded host tail.
+    int64_t final_stage_chunk_frames = 480;
+    std::string log_prefix = "mimi";
+};
+
+// Serial, session-owned runtime. ExecutionContext must outlive this object.
+// Inputs are denormalized, frame-major continuous latents; outputs are mono PCM.
+// Offline calls never modify streaming state. Reset before changing stream block size.
+class MimiLatentDecoderRuntime {
+public:
+    MimiLatentDecoderRuntime(const core::ExecutionContext & execution,
+        MimiLatentDecoderConfig config, MimiLatentDecoderWeights weights,
+        MimiLatentDecoderExecutionConfig settings = {});
+    ~MimiLatentDecoderRuntime();
+    MimiLatentDecoderRuntime(const MimiLatentDecoderRuntime &) = delete;
+    MimiLatentDecoderRuntime & operator=(const MimiLatentDecoderRuntime &) = delete;
+
+    const MimiLatentDecoderConfig & config() const noexcept;
+    std::vector<float> decode(const std::vector<float> & latents, int64_t frames, bool full_sequence);
+    std::vector<float> decode_streaming(const std::vector<float> & latents);
+    void reset_streaming();
+    void clear_runtime_cache();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
 
 struct MimiCodecConfig {
     int sample_rate = 24000;

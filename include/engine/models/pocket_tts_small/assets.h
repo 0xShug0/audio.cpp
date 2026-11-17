@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/models/pocket_tts_small/mimi_decoder.h"
+#include "engine/framework/codecs/mimi_codec_runtime.h"
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
@@ -111,7 +111,7 @@ struct ModelConfig {
     int min_eos_steps = 0;
     int fade_in_samples = 0;
     std::vector<std::pair<std::string, std::string>> replace_characters;
-    MimiDecoderConfig decoder;
+    codecs::MimiLatentDecoderConfig decoder;
 
 };
 
@@ -186,33 +186,16 @@ struct MimiEncoderWeights {
     modules::StreamingConv1dWeights downsample_conv;
 };
 
-struct MimiDecoderWeights {
-    std::vector<TransformerLayerWeights> transformer_layers;
-    core::TensorValue quantizer_output_proj_weight;
-    core::TensorValue encoder_upsample_weight;
-    modules::StreamingConv1dWeights input_projection;
-    modules::ConvTranspose1dWeights stage0_upsample;
-    std::vector<float> stage0_upsample_bias_values;
-    ResidualBlockWeights stage0_block;
-    modules::ConvTranspose1dWeights stage1_upsample;
-    std::vector<float> stage1_upsample_bias_values;
-    ResidualBlockWeights stage1_block;
-    modules::ConvTranspose1dWeights stage2_upsample;
-    std::vector<float> stage2_upsample_bias_values;
-    ResidualBlockWeights stage2_block;
-    modules::StreamingConv1dWeights output_projection;
-};
 
 struct BackendWeights {
     core::BackendType backend_type = core::BackendType::Cpu;
     bool has_mimi_encoder = true;
     std::shared_ptr<core::BackendWeightStore> flow_store;
     std::shared_ptr<core::BackendWeightStore> mimi_encoder_store;
-    std::shared_ptr<core::BackendWeightStore> mimi_decoder_store;
     HostWeights host;
     FlowWeights flow;
     MimiEncoderWeights mimi_encoder;
-    MimiDecoderWeights mimi_decoder;
+    codecs::MimiLatentDecoderWeights mimi_decoder;
 };
 
 std::shared_ptr<const BackendWeights> load_pocket_tts_small_backend_weights(

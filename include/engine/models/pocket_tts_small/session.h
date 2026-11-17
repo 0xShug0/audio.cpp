@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/models/pocket_tts_small/flow_lm.h"
-#include "engine/models/pocket_tts_small/mimi_decoder.h"
+#include "engine/framework/codecs/mimi_codec_runtime.h"
 #include "engine/models/pocket_tts_small/conditioning.h"
 
 #include "engine/framework/assets/tensor_source.h"
@@ -108,7 +108,9 @@ private:
     TextConditioner text_conditioner_;
     VoiceConditioner voice_conditioner_;
     AcousticModel acoustic_model_;
-    AudioDecoder audio_decoder_;
+    codecs::MimiLatentDecoderRuntime audio_decoder_;
+    std::vector<float> decoder_fade_in_;
+    bool first_decoder_chunk_ = true;
     runtime::CacheSlots<std::string, FlowLMState> cached_voice_states_;
     GenerationRequest prepared_session_request_;
     runtime::GraphCapacityController prompt_capacity_controller_;
