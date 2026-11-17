@@ -23,6 +23,9 @@ struct MoePlacementCosts {
     std::vector<CpuBucket> cpu;
     double cpu_scale = 1;
     double gpu_ms_per_row = 0;
+    double mixed_gpu_ms_per_row = 0;
+    double output_copy_ms = 0;
+    double input_submit_ms = 0;
     double upload_ms_per_expert = 0;
     double mixed_upload_ms_per_expert = 0;
     double serial_ms = 0;
@@ -31,9 +34,9 @@ struct MoePlacementCosts {
 
 class MoePlacementPlan {
 public:
-    explicit MoePlacementPlan(size_t experts);
+    explicit MoePlacementPlan(size_t experts, core::MoeCpuShareState * history = nullptr);
     void update(const std::vector<int32_t> & ids, const std::vector<int32_t> & resident,
-        uint64_t cache_epoch, float cpu_share);
+        uint64_t cache_epoch, float cpu_share, int64_t tokens = 1);
     // Distinct logical experts; assignments retain original output-lane indices.
     void update_cost_aware(const std::vector<int32_t> & ids, const std::vector<int32_t> & resident,
         const std::vector<std::vector<int32_t>> & assignments,
@@ -43,8 +46,8 @@ public:
 private:
     std::vector<int32_t> misses_;
     std::vector<uint8_t> seen_;
-    uint64_t epoch_ = 0;
-    double cpu_carry_ = 0;
+    core::MoeCpuShareState owned_history_;
+    core::MoeCpuShareState * history_;
 };
 
 struct StagedMoeConfig {
@@ -102,7 +105,9 @@ public:
     // Region execution separates placement from execution. A native GPU region
     // is eligible only when its complete route fits the bounded expert bank.
     bool prepare_route(size_t layer, const std::vector<int32_t> & ids);
-    uint64_t run_prepared(size_t layer);
+    // Execute the prepared route and its borrowed output-copy graph. The graph
+    // owner retains metadata/storage; cost observations include its completion.
+    ggml_status run_prepared(size_t layer, ggml_cgraph * output_copy, double input_submit_ms);
     ggml_status run_native(size_t layer, ggml_cgraph * graph, ggml_tensor * bank_ids);
     size_t workspace_bytes() const;
     Statistics statistics() const;

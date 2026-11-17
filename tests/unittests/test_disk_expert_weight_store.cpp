@@ -193,7 +193,8 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
         reference.allocate();
         std::unique_ptr<core::PreparedGraph> host_reference;
         ggml_tensor * host_hidden = nullptr, * host_ids = nullptr, * host_lanes = nullptr;
-        if (quantized && execution.moe_policy().cpu_share > 0) {
+        const bool cost_aware = execution.moe_policy().placement == core::MoePlacement::CostAware;
+        if (quantized && (execution.moe_policy().cpu_share > 0 || cost_aware)) {
             host_reference = std::make_unique<core::PreparedGraph>(host,
                 core::PreparedGraphConfig{"test.moe.auto.cpu_reference", 4 * 1024 * 1024, 256, 16 * ggml_tensor_overhead()});
             auto * persistent = host_reference->persistent_build_context().ggml;
@@ -242,14 +243,20 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
                 const auto cpu = core::read_tensor_f32(host_lanes), gpu = core::read_tensor_f32(gpu_lanes);
                 const float share = execution.moe_policy().cpu_share;
                 // This fixture has assignment counts 4:2, 7:2, 5:1, 6:1.
-                // At half share the cold misses send {7,6} to CPU, then {6},
+                // Reference CRF ties send the cold misses {4,5} to CPU, then {4},
                 // then none as the remaining misses become GPU hits. At full
                 // share all misses stay on CPU until the explicit warm-hit run.
+                const auto resident = store.cached_experts(group);
                 const auto cpu_id = [&](int32_t id) {
+                    // This route fits the bank. Hits stay on GPU; every GPU
+                    // miss is cached. The remaining logical IDs ran on CPU.
+                    // Infer dynamic placement from independent cache residency,
+                    // not the planner or its timing estimates.
+                    if (cost_aware) return std::find(resident.begin(), resident.end(), id) == resident.end();
                     if (request >= 6) return false;
                     if (share == 1) return true;
                     if (share != 0.5F) throw std::runtime_error("quantized fixture requires share 0, 0.5 or 1");
-                    return request < 4 ? id == 7 || id == 6 : request == 4 && id == 6;
+                    return request < 4 ? id == 4 || id == 5 : request == 4 && id == 4;
                 };
                 const std::vector<float> scales{0.3F, 0.7F, 0.6F, 0.4F, 0.2F, 0.8F};
                 for (size_t token = 0; token < 3; ++token) for (size_t channel = 0; channel < 256; ++channel) {
@@ -269,8 +276,12 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
             }
             const auto gpu_loads = store.statistics().expert_loads - before;
             const auto wanted = execution.moe_policy().cpu_share == 0 ? 4 : execution.moe_policy().cpu_share == 1 ? 0 : 2;
-            if (maximum > 1e-4F || (request < 4 && gpu_loads != static_cast<uint64_t>(wanted)) ||
-                (request >= 6 && gpu_loads != 0))
+            // Fixed-share cases retain their exact placement assertions. The
+            // separate cost-aware F32 case has timing-dependent placement:
+            // every cold miss must execute once on either CPU or GPU, while
+            // explicitly resident hits must never upload again.
+            if (maximum > 1e-4F || (request < 4 && !cost_aware && gpu_loads != static_cast<uint64_t>(wanted)) ||
+                (cost_aware && gpu_loads > 4) || (request >= 6 && gpu_loads != 0))
                 throw std::runtime_error("automatic hybrid changed expert math or uploaded CPU misses: " + std::to_string(maximum) + " request=" + std::to_string(request) + " loads=" + std::to_string(gpu_loads));
             std::cout << "automatic_moe quantized=" << quantized << " relu=" << relu << " rounded=" << rounded << " request=" << request
                       << " max_abs=" << maximum << " gpu_loads=" << gpu_loads << '\n';
@@ -279,6 +290,91 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
         owner.release();
         if (owner.build_context().region_owner) throw std::runtime_error("released graph retained context ownership");
     }
+}
+
+void cost_aware_boundary_ownership(engine::core::ExecutionContext & execution,
+    engine::core::ExecutionContext & host, engine::core::DiskExpertWeightStore & store,
+    size_t group, const std::vector<engine::core::TensorValue> & weights) {
+    namespace core = engine::core;
+    namespace modules = engine::modules;
+    constexpr int64_t width = 256, tokens = 3, selected = 2;
+    constexpr float sentinel = 41.25F;
+    const std::vector<int32_t> ids{0, 1, 2, 3, 4, 5};
+    // Persistent guard outlives the runtime. The tail below is destroyed first,
+    // while its borrowed runtime output and guard storage are still alive.
+    core::PreparedGraph guard_owner(execution,
+        {"test.moe.boundary.guard", 1024 * 1024, 32, 16 * ggml_tensor_overhead()});
+    auto * guard = ggml_new_tensor_3d(guard_owner.persistent_build_context().ggml,
+        GGML_TYPE_F32, width, selected, tokens);
+    ggml_set_input(guard);
+    guard_owner.allocate_persistent();
+    auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
+    modules::StagedMoeConfig config;
+    config.hidden_size = width;
+    config.tokens = tokens;
+    config.selected = selected;
+    config.experts = weights[0].tensor->ne[2];
+    config.cache_slots = 4;
+    config.rows_per_expert = {1, 2, 3};
+    modules::StagedMoeRuntime runtime(execution, config, workspace, &host);
+    modules::MoeModule module(modules::MoeExpertConfig{});
+    const auto layer = runtime.add_layer(module,
+        {store.tensor(group, 1).tensor, store.tensor(group, 0).tensor, store.tensor(group, 2).tensor},
+        store, group);
+    core::PreparedGraph tail(execution, {"test.moe.boundary.tail", 1024 * 1024, 32});
+    ggml_build_forward_expand(tail.graph(), ggml_cpy(tail.build_context().ggml, runtime.output(), guard));
+    workspace->prepare();
+    runtime.prepare();
+    tail.allocate();
+    const std::vector<float> hidden(static_cast<size_t>(width * tokens), .125F);
+    ggml_backend_tensor_set(runtime.hidden_input(), hidden.data(), 0, hidden.size() * sizeof(float));
+    const std::vector<float> sentinels(static_cast<size_t>(width * selected * tokens), sentinel);
+    ggml_backend_tensor_set(guard, sentinels.data(), 0, sentinels.size() * sizeof(float));
+    size_t region_calls = 0, direct_calls = 0;
+    uint64_t region_cpu = 0, direct_cpu = 0;
+    // Warm region calibration four times, alternate direct/region four times,
+    // then finish four direct calls. Both APIs see cold and preseeded caches.
+    for (int invocation = 0; invocation < 16; ++invocation) {
+        const bool region = invocation < 4 || (invocation < 12 && invocation % 2 == 1);
+        const auto request = region ? region_calls : direct_calls;
+        store.invalidate_cache();
+        if (request % 2 != 0) store.stage(group, {0, 1, 8, 9});
+        const auto before = runtime.statistics();
+        if (region) {
+            if (runtime.prepare_route(layer, ids))
+                throw std::runtime_error("boundary ownership route unexpectedly admitted native execution");
+            // Hidden input is already populated; this fixture submits no input
+            // copy. Keep the output tail alive even after its invocation ends.
+            if (runtime.run_prepared(layer, tail.graph(), 0.0) != GGML_STATUS_SUCCESS)
+                throw std::runtime_error("boundary ownership region execution failed");
+        } else {
+            runtime.run(layer, ids);
+        }
+        // Readback completes an asynchronous tail before inspecting or replacing
+        // the guard. No dangling graph/storage is needed to expose a stale tail.
+        const auto actual = core::read_tensor_f32(guard);
+        const auto after = runtime.statistics();
+        if (region) {
+            if (!std::all_of(actual.begin(), actual.end(), [](float value) { return std::isfinite(value); }) ||
+                actual == sentinels)
+                throw std::runtime_error("boundary ownership tail did not populate the guard");
+            region_cpu += after.cpu_assignments - before.cpu_assignments;
+            ++region_calls;
+            ggml_backend_tensor_set(guard, sentinels.data(), 0, sentinels.size() * sizeof(float));
+        } else {
+            if (actual != sentinels)
+                throw std::runtime_error("direct MoE execution reused a borrowed region output tail");
+            const auto cpu = after.cpu_assignments - before.cpu_assignments;
+            if (direct_calls < 3 && (cpu != 0 || after.gpu_assignments - before.gpu_assignments != ids.size()))
+                throw std::runtime_error("direct MoE execution reused region GPU calibration");
+            direct_cpu += cpu;
+            ++direct_calls;
+        }
+    }
+    if (region_cpu == 0 || direct_cpu == 0)
+        throw std::runtime_error("boundary ownership fixture did not exercise both APIs' CPU probes");
+    std::cout << "cost_aware_boundary_ownership region_calls=" << region_calls << " direct_calls=" << direct_calls
+              << " region_cpu_assignments=" << region_cpu << " direct_cpu_assignments=" << direct_cpu << '\n';
 }
 
 // Two quantized expert regions share one allocation and full/body entry points.
@@ -363,7 +459,7 @@ void automatic_hybrid_lifecycle(engine::core::ExecutionContext & execution, engi
             std::vector<float> result(h * tokens, 0);
             for (size_t row = 0; row < rows; ++row) {
                 const bool cpu_lane = mixed ? share == 1 && ids[row] == 0 :
-                    share == 1 || ids[row] == base + 2 || ids[row] == base + 3;
+                    share == 1 || ids[row] == base || ids[row] == base + 1;
                 const auto & source = cpu_lane ? cpu : gpu;
                 for (size_t channel = 0; channel < h; ++channel)
                     result[(row / selected) * h + channel] += source[row * h + channel] * scales[row];
@@ -517,8 +613,8 @@ void native_hybrid_lanes(engine::core::ExecutionContext & execution, engine::cor
         const auto gpu = core::read_tensor_f32(reference_outputs[0]), cpu = core::read_tensor_f32(reference_outputs[1]);
         float maximum = 0, native_difference = 0;
         for (size_t i = 0; i < actual.size(); ++i) {
-            // Stable descending assignment counts give GPU {4,5}, CPU {7,6}.
-            const bool on_cpu = logical[i / hidden_size] == 7 || logical[i / hidden_size] == 6;
+            // Reference cold-CRF ties give GPU {7,6}, CPU {4,5}.
+            const bool on_cpu = logical[i / hidden_size] == 4 || logical[i / hidden_size] == 5;
             maximum = std::max(maximum, std::abs(actual[i] - (on_cpu ? cpu[i] : gpu[i])));
             native_difference = std::max(native_difference, std::abs(cpu[i] - gpu[i]));
             if (!std::isfinite(actual[i])) throw std::runtime_error("native hybrid expert output is nonfinite");
@@ -772,7 +868,7 @@ void moe_policy_resolution() {
     engine::modules::MoePlacementCosts estimates;
     // Independent linear fixture, expressed as complete prepared-bucket costs.
     estimates.cpu = {{1, 2}, {2, 4}, {4, 8}, {8, 16}, {16, 32}, {32, 64}, {64, 128}, {102, 204}};
-    estimates.gpu_ms_per_row = .01; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 10; estimates.serial_ms = .1;
+    estimates.gpu_ms_per_row = estimates.mixed_gpu_ms_per_row = .01; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 10; estimates.serial_ms = .1;
     placement.update_cost_aware({1, 0, 2}, {2, -1}, assignments, estimates, cost_config);
     if (placement.cpu != std::vector<int32_t>{0} || placement.gpu != std::vector<int32_t>({2, 1}))
         throw std::runtime_error("cost policy did not minimize the predicted completion time");
@@ -780,7 +876,7 @@ void moe_policy_resolution() {
     cost_config.cache_slots = 1; cost_config.tokens = 101;
     assignments[0].resize(100); assignments[1].resize(1); assignments[2].clear();
     estimates.cpu = {{1, .01}, {2, .02}, {4, .04}, {8, .08}, {16, .16}, {32, .32}, {64, .64}, {101, 1.01}};
-    estimates.gpu_ms_per_row = 1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 1; estimates.serial_ms = 5;
+    estimates.gpu_ms_per_row = estimates.mixed_gpu_ms_per_row = 1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 1; estimates.serial_ms = 5;
     placement.update_cost_aware({0, 1}, {0}, assignments, estimates, cost_config);
     if (!placement.cpu.empty() || placement.gpu != std::vector<int32_t>({0, 1}))
         throw std::runtime_error("cost policy hid serial transfer/merge behind GPU work");
@@ -803,7 +899,7 @@ void moe_policy_resolution() {
     cost_config.cache_slots = 8; cost_config.tokens = 1; cost_config.selected = 2;
     assignments[0].resize(1); assignments[1].resize(1);
     estimates = {}; estimates.cpu = {{1, .1}, {2, .2}};
-    estimates.gpu_ms_per_row = 1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = .1; estimates.serial_ms = .5;
+    estimates.gpu_ms_per_row = estimates.mixed_gpu_ms_per_row = 1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = .1; estimates.serial_ms = .5;
     placement.update_cost_aware({0, 1}, {0, -1, -1, -1, -1, -1, -1, -1}, assignments, estimates, cost_config);
     if (!placement.cpu.empty()) throw std::runtime_error("cost policy assumed unused GPU slots do not execute");
     // Native=0.2+1ms beats mixed=0.5+max(0.1,8)=8.5ms.
@@ -814,13 +910,13 @@ void moe_policy_resolution() {
     // GPU=2.2ms beats CPU=3.2ms; extrapolating 1ms/row incorrectly chooses CPU.
     cost_config.cache_slots = 1;
     estimates = {}; estimates.cpu = {{1, 3}, {2, 2}};
-    estimates.gpu_ms_per_row = .1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 2; estimates.serial_ms = .2;
+    estimates.gpu_ms_per_row = estimates.mixed_gpu_ms_per_row = .1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 2; estimates.serial_ms = .2;
     placement.update_cost_aware({0, 1}, {0}, assignments, estimates, cost_config);
     if (!placement.cpu.empty()) throw std::runtime_error("cost policy extrapolated CPU latency from another bucket");
     // A complete batch can win even though its first individual move loses:
     // GPU=4ms; one CPU expert=4.2ms; two CPU experts=0.5ms.
     cost_config.cache_slots = 2;
-    estimates.cpu = {{1, 4}, {2, .3}}; estimates.gpu_ms_per_row = 1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 1;
+    estimates.cpu = {{1, 4}, {2, .3}}; estimates.gpu_ms_per_row = estimates.mixed_gpu_ms_per_row = 1; estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 1;
     placement.update_cost_aware({0, 1}, {-1, -1}, assignments, estimates, cost_config);
     if (placement.cpu != std::vector<int32_t>({1, 0}) || !placement.gpu.empty())
         throw std::runtime_error("cost policy rejected a profitable batch after an unprofitable individual move");
@@ -833,10 +929,87 @@ void moe_policy_resolution() {
     // Pure uploads cost 1ms/expert, but overlap with CPU costs 10ms/expert.
     // GPU-only=2.02ms; moving one expert=10.03ms, moving both=100.01ms.
     estimates = {}; estimates.cpu = {{1, .1}, {2, 100}};
-    estimates.gpu_ms_per_row = .01; estimates.native_gpu_ms_per_row = .01;
+    estimates.gpu_ms_per_row = estimates.mixed_gpu_ms_per_row = .01; estimates.native_gpu_ms_per_row = .01;
     estimates.upload_ms_per_expert = 1; estimates.mixed_upload_ms_per_expert = 10; estimates.serial_ms = .01;
     placement.update_cost_aware({0, 1}, {-1, -1}, assignments, estimates, cost_config);
     if (!placement.cpu.empty()) throw std::runtime_error("mixed upload costs contaminated the native GPU alternative");
+    // CPU overlap slows the staged GPU branch, even when transfer costs match.
+    // Pure native=2.02ms; one CPU miss leaves GPU>=20ms; all-CPU=100.01ms.
+    estimates.mixed_upload_ms_per_expert = 1;
+    estimates.mixed_gpu_ms_per_row = 10;
+    placement.update_cost_aware({0, 1}, {-1, -1}, assignments, estimates, cost_config);
+    if (!placement.cpu.empty()) throw std::runtime_error("mixed GPU timing contaminated the pure GPU alternative");
+    // Independent padded-work counterexample: H is resident, A has 64 rows,
+    // B has one. GPU-only=3.30ms, CPU B=2.38ms, CPU A+B=100.10ms,
+    // but CPU A alone=1.12ms. Smallest-miss prefixes miss this assignment.
+    cost_config.tokens = 66; cost_config.selected = 1; cost_config.cache_slots = 2;
+    cost_config.rows_per_expert = {1, 2, 4, 8, 16, 32, 64};
+    assignments[0].resize(64); assignments[1].resize(1); assignments[2].resize(1);
+    estimates = {};
+    estimates.cpu = {{1, .2}, {2, .3}, {4, .4}, {8, .5}, {16, .6}, {32, .8}, {64, 1}, {128, 100}};
+    estimates.gpu_ms_per_row = estimates.mixed_gpu_ms_per_row = .01;
+    estimates.upload_ms_per_expert = estimates.mixed_upload_ms_per_expert = 1;
+    estimates.serial_ms = .1;
+    placement.update_cost_aware({0, 1, 2}, {2, -1}, assignments, estimates, cost_config);
+    if (placement.cpu != std::vector<int32_t>{0} || placement.gpu != std::vector<int32_t>({2, 1}))
+        throw std::runtime_error("cost policy missed the lower-cost individual expert assignment");
+    // Independent pinned fixed-point contract: three DISTINCT misses per
+    // full-cache call. Hits consume no credit; epoch changes restart it.
+    for (float share : {0.0F, .1F, .25F, .5F, .9F, std::nextafter(1.0F, 0.0F), 1.0F}) {
+        engine::modules::MoePlacementPlan fractional(12);
+        for (uint64_t epoch : {uint64_t{10}, uint64_t{11}}) {
+            uint64_t cpu_count = 0;
+            for (uint64_t call = 1; call <= 256; ++call) {
+                fractional.update({0, 1, 0, 2, 1}, {10, 11}, epoch, share);
+                cpu_count += fractional.cpu.size();
+                const auto numerator = static_cast<uint64_t>(std::lround(share * 65536.0F));
+                const auto expected = numerator * 3 * call / 65536;
+                auto partition = fractional.cpu;
+                partition.insert(partition.end(), fractional.gpu.begin(), fractional.gpu.end());
+                std::sort(partition.begin(), partition.end());
+                if (cpu_count != expected || partition != std::vector<int32_t>({0, 1, 2}))
+                    throw std::runtime_error("fractional CPU share violated distinct-miss count or partition contract");
+                if (call % 7 == 0) {
+                    fractional.update({10, 11, 10}, {10, 11}, epoch, share);
+                    if (!fractional.cpu.empty()) throw std::runtime_error("resident hits consumed CPU share");
+                }
+            }
+        }
+    }
+    // Explicit source-derived cases: full-cache ties, cold eligibility and
+    // fixed-point rounding at the upper endpoint. No production oracle reuse.
+    {
+        engine::modules::MoePlacementPlan ties(12);
+        ties.update({0, 1}, {2, 3}, 0, .5F);
+        if (ties.cpu != std::vector<int32_t>{0} || ties.gpu != std::vector<int32_t>{1})
+            throw std::runtime_error("CPU share did not choose the reference cold-CRF tie");
+        engine::modules::MoePlacementPlan partial(12);
+        partial.update({0, 1}, {2, -1}, 0, 1);
+        if (!partial.cpu.empty() || partial.gpu != std::vector<int32_t>({0, 1}))
+            throw std::runtime_error("CPU share started before the cache was full");
+        engine::modules::MoePlacementPlan upper(12);
+        upper.update({0}, {2, 3}, 0, std::nextafter(1.0F, 0.0F));
+        if (upper.cpu != std::vector<int32_t>{0})
+            throw std::runtime_error("CPU share did not use the reference fixed-point rounding");
+        core::MoeCpuShareState history;
+        history.frequency.assign(12, 0);
+        history.last_use.assign(12, -1);
+        engine::modules::MoePlacementPlan first_shape(12, &history), second_shape(12, &history);
+        first_shape.update({0}, {2, 3}, 0, .5F);
+        second_shape.update({1}, {0, 3}, 0, .5F);
+        if (!first_shape.cpu.empty() || second_shape.cpu != std::vector<int32_t>{1})
+            throw std::runtime_error("logical-layer CPU credit was lost across graph shapes");
+        second_shape.update({1}, {0, 3}, 1, .5F);
+        if (!second_shape.cpu.empty()) throw std::runtime_error("cache reset retained CPU credit");
+        // Owned-state value copies must not retain a pointer into their source.
+        engine::modules::MoePlacementPlan owned(12);
+        owned.update({0}, {2, 3}, 0, .5F);
+        auto copied = owned;
+        copied.update({1}, {2, 3}, 0, .5F);
+        owned.update({1}, {2, 3}, 0, .5F);
+        if (copied.cpu != std::vector<int32_t>{1} || owned.cpu != copied.cpu)
+            throw std::runtime_error("copied CPU-share history aliased its original owner");
+    }
     core::MoeExecutionPolicy explicit_layers;
     explicit_layers.cpu_layers = {3, 1};
     if (core::resolve_moe_execution_policy({}, "test", explicit_layers, 4).cpu_layers != explicit_layers.cpu_layers)
@@ -1027,6 +1200,20 @@ void moe_resource_matrix(const std::filesystem::path & path, engine::core::Execu
         if (cycle == 0 && staged && core::is_host_backend(execution.backend())) {
             auto selected = core::parse_moe_policy({{"moe_policy", "placement_cost_aware"}});
             core::ExecutionContext cpu_only(execution.config(), selected);
+            engine::modules::StagedMoeConfig direct_config;
+            direct_config.hidden_size = 256;
+            direct_config.tokens = 1;
+            direct_config.selected = 2;
+            direct_config.experts = 12;
+            direct_config.cache_slots = 4;
+            direct_config.rows_per_expert = {1};
+            bool direct_rejected = false;
+            try {
+                engine::modules::StagedMoeRuntime direct(cpu_only, direct_config,
+                    std::make_shared<core::GraphWorkspace>(cpu_only.backend()));
+            } catch (const std::invalid_argument &) { direct_rejected = true; }
+            if (!direct_rejected)
+                throw std::runtime_error("direct staged runtime accepted CPU-only cost-aware placement");
             core::BackendWeightStore empty(cpu_only.backend(), cpu_only.backend_type(), "test.moe.unsupported", 1024 * 1024);
             core::MoeExecutionPolicy unsupported;
             unsupported.residency = core::MoeExpertResidency::Staged;
@@ -1530,6 +1717,74 @@ int main(int argc, char ** argv) {
                 continue;
             }
             if (type == assets::TensorStorageType::F32 && !pin_experts && read_threads == 1) {
+                // Independent cache specification: minimize (aged frequency,
+                // last access, slot ordinal) among non-required resident entries.
+                // Singleton logical accesses avoid unspecified multi-miss order.
+                for (const size_t capacity : {size_t{2}, size_t{5}}) {
+                    for (const uint64_t decay : {uint64_t{1}, uint64_t{3}, uint64_t{128}}) {
+                        core::DiskExpertWeightStore checked(gguf);
+                        checked.use_frequency_cache(decay);
+                        const auto checked_group = checked.add_group(names, execution.backend(), capacity);
+                        std::vector<int32_t> slots(capacity, -1);
+                        std::vector<uint64_t> last(capacity, 0), counts(12, 0);
+                        uint64_t accesses = 0, tick = 0, expected_loads = 0;
+                        for (uint64_t step = 0; step < 320; ++step) {
+                            if (step == 159) {
+                                checked.invalidate_cache();
+                                std::fill(slots.begin(), slots.end(), -1);
+                                std::fill(counts.begin(), counts.end(), 0);
+                                accesses = 0;
+                            }
+                            const int32_t id = step % 5 < 3 ? 0 : static_cast<int32_t>((step * 7 + step / 11) % 12);
+                            ++tick;
+                            if (++accesses % decay == 0)
+                                for (auto & count : counts) count /= 2;
+                            ++counts[id];
+                            const auto hit = std::find(slots.begin(), slots.end(), id);
+                            size_t selected_slot;
+                            if (hit != slots.end()) selected_slot = static_cast<size_t>(hit - slots.begin());
+                            else {
+                                const auto vacant = std::find(slots.begin(), slots.end(), -1);
+                                if (vacant != slots.end()) selected_slot = static_cast<size_t>(vacant - slots.begin());
+                                else {
+                                    std::vector<std::tuple<uint64_t, uint64_t, size_t>> candidates;
+                                    for (size_t slot = 0; slot < capacity; ++slot)
+                                        candidates.emplace_back(counts[slots[slot]], last[slot], slot);
+                                    selected_slot = std::get<2>(*std::min_element(candidates.begin(), candidates.end()));
+                                }
+                                slots[selected_slot] = id;
+                                ++expected_loads;
+                            }
+                            last[selected_slot] = tick;
+                            const auto mapped = checked.stage(checked_group, {id, id, id});
+                            if (checked.cached_experts(checked_group) != slots ||
+                                mapped != std::vector<int32_t>(3, static_cast<int32_t>(selected_slot)) ||
+                                checked.statistics().expert_loads != expected_loads)
+                                throw std::runtime_error("frequency cache disagrees with independent aged-LFU specification");
+                        }
+                    }
+                }
+                // With decay every access, all non-required counts are zero:
+                // aged LFU must reduce exactly to LRU for arbitrary batches.
+                {
+                    core::DiskExpertWeightStore lru(gguf), immediate_decay(gguf);
+                    immediate_decay.use_frequency_cache(1);
+                    const auto lru_group = lru.add_group(names, execution.backend(), 5);
+                    const auto decay_group = immediate_decay.add_group(names, execution.backend(), 5);
+                    for (int step = 0; step < 96; ++step) {
+                        if (step == 47) { lru.invalidate_cache(); immediate_decay.invalidate_cache(); }
+                        std::vector<int32_t> route;
+                        for (int i = 0; i < 1 + step % 4; ++i) {
+                            const int32_t id = (step * 3 + i * 7 + step / 9) % 12;
+                            route.push_back(id);
+                            route.push_back(id);
+                        }
+                        if (lru.stage(lru_group, route) != immediate_decay.stage(decay_group, route) ||
+                            lru.cached_experts(lru_group) != immediate_decay.cached_experts(decay_group) ||
+                            lru.statistics().expert_loads != immediate_decay.statistics().expert_loads)
+                            throw std::runtime_error("decay-one frequency cache differs from LRU negative control");
+                    }
+                }
                 core::DiskExpertWeightStore frequency(gguf);
                 frequency.use_frequency_cache(4);
                 const auto hot_group = frequency.add_group(names, execution.backend(), 2);
@@ -1665,7 +1920,7 @@ int main(int argc, char ** argv) {
             disk.stage(other_group, {0, 1, 2, 3});
             placement_plan.update({0, 4, 4, 5}, disk.cached_experts(other_group), disk.cache_epoch(), 0.5F);
             const auto & placement = placement_plan;
-            if (placement.gpu != std::vector<int32_t>({0, 4}) || placement.cpu != std::vector<int32_t>({5}))
+            if (placement.gpu != std::vector<int32_t>({0, 5}) || placement.cpu != std::vector<int32_t>({4}))
                 throw std::runtime_error("hybrid placement changed hits or counted duplicate misses");
             size_t cpu_misses = 0;
             for (int repeat = 0; repeat < 10; ++repeat) {
@@ -1736,6 +1991,16 @@ int main(int argc, char ** argv) {
             if (!pin_experts && read_threads == 1) {
                 if (host && type == assets::TensorStorageType::F32) dense_hybrid_oracle(execution, disk, group, entries);
                 if (host) automatic_hybrid_graph(execution, *host, disk, group, full);
+                if (host) {
+                    core::ExecutionContext cost_execution(config,
+                        core::parse_moe_policy({{"moe_policy", "placement_cost_aware"}}));
+                    core::DiskExpertWeightStore cost_store(gguf, false, 1, host.get());
+                    const auto cost_group = cost_store.add_group(names, cost_execution.backend(), 4);
+                    automatic_hybrid_graph(cost_execution, *host, cost_store, cost_group, full);
+                    if (type == assets::TensorStorageType::F32)
+                        cost_aware_boundary_ownership(cost_execution, *host, cost_store, cost_group, full);
+                }
+
                 if (host && type == assets::TensorStorageType::Q4_K)
                     automatic_hybrid_lifecycle(execution, *host, disk, group, full);
                 if (host && execution.moe_policy().cpu_share == 0.5F && type == assets::TensorStorageType::Q4_K) native_hybrid_lanes(execution, *host, disk, group, full);

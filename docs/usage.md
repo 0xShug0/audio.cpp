@@ -303,7 +303,7 @@ Policy selection uses ordinary session options, not backend options or new CLI f
 |---|---|---|
 | `default` | None | Existing placement and LRU caching; no hybrid worker. |
 | `placement_cpu_share` | Required `share`, 0–1 | Existing fractional assignment of eligible GPU-cache misses. |
-| `placement_cost_aware` | Optional positive `cpu_cost_scale`, default 1 | Compare measured CPU bucket latency with warmed GPU computation and expert staging; higher scale discourages CPU placement. GPU executions establish a warmed baseline before CPU candidates are sampled; initialization and capture calls are excluded from throughput estimates. |
+| `placement_cost_aware` | Optional positive `cpu_cost_scale`, default 1 | Compare measured CPU bucket latency with separate GPU-only and CPU-overlapped costs, including serial boundaries. Search small-miss prefixes and individual misses; higher scale discourages CPU placement. |
 | `cache_frequency_aware` | Optional positive integer `decay_steps`, default 128 | Evict by aged cache-access frequency with LRU tie-breaking. Counts halve every N staging calls per layer. |
 
 Unknown names, unknown parameters, parameters without an active policy, and
@@ -321,6 +321,16 @@ CPU/GPU arithmetic can nevertheless differ; validate generated speech and ASR
 outputs before enabling hybrid placement. Gains depend on workload and backend;
 fully resident execution does not benefit from these staged-expert policies.
 Frequency history resets with cache invalidation at independent request boundaries.
+
+These are isolated experimental mechanisms, not complete ports of the reference
+systems. Fixed-share placement uses fixed-point fractional carry and historical
+CRF miss ranking, but does not implement llama.cpp's ClassLRU cache. Cost-aware placement
+uses online batch-cost estimates and a bounded search, rather than Fiddler's
+per-expert decision rule. It first observes GPU execution, then samples unknown
+CPU candidates through real requests; calibration can increase latency and the
+chosen assignment is not guaranteed globally optimal. Frequency caching is
+aged per-layer LFU; it does not implement MoE-Infinity's request-trace predictor,
+cross-layer cache allocation or prefetching.
 
 Recipes use role-scoped options such as
 `--session-option <role>.moe_policy=placement_cost_aware`; workflows and server

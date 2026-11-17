@@ -14,6 +14,7 @@ namespace engine::core {
 
 class ExecutionContext;
 struct MoePolicyConfig;
+struct MoeCpuShareState;
 
 // Session-owned, bounded native-format expert cache. GGUF expert payloads are
 // read by range only after routing, or explicitly pinned in host RAM at load.
@@ -65,6 +66,9 @@ public:
     // Residency inspection does not change eviction order or choose execution.
     const std::vector<int32_t> & cached_experts(size_t group) const;
     uint64_t cache_epoch() const;
+    // Lazily owned logical-layer placement history. Borrowers must be released
+    // before this store, just like borrowers of its native expert banks.
+    MoeCpuShareState & cpu_share_state(size_t group);
     // Stage one bounded group and return cache-slot IDs in the caller's order.
     std::vector<int32_t> stage(size_t group, const std::vector<int32_t> & expert_ids);
     // Invalidate placement at an independent request boundary, retaining all allocations and statistics.

@@ -4,6 +4,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/core/moe_policy.h"
 
 #include <ggml-alloc.h>
 #include <gguf.h>
@@ -51,6 +52,7 @@ public:
         std::vector<uint64_t> last_used;
         std::vector<uint64_t> frequency;
         uint64_t accesses = 0;
+        std::unique_ptr<MoeCpuShareState> cpu_share;
         std::unique_ptr<ggml_context, ContextDeleter> host_context;
         std::vector<ggml_tensor *> host_tensors;
         std::vector<std::unique_ptr<ggml_backend_buffer, BufferDeleter>> host_views;
@@ -439,6 +441,18 @@ const std::vector<int32_t> & DiskExpertWeightStore::cached_experts(size_t group)
 
 uint64_t DiskExpertWeightStore::cache_epoch() const {
     return impl_->cache_epoch;
+}
+
+MoeCpuShareState & DiskExpertWeightStore::cpu_share_state(size_t group) {
+    auto & cache = *impl_->groups.at(group);
+    if (!cache.cpu_share) {
+        auto state = std::make_unique<MoeCpuShareState>();
+        const auto experts = static_cast<size_t>(cache.projections.front().experts);
+        state->frequency.assign(experts, 0);
+        state->last_use.assign(experts, -1);
+        cache.cpu_share = std::move(state);
+    }
+    return *cache.cpu_share;
 }
 
 ggml_tensor * DiskExpertWeightStore::route(ModuleBuildContext & ctx, ggml_tensor * ids, size_t group) const {
