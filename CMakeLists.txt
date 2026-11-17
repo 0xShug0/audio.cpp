@@ -4292,6 +4292,20 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME granite5asr_ctc_timestamps_test COMMAND granite5asr_ctc_timestamps_test)
     endif()
 
+    # granite_speech_2b B1: assets/frontend/lengths only. The B1 sources are
+    # compiled straight into the test (no audiocpp_add_model yet; model
+    # registration/loader/session stay Task D). add_engine_unittest takes a
+    # single source, so the executable is spelled out explicitly.
+    if (ENGINE_BUILD_TESTS)
+        add_executable(granite_speech_2b_b1_units_test
+            tests/granite_speech_2b/test_granite_speech_2b_b1_units.cpp
+            src/community_models/granite_speech_2b/assets.cpp
+            src/community_models/granite_speech_2b/frontend.cpp)
+        target_link_libraries(granite_speech_2b_b1_units_test PRIVATE engine_runtime ggml)
+        target_include_directories(granite_speech_2b_b1_units_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME granite_speech_2b_b1_units_test COMMAND granite_speech_2b_b1_units_test)
+    endif()
+
     if (sense_asr IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(sense_asr_word_timestamps_test tests/sense_asr/test_word_timestamps.cpp)
         target_include_directories(sense_asr_word_timestamps_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
