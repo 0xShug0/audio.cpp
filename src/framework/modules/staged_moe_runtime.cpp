@@ -39,6 +39,8 @@ MoePlacementPlan::MoePlacementPlan(size_t experts, core::MoeCpuShareState * hist
 
 void MoePlacementPlan::update(const std::vector<int32_t> & ids, const std::vector<int32_t> & resident,
     uint64_t cache_epoch, float cpu_share, int64_t tokens) {
+    calibration_probe = false;
+    chosen_prediction.reset();
     if (!std::isfinite(cpu_share) || cpu_share < 0 || cpu_share > 1 || resident.empty() || tokens <= 0)
         throw std::invalid_argument("invalid MoE placement policy");
     for (auto id : ids)
@@ -93,6 +95,8 @@ void MoePlacementPlan::update(const std::vector<int32_t> & ids, const std::vecto
 void MoePlacementPlan::update_cost_aware(const std::vector<int32_t> & ids,
     const std::vector<int32_t> & resident, const std::vector<std::vector<int32_t>> & assignments,
     const MoePlacementCosts & costs, const StagedMoeConfig & config) {
+    calibration_probe = false;
+    chosen_prediction.reset();
     gpu.clear(); cpu.clear(); misses_.clear();
     for (auto id : ids) {
         if (std::find(resident.begin(), resident.end(), id) != resident.end()) gpu.push_back(id);
@@ -103,10 +107,9 @@ void MoePlacementPlan::update_cost_aware(const std::vector<int32_t> & ids,
     // Establish the warmed GPU baseline before probing CPU alternatives.
     // One-use graphs then perform no speculative CPU work; repeated graphs
     // supply their normal direct/capture/replay executions for calibration.
-    if (costs.gpu_ms_per_row == 0 &&
-        (!costs.native_gpu_ms_per_row || *costs.native_gpu_ms_per_row == 0)) return;
-    if (costs.native_gpu_ms_per_row && *costs.native_gpu_ms_per_row == 0 &&
-        costs.gpu_ms_per_row > 0 && gpu.size() <= static_cast<size_t>(config.cache_slots)) return;
+    const bool native_baseline = costs.native_gpu_ms_per_row &&
+        gpu.size() <= static_cast<size_t>(config.cache_slots);
+    if (native_baseline ? *costs.native_gpu_ms_per_row == 0 : costs.gpu_ms_per_row == 0) return;
     const auto gpu_work = [&] {
         size_t work = 0;
         for (size_t first = 0; first < gpu.size(); first += config.cache_slots) {
@@ -121,12 +124,12 @@ void MoePlacementPlan::update_cost_aware(const std::vector<int32_t> & ids,
         return work;
     };
     double best = gpu_work() * costs.gpu_ms_per_row + misses_.size() * costs.upload_ms_per_expert + costs.output_copy_ms + costs.input_submit_ms;
-    if (costs.native_gpu_ms_per_row && *costs.native_gpu_ms_per_row > 0 &&
-        gpu.size() <= static_cast<size_t>(config.cache_slots)) {
+    if (native_baseline) {
         size_t rows = 0;
         for (auto id : gpu) rows += assignments[id].size();
         best = rows * *costs.native_gpu_ms_per_row + misses_.size() * costs.upload_ms_per_expert;
     }
+    const auto gpu_baseline_ms = best;
     size_t best_count = 0;
     int32_t best_single = -1;
     const auto evaluate = [&](size_t rows, int32_t single) {
@@ -137,7 +140,11 @@ void MoePlacementPlan::update_cost_aware(const std::vector<int32_t> & ids,
         // Unknown candidates are measured by executing the requested work once;
         // no extrapolation from a different CPU bucket or GPU context.
         if (bucket->ms == 0 || (!gpu.empty() && costs.mixed_gpu_ms_per_row == 0) ||
-            (gpu_misses && costs.mixed_upload_ms_per_expert == 0)) return false;
+            (gpu_misses && costs.mixed_upload_ms_per_expert == 0)) {
+            calibration_probe = true;
+            chosen_prediction.reset();
+            return false;
+        }
         const double cpu_ms = bucket->ms * costs.cpu_scale;
         const double gpu_ms = gpu_work() * costs.mixed_gpu_ms_per_row +
             gpu_misses * costs.mixed_upload_ms_per_expert;
@@ -146,6 +153,7 @@ void MoePlacementPlan::update_cost_aware(const std::vector<int32_t> & ids,
             best = completion;
             best_count = cpu.size();
             best_single = single;
+            chosen_prediction = ChosenPrediction{bucket->ms, gpu_ms, costs.serial_ms, gpu_baseline_ms};
         }
         return true;
     };
@@ -187,7 +195,7 @@ struct MoeExecutionBoundary {
 
 struct MoeExecutionSample {
     size_t cpu_rows = 0;
-    double input_ms = 0, cpu_ms = 0, merge_ms = 0, handoff_ms = 0;
+    double input_ms = 0, cpu_ms = 0, gpu_branch_ms = 0, merge_ms = 0, handoff_ms = 0;
 };
 
 struct MoeCostModel {
@@ -506,6 +514,25 @@ public:
             debug::timing_log_scalar("framework.moe.gpu_assignments", stats.gpu_assignments);
             debug::timing_log_scalar("framework.moe.cpu_ms", stats.cpu_ms);
         }
+        if (stats.cpu_probe_calls || stats.cpu_chosen_calls) {
+            debug::timing_log_scalar("framework.moe.cpu_probe_calls", stats.cpu_probe_calls);
+            debug::timing_log_scalar("framework.moe.cpu_probe_assignments", stats.cpu_probe_assignments);
+            debug::timing_log_scalar("framework.moe.cpu_probe_ms", stats.cpu_probe_ms);
+            debug::timing_log_scalar("framework.moe.cpu_chosen_calls", stats.cpu_chosen_calls);
+            debug::timing_log_scalar("framework.moe.cpu_chosen_assignments", stats.cpu_chosen_assignments);
+            debug::timing_log_scalar("framework.moe.cpu_chosen_ms", stats.cpu_chosen_ms);
+        }
+        if (stats.cpu_chosen_calls) {
+            debug::timing_log_scalar("framework.moe.chosen_cpu_predicted_ms", stats.chosen_cpu_predicted_ms);
+            debug::timing_log_scalar("framework.moe.chosen_cpu_observed_ms", stats.chosen_cpu_observed_ms);
+            debug::timing_log_scalar("framework.moe.chosen_gpu_branch_predicted_ms", stats.chosen_gpu_branch_predicted_ms);
+            debug::timing_log_scalar("framework.moe.chosen_gpu_branch_observed_ms", stats.chosen_gpu_branch_observed_ms);
+            debug::timing_log_scalar("framework.moe.chosen_serial_predicted_ms", stats.chosen_serial_predicted_ms);
+            debug::timing_log_scalar("framework.moe.chosen_serial_observed_ms", stats.chosen_serial_observed_ms);
+            debug::timing_log_scalar("framework.moe.chosen_score_ms", stats.chosen_score_ms);
+            debug::timing_log_scalar("framework.moe.chosen_observed_ms", stats.chosen_observed_ms);
+            debug::timing_log_scalar("framework.moe.chosen_gpu_baseline_ms", stats.chosen_gpu_baseline_ms);
+        }
         for (auto & layer : layers)
             for (auto * graph : layer.graphs) core::release_backend_graph_resources(execution.backend(), graph, true);
     }
@@ -784,9 +811,32 @@ uint64_t StagedMoeRuntime::Impl::run_cost_aware(Layer & binding, const std::vect
     auto & cost = boundary ? binding.region_cost : binding.cost;
     (void) experts;
     MoeExecutionSample sample;
+    const auto cpu_before = stats.cpu_assignments;
+    const auto cpu_ms_before = stats.cpu_ms;
     if (boundary) sample.input_ms = boundary->input_submit_ms;
     const auto work = run_hybrid(binding, *binding.placement, &sample, boundary);
     if (sample.cpu_rows) {
+        if (binding.placement->calibration_probe) {
+            ++stats.cpu_probe_calls;
+            stats.cpu_probe_assignments += stats.cpu_assignments - cpu_before;
+            stats.cpu_probe_ms += stats.cpu_ms - cpu_ms_before;
+        } else {
+            ++stats.cpu_chosen_calls;
+            stats.cpu_chosen_assignments += stats.cpu_assignments - cpu_before;
+            stats.cpu_chosen_ms += stats.cpu_ms - cpu_ms_before;
+            const auto & predicted = binding.placement->chosen_prediction.value();
+            const auto serial_ms = sample.input_ms + sample.merge_ms + sample.handoff_ms;
+            stats.chosen_cpu_predicted_ms += predicted.cpu_ms;
+            stats.chosen_cpu_observed_ms += sample.cpu_ms;
+            stats.chosen_gpu_branch_predicted_ms += predicted.gpu_branch_ms;
+            stats.chosen_gpu_branch_observed_ms += sample.gpu_branch_ms;
+            stats.chosen_serial_predicted_ms += predicted.serial_ms;
+            stats.chosen_serial_observed_ms += serial_ms;
+            stats.chosen_score_ms += predicted.serial_ms +
+                std::max(predicted.cpu_ms * cost.values.cpu_scale, predicted.gpu_branch_ms);
+            stats.chosen_observed_ms += serial_ms + std::max(sample.cpu_ms, sample.gpu_branch_ms);
+            stats.chosen_gpu_baseline_ms += predicted.gpu_baseline_ms;
+        }
         cost.observe_cpu(sample);
         observed_input_ms += sample.input_ms;
         observed_merge_ms += sample.merge_ms;
@@ -950,6 +1000,9 @@ uint64_t StagedMoeRuntime::Impl::run_hybrid(Layer & binding, const MoePlacementP
         // branches. The residual retains launch/notification and resume work;
         // the GPU branch timer must not absorb launch before its own work.
         sample->handoff_ms = debug::elapsed_ms(parallel_started) - std::max(sample->cpu_ms, gpu_ms);
+        // This is the measured main-thread branch wall interval, including
+        // staging and observer bookkeeping, not an isolated GPU kernel timer.
+        sample->gpu_branch_ms = gpu_ms;
     }
     stats.cpu_assignments += cpu_rows;
     stats.cpu_ms += host.compute_ms;

@@ -491,7 +491,14 @@ void DiskExpertWeightStore::use_frequency_cache(uint64_t decay_steps) {
 
 void DiskExpertWeightStore::configure_cache(const MoePolicyConfig & policy) {
     switch (policy.cache) {
-    case MoeCache::Lru: break;
+    case MoeCache::Lru:
+        if (!impl_->groups.empty())
+            throw std::invalid_argument("cache policy must be configured before registering groups");
+        impl_->prepare_policy = nullptr;
+        impl_->touch_policy = nullptr;
+        impl_->evict_policy = &Impl::evict_lru;
+        impl_->reset_policy = nullptr;
+        break;
     case MoeCache::FrequencyAware: use_frequency_cache(policy.decay_steps); break;
     }
 }

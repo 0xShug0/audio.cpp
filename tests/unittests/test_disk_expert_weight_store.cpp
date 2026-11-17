@@ -151,7 +151,10 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
     namespace core = engine::core;
     namespace modules = engine::modules;
     const bool quantized = weights[0].tensor->type != GGML_TYPE_F32;
-    for (bool relu : {false, true}) for (bool rounded : {false, true}) {
+    for (bool relu : {false, true}) for (bool rounded : {false, true}) for (bool eval_callback : {true, false}) {
+        // One callback-free F32 case exposes routing readback ordering without
+        // multiplying the existing activation/rounding/native-format matrix.
+        if (!eval_callback && (quantized || relu || rounded)) continue;
         modules::MoeExpertConfig math;
         math.fused_swiglu = !relu && !rounded;
         math.activation = relu ? modules::MoeActivation::ReluSquared : modules::MoeActivation::SwiGlu;
@@ -177,7 +180,8 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
         ggml_set_output(output);
         ggml_build_forward_expand(owner.graph(), output);
         auto * scheduler = owner.create_scheduler({execution.backend(), host.backend()});
-        ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, &store);
+        if (eval_callback)
+            ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, &store);
         if (!core::DiskExpertWeightStore::evaluate(bank_ids, true, &store))
             throw std::runtime_error("automatic MoE changed placement discovery before preparation");
         owner.allocate();
@@ -227,6 +231,12 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
             const auto before = store.statistics().expert_loads;
             core::write_tensor_f32(counter, {0.0F});
             core::write_tensor_f32(one, {1.0F});
+            if (!eval_callback) {
+                // route() must overwrite these valid but incorrect logical IDs
+                // on the GPU before the automatic region reads them on host.
+                const std::vector<int32_t> poison{0, 1, 2, 3, 0, 3};
+                ggml_backend_tensor_set(bank_ids, poison.data(), 0, poison.size() * sizeof(int32_t));
+            }
             owner.compute();
             std::vector<int32_t> observed_ids(ids.size());
             ggml_backend_tensor_get(logical.tensor, observed_ids.data(), 0, observed_ids.size() * sizeof(int32_t));
@@ -282,8 +292,8 @@ void automatic_hybrid_graph(engine::core::ExecutionContext & execution, engine::
             // explicitly resident hits must never upload again.
             if (maximum > 1e-4F || (request < 4 && !cost_aware && gpu_loads != static_cast<uint64_t>(wanted)) ||
                 (cost_aware && gpu_loads > 4) || (request >= 6 && gpu_loads != 0))
-                throw std::runtime_error("automatic hybrid changed expert math or uploaded CPU misses: " + std::to_string(maximum) + " request=" + std::to_string(request) + " loads=" + std::to_string(gpu_loads));
-            std::cout << "automatic_moe quantized=" << quantized << " relu=" << relu << " rounded=" << rounded << " request=" << request
+                throw std::runtime_error("automatic hybrid changed expert math or uploaded CPU misses: " + std::to_string(maximum) + " request=" + std::to_string(request) + " loads=" + std::to_string(gpu_loads) + " eval_callback=" + std::to_string(eval_callback));
+            std::cout << "automatic_moe quantized=" << quantized << " relu=" << relu << " rounded=" << rounded << " eval_callback=" << eval_callback << " request=" << request
                       << " max_abs=" << maximum << " gpu_loads=" << gpu_loads << '\n';
         }
         reference.release();
@@ -350,8 +360,10 @@ void cost_aware_boundary_ownership(engine::core::ExecutionContext & execution,
         } else {
             runtime.run(layer, ids);
         }
-        // Readback completes an asynchronous tail before inspecting or replacing
-        // the guard. No dangling graph/storage is needed to expose a stale tail.
+        // Complete the asynchronous tail before observing or replacing its
+        // destination. Raw buffer readback does not synchronize the backend's
+        // compute queue (Vulkan may use a separate transfer queue).
+        ggml_backend_synchronize(execution.backend());
         const auto actual = core::read_tensor_f32(guard);
         const auto after = runtime.statistics();
         if (region) {
@@ -373,6 +385,12 @@ void cost_aware_boundary_ownership(engine::core::ExecutionContext & execution,
     }
     if (region_cpu == 0 || direct_cpu == 0)
         throw std::runtime_error("boundary ownership fixture did not exercise both APIs' CPU probes");
+    const auto totals = runtime.statistics();
+    if (!totals.cpu_probe_calls ||
+        totals.cpu_probe_assignments + totals.cpu_chosen_assignments != totals.cpu_assignments ||
+        totals.cpu_probe_calls + totals.cpu_chosen_calls > region_calls + direct_calls ||
+        std::abs(totals.cpu_probe_ms + totals.cpu_chosen_ms - totals.cpu_ms) > 1e-6)
+        throw std::runtime_error("cost-policy probe accounting lost or duplicated CPU execution");
     std::cout << "cost_aware_boundary_ownership region_calls=" << region_calls << " direct_calls=" << direct_calls
               << " region_cpu_assignments=" << region_cpu << " direct_cpu_assignments=" << direct_cpu << '\n';
 }
@@ -872,6 +890,12 @@ void moe_policy_resolution() {
     placement.update_cost_aware({1, 0, 2}, {2, -1}, assignments, estimates, cost_config);
     if (placement.cpu != std::vector<int32_t>{0} || placement.gpu != std::vector<int32_t>({2, 1}))
         throw std::runtime_error("cost policy did not minimize the predicted completion time");
+    if (!placement.chosen_prediction || placement.calibration_probe ||
+        placement.chosen_prediction->cpu_ms != 2 ||
+        std::abs(placement.chosen_prediction->gpu_branch_ms - 12) > 1e-12 ||
+        std::abs(placement.chosen_prediction->gpu_baseline_ms - 22.02) > 1e-12 ||
+        placement.chosen_prediction->serial_ms != .1)
+        throw std::runtime_error("cost policy recorded a different candidate's prediction");
     // Serial work is outside overlap: GPU=102ms beats 5+max(0.01,100)=105ms.
     cost_config.cache_slots = 1; cost_config.tokens = 101;
     assignments[0].resize(100); assignments[1].resize(1); assignments[2].clear();
@@ -887,7 +911,8 @@ void moe_policy_resolution() {
         throw std::runtime_error("CPU probing preceded the GPU baseline");
     estimates.native_gpu_ms_per_row = .01;
     placement.update_cost_aware({1}, {-1}, assignments, estimates, cost_config);
-    if (placement.cpu != std::vector<int32_t>{1}) throw std::runtime_error("CPU calibration was skipped after the GPU baseline");
+    if (placement.cpu != std::vector<int32_t>{1} || !placement.calibration_probe)
+        throw std::runtime_error("CPU calibration was skipped or misclassified after the GPU baseline");
     estimates.cpu[0].ms = 1; estimates.native_gpu_ms_per_row.reset();
     placement.update_cost_aware({1}, {-1}, assignments, estimates, cost_config);
     if (!placement.cpu.empty() || placement.gpu != std::vector<int32_t>{1})
@@ -922,10 +947,12 @@ void moe_policy_resolution() {
         throw std::runtime_error("cost policy rejected a profitable batch after an unprofitable individual move");
     estimates.cpu[1].ms = 0;
     placement.update_cost_aware({0, 1}, {-1, -1}, assignments, estimates, cost_config);
-    if (placement.cpu.size() != 2) throw std::runtime_error("unsampled candidate bucket was never calibrated");
+    if (placement.cpu.size() != 2 || !placement.calibration_probe)
+        throw std::runtime_error("unsampled candidate bucket was never calibrated");
     estimates.cpu[1].ms = .3; estimates.cpu_scale = 20;
     placement.update_cost_aware({0, 1}, {-1, -1}, assignments, estimates, cost_config);
-    if (!placement.cpu.empty()) throw std::runtime_error("CPU scale did not apply to bucket latency");
+    if (!placement.cpu.empty() || placement.calibration_probe)
+        throw std::runtime_error("CPU scale did not apply or retained stale probe classification");
     // Pure uploads cost 1ms/expert, but overlap with CPU costs 10ms/expert.
     // GPU-only=2.02ms; moving one expert=10.03ms, moving both=100.01ms.
     estimates = {}; estimates.cpu = {{1, .1}, {2, 100}};
@@ -953,6 +980,40 @@ void moe_policy_resolution() {
     placement.update_cost_aware({0, 1, 2}, {2, -1}, assignments, estimates, cost_config);
     if (placement.cpu != std::vector<int32_t>{0} || placement.gpu != std::vector<int32_t>({2, 1}))
         throw std::runtime_error("cost policy missed the lower-cost individual expert assignment");
+    {
+        engine::modules::MoePlacementPlan calibration(8);
+        engine::modules::StagedMoeConfig shape;
+        shape.experts = 8; shape.tokens = 6; shape.selected = 1;
+        shape.cache_slots = 4; shape.rows_per_expert = {1};
+        std::vector<std::vector<int32_t>> routes(8);
+        for (size_t expert = 0; expert < 6; ++expert) routes[expert].push_back(static_cast<int32_t>(expert));
+        engine::modules::MoePlacementCosts known;
+        known.native_gpu_ms_per_row = .01;
+        known.cpu = {{1, 1}, {2, 1}, {4, 1}, {6, 1}};
+        known.upload_ms_per_expert = 1;
+        known.mixed_upload_ms_per_expert = .01;
+        known.mixed_gpu_ms_per_row = .01;
+        // Six experts cannot execute through a four-slot native region.
+        // Its measured rate cannot replace the unsampled staged baseline.
+        calibration.update_cost_aware({0, 1, 2, 3, 4, 5}, {-1, -1, -1, -1}, routes, known, shape);
+        if (!calibration.cpu.empty() || calibration.calibration_probe)
+            throw std::runtime_error("native timing admitted CPU placement without an executable GPU baseline");
+        known.gpu_ms_per_row = .001;
+        calibration.update_cost_aware({0, 1, 2, 3, 4, 5}, {-1, -1, -1, -1}, routes, known, shape);
+        if (calibration.cpu.empty() || calibration.calibration_probe)
+            throw std::runtime_error("calibrated staged baseline prevented or misclassified a profitable CPU placement");
+        if (!calibration.chosen_prediction)
+            throw std::runtime_error("known winning placement lost its prediction");
+        // A known profitable prefix precedes an unknown three-row candidate.
+        // The latter is executed as a probe, not as that earlier prediction.
+        known.cpu[2].ms = 0;
+        calibration.update_cost_aware({0, 1, 2, 3, 4, 5}, {-1, -1, -1, -1}, routes, known, shape);
+        if (!calibration.calibration_probe || calibration.chosen_prediction || calibration.cpu.size() != 3)
+            throw std::runtime_error("forced probe retained an earlier winning prediction");
+        calibration.update({0}, {4, 5, 6, 7}, 0, .5F);
+        if (calibration.calibration_probe || calibration.chosen_prediction)
+            throw std::runtime_error("fixed-share selection retained cost prediction metadata");
+    }
     // Independent pinned fixed-point contract: three DISTINCT misses per
     // full-cache call. Hits consume no credit; epoch changes restart it.
     for (float share : {0.0F, .1F, .25F, .5F, .9F, std::nextafter(1.0F, 0.0F), 1.0F}) {
@@ -1717,6 +1778,125 @@ int main(int argc, char ** argv) {
                 continue;
             }
             if (type == assets::TensorStorageType::F32 && !pin_experts && read_threads == 1) {
+                {
+                    core::DiskExpertWeightStore reselected(gguf);
+                    core::MoePolicyConfig selection;
+                    selection.cache = core::MoeCache::FrequencyAware;
+                    selection.decay_steps = 128;
+                    reselected.configure_cache(selection);
+                    selection.cache = core::MoeCache::Lru;
+                    reselected.configure_cache(selection);
+                    const auto group = reselected.add_group(names, execution.backend(), 2);
+                    reselected.stage(group, {0});
+                    reselected.stage(group, {0});
+                    reselected.stage(group, {0});
+                    reselected.stage(group, {1});
+                    const auto mapped = reselected.stage(group, {2});
+                    // No tied victim: 0 is older but more frequent than 1.
+                    // Selecting LRU must evict 0 regardless of prior policy.
+                    if (mapped != std::vector<int32_t>{0} ||
+                        reselected.cached_experts(group) != std::vector<int32_t>{2, 1})
+                        throw std::runtime_error("LRU reselection retained frequency-cache behavior");
+                    bool rejected = false;
+                    try { reselected.configure_cache(selection); }
+                    catch (const std::invalid_argument &) { rejected = true; }
+                    if (!rejected) throw std::runtime_error("cache policy changed after group registration");
+                }
+                for (const uint64_t decay : {uint64_t{3}, uint64_t{128}}) {
+                    core::DiskExpertWeightStore batches(gguf);
+                    batches.use_frequency_cache(decay);
+                    const std::array<size_t, 2> capacities{2, 5};
+                    const std::array<size_t, 2> groups{
+                        batches.add_group(names, execution.backend(), capacities[0]),
+                        batches.add_group(names, execution.backend(), capacities[1])};
+                    std::array<std::vector<std::vector<int32_t>>, 2> journal;
+                    const auto verify = [&](size_t which, const std::vector<int32_t> & request) {
+                        auto required = request;
+                        std::sort(required.begin(), required.end());
+                        required.erase(std::unique(required.begin(), required.end()), required.end());
+                        journal[which].push_back(required);
+                        // Reconstruct scores independently from logical accesses,
+                        // not the cache's counters, victim loop or miss ordering.
+                        std::array<uint64_t, 12> counts{}, last{};
+                        uint64_t tick = 0;
+                        for (const auto & access : journal[which]) {
+                            if (++tick % decay == 0)
+                                for (auto & count : counts) count /= 2;
+                            for (auto id : access) { ++counts[id]; last[id] = tick; }
+                        }
+                        const auto before = batches.cached_experts(groups[which]);
+                        const auto before_loads = batches.statistics().expert_loads;
+                        size_t misses = 0, empty = 0;
+                        std::vector<std::tuple<uint64_t, uint64_t, size_t>> candidates;
+                        for (auto id : required)
+                            misses += std::find(before.begin(), before.end(), id) == before.end();
+                        for (size_t slot = 0; slot < before.size(); ++slot) {
+                            const auto id = before[slot];
+                            if (id < 0) ++empty;
+                            else if (!std::binary_search(required.begin(), required.end(), id))
+                                candidates.emplace_back(counts[id], last[id], slot);
+                        }
+                        std::sort(candidates.begin(), candidates.end());
+                        const auto evictions = misses > empty ? misses - empty : 0;
+                        auto survivors = before;
+                        for (size_t i = 0; i < evictions; ++i)
+                            survivors[std::get<2>(candidates.at(i))] = -1;
+                        std::vector<int32_t> expected;
+                        for (auto id : survivors) if (id >= 0) expected.push_back(id);
+                        for (auto id : required)
+                            if (std::find(expected.begin(), expected.end(), id) == expected.end()) expected.push_back(id);
+                        std::sort(expected.begin(), expected.end());
+                        const auto mapped = batches.stage(groups[which], request);
+                        const auto after = batches.cached_experts(groups[which]);
+                        std::vector<int32_t> occupied;
+                        for (size_t slot = 0; slot < after.size(); ++slot) {
+                            if (survivors[slot] >= 0 && survivors[slot] != after[slot])
+                                throw std::runtime_error("frequency batch moved or evicted a surviving expert");
+                            if (after[slot] >= 0) occupied.push_back(after[slot]);
+                        }
+                        std::sort(occupied.begin(), occupied.end());
+                        if (occupied != expected || batches.statistics().expert_loads - before_loads != misses ||
+                            mapped.size() != request.size())
+                            throw std::runtime_error("frequency batch disagrees with journal victim specification");
+                        for (size_t i = 0; i < mapped.size(); ++i)
+                            if (mapped[i] < 0 || static_cast<size_t>(mapped[i]) >= after.size() ||
+                                after[mapped[i]] != request[i])
+                                throw std::runtime_error("frequency batch returned the wrong expert slot");
+                        // Check original fixture bytes for every occupied slot,
+                        // including hits and untouched survivors, in all banks.
+                        constexpr size_t bytes = 256 * 256 * sizeof(float);
+                        std::vector<unsigned char> payload(bytes);
+                        for (size_t projection = 0; projection < names.size(); ++projection)
+                            for (size_t slot = 0; slot < after.size(); ++slot) if (after[slot] >= 0) {
+                                ggml_backend_tensor_get(batches.tensor(groups[which], projection).tensor,
+                                    payload.data(), slot * bytes, bytes);
+                                if (std::memcmp(payload.data(), entries[projection].data.data() + after[slot] * bytes, bytes))
+                                    throw std::runtime_error("frequency batch expert payload differs from original fixture");
+                            }
+                    };
+                    // Duplicate multiplicity must not count as repeated use.
+                    verify(0, {0}); verify(0, {0}); verify(0, {0});
+                    verify(0, {1, 1, 1, 1, 1, 1, 1, 1}); verify(0, {2});
+                    for (size_t step = 0; step < 320; ++step) {
+                        if (step == 279) {
+                            const auto epoch = batches.cache_epoch();
+                            const auto before = batches.statistics();
+                            batches.invalidate_cache();
+                            if (batches.cache_epoch() != epoch + 1 ||
+                                batches.statistics().expert_loads != before.expert_loads ||
+                                batches.statistics().buffer_bytes != before.buffer_bytes)
+                                throw std::runtime_error("frequency batch invalidation changed cumulative resources");
+                            for (auto & history : journal) history.clear();
+                        }
+                        const size_t which = step % 2;
+                        std::vector<int32_t> request;
+                        for (size_t i = 0; i < 1 + step % capacities[which]; ++i) {
+                            const auto id = static_cast<int32_t>((step * 7 + i * 5 + step / 13) % 12);
+                            for (size_t duplicate = 0; duplicate <= (step + i) % 5; ++duplicate) request.push_back(id);
+                        }
+                        verify(which, request);
+                    }
+                }
                 // Independent cache specification: minimize (aged frequency,
                 // last access, slot ordinal) among non-required resident entries.
                 // Singleton logical accesses avoid unspecified multi-miss order.

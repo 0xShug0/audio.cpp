@@ -43,6 +43,15 @@ public:
         const MoePlacementCosts & costs, const StagedMoeConfig & config);
     std::vector<int32_t> gpu;
     std::vector<int32_t> cpu;
+    // True only when unknown candidate costs force CPU execution to sample them.
+    bool calibration_probe = false;
+    struct ChosenPrediction {
+        double cpu_ms; // Unscaled submission-to-completion latency.
+        double gpu_branch_ms;
+        double serial_ms;
+        double gpu_baseline_ms;
+    };
+    std::optional<ChosenPrediction> chosen_prediction;
 private:
     std::vector<int32_t> misses_;
     std::vector<uint8_t> seen_;
@@ -72,6 +81,16 @@ public:
         uint64_t cpu_assignments = 0;
         uint64_t gpu_assignments = 0;
         double cpu_ms = 0;
+        uint64_t cpu_probe_calls = 0, cpu_probe_assignments = 0;
+        uint64_t cpu_chosen_calls = 0, cpu_chosen_assignments = 0;
+        double cpu_probe_ms = 0, cpu_chosen_ms = 0;
+        // Chosen cost-policy phases only; CPU latency is unscaled and includes
+        // worker scheduling. GPU branch wall is not isolated kernel time.
+        double chosen_cpu_predicted_ms = 0, chosen_cpu_observed_ms = 0;
+        double chosen_gpu_branch_predicted_ms = 0, chosen_gpu_branch_observed_ms = 0;
+        double chosen_serial_predicted_ms = 0, chosen_serial_observed_ms = 0;
+        double chosen_score_ms = 0, chosen_observed_ms = 0;
+        double chosen_gpu_baseline_ms = 0;
     };
     // Hybrid and staged CPU execution borrow a host context that must outlive this runtime.
     StagedMoeRuntime(const core::ExecutionContext & execution, StagedMoeConfig config,
