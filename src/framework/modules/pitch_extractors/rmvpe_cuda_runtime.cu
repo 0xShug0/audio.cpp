@@ -1,5 +1,5 @@
 #include "rmvpe_cuda_runtime.h"
-#include "ggml-cuda.h"
+#include "engine/framework/core/backend.h"
 #include <cuda_runtime.h>
 #include <stdexcept>
 #include <string>
@@ -87,7 +87,7 @@ void rmvpe_cuda_conv_transpose(ggml_backend_t backend, ggml_tensor * output) {
             x->type!=GGML_TYPE_F32 || output->type!=GGML_TYPE_F32 ||
             !ggml_is_contiguous(w) || !ggml_is_contiguous(x) || !ggml_is_contiguous(output))
         throw std::runtime_error("Native RMVPE transpose convolution requires its contiguous F32 3x3/stride-2 operator");
-    const auto stream=static_cast<cudaStream_t>(ggml_backend_cuda_get_stream(backend));
+    const auto stream=static_cast<cudaStream_t>(core::backend_cuda_stream(backend));
     const auto elements=ggml_nelements(output);
     transpose_conv<<<(elements+255)/256,256,0,stream>>>(
         static_cast<const float *>(x->data),static_cast<const float *>(w->data),
@@ -125,7 +125,7 @@ RmvpeCudaGru::RmvpeCudaGru(ggml_backend_t backend, int device, int frames, int h
             throw std::runtime_error("Native RMVPE recurrence requires contiguous F32 tensors");
     }
     check(cudaSetDevice(device), "RMVPE select device");
-    impl_->stream = static_cast<cudaStream_t>(ggml_backend_cuda_get_stream(backend));
+    impl_->stream = static_cast<cudaStream_t>(core::backend_cuda_stream(backend));
     check(cudaStreamBeginCapture(impl_->stream, cudaStreamCaptureModeThreadLocal), "RMVPE begin capture");
     const float * previous = static_cast<const float *>(state->data);
     for (int i = 0; i < frames; ++i) {
