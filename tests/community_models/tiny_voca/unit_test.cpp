@@ -1,5 +1,7 @@
 #include "engine/community_models/tiny_voca/frontend.h"
+#include "engine/community_models/tiny_voca/session.h"
 #include "engine/community_models/tiny_voca/source_filter.h"
+#include "engine/framework/runtime/errors.h"
 
 #include "dizione/dizione.h"
 #include "dizione/normalize.h"
@@ -270,6 +272,48 @@ void waveform_head() {
     require(rejected, "too little noise is an error");
 }
 
+// English and no language pass; any other language is an invalid request,
+// whether it comes with the text (the command-line tool's --language, the
+// speech endpoint's "language") or as the request option (the server's
+// options.language).
+void language() {
+    using engine::models::tiny_voca::require_english;
+    using engine::runtime::TaskRequest;
+    using engine::runtime::Transcript;
+    auto refused = [](const TaskRequest & request) {
+        try {
+            require_english(request);
+        } catch (const engine::runtime::InvalidRequestError & error) {
+            require(std::string(error.what()).find("English only") != std::string::npos, "the error says what the model reads");
+            return true;
+        }
+        return false;
+    };
+    auto with_text = [](const std::string & name) {
+        TaskRequest request;
+        request.text_input = Transcript{"Hello.", name};
+        return request;
+    };
+    auto with_option = [](const std::string & name) {
+        TaskRequest request;
+        request.text_input = Transcript{"Hello.", ""};
+        request.options["language"] = name;
+        return request;
+    };
+    for (const char * name : {"", "en", "EN", "en-us", "en-US", "en_us", "English", "english"}) {
+        require(!refused(with_text(name)), std::string("accepted with the text: ") + name);
+        require(!refused(with_option(name)), std::string("accepted as an option: ") + name);
+    }
+    for (const char * name : {"ja", "de", "en-gb", "zh", "Japanese", "auto", " "}) {
+        require(refused(with_text(name)), std::string("refused with the text: ") + name);
+        require(refused(with_option(name)), std::string("refused as an option: ") + name);
+    }
+    // The command-line tool sets both; one wrong value is enough.
+    TaskRequest both = with_text("en");
+    both.options["language"] = "ja";
+    require(refused(both), "an English text language does not hide another language in the options");
+}
+
 }  // namespace
 
 int main() {
@@ -279,6 +323,7 @@ int main() {
         sentences();
         dictionary();
         waveform_head();
+        language();
         std::cout << "tiny_voca unit test passed\n";
         return 0;
     } catch (const std::exception & error) {

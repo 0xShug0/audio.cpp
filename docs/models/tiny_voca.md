@@ -38,7 +38,7 @@ The voices are `M2` (male, the default) and `F2` (female).
 | `pitch_shift` | -1.4 to 1.4 | `0.0` | Fine pitch shift, added to `semitone_shift`. The unit is the natural log of the pitch: 0.0578 is one semitone, 0.693 one octave. |
 | `pitch_range` | 0 to 3 | `1.0` | Scales the movement of the pitch around its mean: below 1 is flatter, above 1 livelier. |
 | `seed` | whole number, 0 or more | `0` | Seed of the noise in the voice. The same seed gives the same audio. |
-| `language` | `en`, `en-us`, `English` | `en` | The model reads English only. |
+| `language` | `en`, `en-us`, `English` | `en` | The model reads English only. Any other language is refused: the command-line tool fails with an error and the server answers HTTP 400. The same holds for `--language` and for the `language` field of a server request. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
 | `text_chunk_size` | positive integer | `400` | Maximum Unicode codepoints per chunk. |
 
@@ -121,6 +121,8 @@ of one part in a million moves the pulses a little by the end.
 `tests/community_models/tiny_voca/reference_audio.py` and the
 `tiny_voca_synth_probe` target repeat the audio comparison;
 `reference.py` and `tiny_voca_dizione_probe` repeat the phonemizer one.
+`language_test.py` checks with the real command-line tool and server that
+English is taken and other languages are refused.
 
 ## Speed and memory
 
@@ -143,7 +145,7 @@ session.
 
 ## Limits
 
-- English only.
+- English only. A request that names another language is refused.
 - Offline only: the audio of a request is returned when all of it is made.
 - Tested on the CPU backend. FP32 weights only.
 - A seed gives different noise here than in the Python package, because the

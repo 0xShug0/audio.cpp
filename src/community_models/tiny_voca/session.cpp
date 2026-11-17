@@ -1,6 +1,7 @@
 #include "engine/community_models/tiny_voca/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -24,7 +25,29 @@ constexpr float kPeak = 0.99F;
 // One semitone, in the units of log F0.
 constexpr float kSemitone = 0.057762265F;
 
+// en, en-us and English, in any case, with a hyphen or an underscore.
+bool is_english(const std::string & language) {
+    std::string name;
+    for (const char c : language) {
+        name.push_back(c == '_' ? '-' : (c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c));
+    }
+    return name.empty() || name == "en" || name == "en-us" || name == "english";
+}
+
 }  // namespace
+
+void require_english(const runtime::TaskRequest & request) {
+    std::string language;
+    if (request.text_input.has_value() && !is_english(request.text_input->language)) {
+        language = request.text_input->language;
+    } else if (const auto option = runtime::find_option(request.options, {"language"}); option.has_value() && !is_english(*option)) {
+        language = *option;
+    } else {
+        return;
+    }
+    throw runtime::InvalidRequestError(
+        "tiny-voca reads English only: language '" + language + "' is not supported. Use en, en-us or English, or leave the language out.");
+}
 
 TinyVocaSession::TinyVocaSession(
     runtime::TaskSpec task,
@@ -144,10 +167,7 @@ runtime::TaskResult TinyVocaSession::run(const runtime::TaskRequest & request) {
     if (request.audio_input.has_value()) {
         throw std::runtime_error("tiny-voca does not accept audio input");
     }
-    const std::string & language = request.text_input->language;
-    if (!language.empty() && language != "en" && language != "en-us" && language != "en-US" && language != "English") {
-        throw std::runtime_error("tiny-voca supports English only");
-    }
+    require_english(request);
     runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, kModelName);
     const TinyVocaGenerationOptions options = generation_options(request);
     const int64_t chunk_size = engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
