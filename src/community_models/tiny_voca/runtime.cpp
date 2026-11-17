@@ -226,6 +226,12 @@ struct GraphResources {
 };
 
 struct StackGraph : GraphResources {
+    // What the graph holds while it is kept: its work buffer, its input and the descriptions of its tensors.
+    size_t bytes() const {
+        return ggml_gallocr_get_buffer_size(allocator, 0) + ggml_backend_buffer_get_size(io_buffer) +
+            ggml_get_mem_size(io_context.get()) + ggml_get_mem_size(graph_context.get());
+    }
+
     int64_t length = 0;
     ggml_tensor * input = nullptr;          // [1, length, channels]
     ggml_tensor * positions = nullptr;      // [length]
@@ -381,10 +387,12 @@ struct TinyVocaRuntime::State {
     struct Stack {
         std::string prefix;
         int64_t layers = 0;
+        int id = 0;                         // tells the stacks apart in the graph cache
     };
 
-    State(std::shared_ptr<const TinyVocaAssets> assets_in, core::BackendConfig backend_config)
-        : assets(std::move(assets_in)) {
+    State(std::shared_ptr<const TinyVocaAssets> assets_in, core::BackendConfig backend_config, TinyVocaGraphCacheLimits limits)
+        : assets(std::move(assets_in)),
+          graphs(limits.max_graphs, limits.max_bytes) {
         if (assets == nullptr) {
             throw std::runtime_error("tiny-voca runtime requires assets");
         }
@@ -424,12 +432,9 @@ struct TinyVocaRuntime::State {
             source.require_f32("vocoder.noise.bias", {noise_outputs}));
         source.release_storage();
 
-        encoder.prefix = "encoder";
-        encoder.layers = c.encoder_layers;
-        prosody.prefix = "prosody_stack";
-        prosody.layers = c.prosody_layers;
-        acoustic.prefix = "acoustic_stack";
-        acoustic.layers = c.acoustic_layers;
+        encoder = {"encoder", c.encoder_layers, 0};
+        prosody = {"prosody_stack", c.prosody_layers, 1};
+        acoustic = {"acoustic_stack", c.acoustic_layers, 2};
 
         // Which tokens are phonemes (they always sound) and which are vowels (always voiced).
         phone.assign(static_cast<size_t>(c.vocab_size), false);
@@ -451,19 +456,29 @@ struct TinyVocaRuntime::State {
 
     // Runs one stack over `length` rows of `channels` values, in place.
     //
-    // The graph is made for this length and freed, with its work buffer, before
-    // this returns. Graphs are not kept from one utterance to the next: making
-    // one takes under a millisecond (under one percent of running it), the same
-    // number of frames hardly ever comes back, and the memory a kept graph
-    // holds is what the next step needs.
+    // A graph is made for one length. The session keeps the ones it made last
+    // and runs a kept one again when the same stack meets the same length, so a
+    // sentence that comes back builds nothing. What is kept is bounded in
+    // number and in bytes (see GraphCache). A graph too large to keep is freed,
+    // with its work buffer, before this returns: the next step needs that memory.
     void run(const Stack & stack, std::vector<float> & values, int64_t length, const char * label) {
-        const auto build_start = std::chrono::steady_clock::now();
-        const std::unique_ptr<StackGraph> graph =
-            build_stack_graph(*weights, assets->config, backend.value, stack.prefix, stack.layers, length);
         const std::string name = std::string("tiny_voca.") + label + "_graph";
-        engine::debug::timing_log_scalar(name + ".build_ms", engine::debug::elapsed_ms(build_start));
-        engine::debug::trace_log_scalar(
-            name + ".work_mb", static_cast<double>(ggml_gallocr_get_buffer_size(graph->allocator, 0)) / (1024.0 * 1024.0));
+        const GraphKey key{stack.id, length};
+        StackGraph * graph = graphs.find(key);
+        engine::debug::trace_log_scalar(name + ".cache_hit", graph != nullptr);
+        std::unique_ptr<StackGraph> not_kept;
+        if (graph == nullptr) {
+            const auto build_start = std::chrono::steady_clock::now();
+            not_kept = build_stack_graph(*weights, assets->config, backend.value, stack.prefix, stack.layers, length);
+            engine::debug::timing_log_scalar(name + ".build_ms", engine::debug::elapsed_ms(build_start));
+            graph = not_kept.get();
+            engine::debug::trace_log_scalar(
+                name + ".work_mb", static_cast<double>(ggml_gallocr_get_buffer_size(graph->allocator, 0)) / (1024.0 * 1024.0));
+            not_kept = graphs.put(key, std::move(not_kept), graph->bytes());
+            const GraphCacheStats kept = graphs.stats();
+            engine::debug::trace_log_scalar("tiny_voca.graph_cache.kept_graphs", static_cast<int64_t>(kept.kept_graphs));
+            engine::debug::trace_log_scalar("tiny_voca.graph_cache.kept_mb", static_cast<double>(kept.kept_bytes) / (1024.0 * 1024.0));
+        }
         ggml_backend_tensor_set(graph->input, values.data(), 0, values.size() * sizeof(float));
         const auto status = core::compute_backend_graph(graph->backend, graph->graph, graph->plan, label);
         ggml_backend_synchronize(graph->backend);
@@ -476,6 +491,8 @@ struct TinyVocaRuntime::State {
     std::shared_ptr<const TinyVocaAssets> assets;
     BackendOwner backend;
     std::shared_ptr<const BackendWeights> weights;
+    // After the backend and the weights, so the kept graphs are freed before them.
+    GraphCache<StackGraph> graphs;
     std::vector<float> tokens, stress, voice, frame_voice;
     Linear frame_position, prosody_head, prosody_projection;
     Predictor duration;
@@ -484,10 +501,15 @@ struct TinyVocaRuntime::State {
     std::vector<bool> phone, vowel;
 };
 
-TinyVocaRuntime::TinyVocaRuntime(std::shared_ptr<const TinyVocaAssets> assets, core::BackendConfig backend_config)
-    : state_(std::make_unique<State>(std::move(assets), backend_config)) {}
+TinyVocaRuntime::TinyVocaRuntime(
+    std::shared_ptr<const TinyVocaAssets> assets, core::BackendConfig backend_config, TinyVocaGraphCacheLimits graph_cache)
+    : state_(std::make_unique<State>(std::move(assets), backend_config, graph_cache)) {}
 
 TinyVocaRuntime::~TinyVocaRuntime() = default;
+
+GraphCacheStats TinyVocaRuntime::graph_cache_stats() const {
+    return state_->graphs.stats();
+}
 
 TinyVocaOutput TinyVocaRuntime::synthesize(
     const std::vector<int32_t> & ids,

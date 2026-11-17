@@ -1,5 +1,8 @@
 #include "engine/community_models/tiny_voca/frontend.h"
+#include "engine/community_models/tiny_voca/graph_cache.h"
+#include "engine/community_models/tiny_voca/session.h"
 #include "engine/community_models/tiny_voca/source_filter.h"
+#include "engine/framework/runtime/errors.h"
 
 #include "dizione/dizione.h"
 #include "dizione/normalize.h"
@@ -9,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -270,6 +274,84 @@ void waveform_head() {
     require(rejected, "too little noise is an error");
 }
 
+// The graph cache keeps the graphs used last, within a number and a size.
+void graph_cache() {
+    using engine::models::tiny_voca::GraphCache;
+    using engine::models::tiny_voca::GraphKey;
+    GraphCache<int> cache(3, 100);
+    auto keep = [&](int stack, int64_t length, size_t bytes) {
+        return cache.put(GraphKey{stack, length}, std::make_unique<int>(static_cast<int>(length)), bytes) == nullptr;
+    };
+    require(cache.find({0, 10}) == nullptr, "an empty cache has nothing");
+    require(keep(0, 10, 40), "a graph within the limits is kept");
+    require(keep(1, 10, 40), "the same length of another stack is kept as its own graph");
+    require(cache.find({0, 10}) != nullptr && *cache.find({0, 10}) == 10, "a kept graph is found");
+    require(cache.find({2, 10}) == nullptr && cache.find({0, 11}) == nullptr, "another stack or length is not found");
+    // 40 + 40 + 30 is over 100 bytes: the graph used longest ago goes, which is stack 1.
+    require(keep(0, 20, 30), "a third graph is kept");
+    require(cache.find({1, 10}) == nullptr, "the graph used longest ago went for the size limit");
+    require(cache.find({0, 10}) != nullptr && cache.find({0, 20}) != nullptr, "the graphs used last stay");
+    require_eq(cache.stats().kept_bytes, size_t{70}, "kept bytes");
+    // The number limit: three small graphs fill the cache and a fourth pushes out the oldest, {0, 10}.
+    require(keep(2, 5, 1) && keep(2, 6, 1), "small graphs are kept");
+    require_eq(cache.stats().kept_graphs, size_t{3}, "kept graphs");
+    require(cache.find({0, 10}) == nullptr && cache.find({0, 20}) != nullptr, "the oldest went for the number limit");
+    // A graph larger than the size limit is handed back and nothing is dropped for it.
+    require(!keep(0, 3000, 101), "a graph over the size limit is not kept");
+    require_eq(cache.stats().kept_graphs, size_t{3}, "kept graphs after a refusal");
+    // One graph as large as the limit takes the place of all the others.
+    require(keep(0, 2000, 100), "a graph of the full size is kept");
+    require_eq(cache.stats().kept_graphs, size_t{1}, "kept graphs after a large one");
+    require_eq(cache.stats().kept_bytes, size_t{100}, "kept bytes after a large one");
+    const auto stats = cache.stats();
+    require_eq(stats.hits, uint64_t{5}, "hits");
+    require_eq(stats.misses, uint64_t{5}, "misses");
+    GraphCache<int> off(0, 100);
+    require(off.put({0, 1}, std::make_unique<int>(1), 1) != nullptr && off.find({0, 1}) == nullptr, "no graphs allowed keeps nothing");
+}
+
+// English and no language pass; any other language is an invalid request,
+// whether it comes with the text (the command-line tool's --language, the
+// speech endpoint's "language") or as the request option (the server's
+// options.language).
+void language() {
+    using engine::models::tiny_voca::require_english;
+    using engine::runtime::TaskRequest;
+    using engine::runtime::Transcript;
+    auto refused = [](const TaskRequest & request) {
+        try {
+            require_english(request);
+        } catch (const engine::runtime::InvalidRequestError & error) {
+            require(std::string(error.what()).find("English only") != std::string::npos, "the error says what the model reads");
+            return true;
+        }
+        return false;
+    };
+    auto with_text = [](const std::string & name) {
+        TaskRequest request;
+        request.text_input = Transcript{"Hello.", name};
+        return request;
+    };
+    auto with_option = [](const std::string & name) {
+        TaskRequest request;
+        request.text_input = Transcript{"Hello.", ""};
+        request.options["language"] = name;
+        return request;
+    };
+    for (const char * name : {"", "en", "EN", "en-us", "en-US", "en_us", "English", "english"}) {
+        require(!refused(with_text(name)), std::string("accepted with the text: ") + name);
+        require(!refused(with_option(name)), std::string("accepted as an option: ") + name);
+    }
+    for (const char * name : {"ja", "de", "en-gb", "zh", "Japanese", "auto", " "}) {
+        require(refused(with_text(name)), std::string("refused with the text: ") + name);
+        require(refused(with_option(name)), std::string("refused as an option: ") + name);
+    }
+    // The command-line tool sets both; one wrong value is enough.
+    TaskRequest both = with_text("en");
+    both.options["language"] = "ja";
+    require(refused(both), "an English text language does not hide another language in the options");
+}
+
 }  // namespace
 
 int main() {
@@ -279,6 +361,8 @@ int main() {
         sentences();
         dictionary();
         waveform_head();
+        graph_cache();
+        language();
         std::cout << "tiny_voca unit test passed\n";
         return 0;
     } catch (const std::exception & error) {

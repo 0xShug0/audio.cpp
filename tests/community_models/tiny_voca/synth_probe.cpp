@@ -1,7 +1,11 @@
 // Speaks given phoneme ids with given noise, for the comparison with the
 // Python model (reference_audio.py writes the cases and the Python audio).
 //
-//   tiny_voca_synth_probe MODEL CASES OUT_DIR [THREADS]
+//   tiny_voca_synth_probe MODEL CASES OUT_DIR [THREADS] [CACHE_GRAPHS CACHE_MB]
+//
+// CACHE_GRAPHS and CACHE_MB set the limits of the graph cache (0 graphs turns
+// it off); without them the runtime's own limits hold. The use of the cache is
+// written to stderr at the end.
 //
 // CASES has one utterance per line, fields separated by tabs:
 //   name  voice  speed  pitch_shift  pitch_range  ids  stress  noise_file
@@ -45,7 +49,7 @@ std::vector<int32_t> numbers(const std::string & text) {
 
 int main(int argc, char ** argv) {
     if (argc < 4) {
-        std::cerr << "usage: tiny_voca_synth_probe MODEL CASES OUT_DIR [THREADS]\n";
+        std::cerr << "usage: tiny_voca_synth_probe MODEL CASES OUT_DIR [THREADS] [CACHE_GRAPHS CACHE_MB]\n";
         return 2;
     }
     try {
@@ -53,7 +57,12 @@ int main(int argc, char ** argv) {
         engine::core::BackendConfig backend;
         backend.type = engine::core::BackendType::Cpu;
         backend.threads = argc > 4 ? std::stoi(argv[4]) : 4;
-        TinyVocaRuntime runtime(assets, backend);
+        TinyVocaGraphCacheLimits limits;
+        if (argc > 6) {
+            limits.max_graphs = std::stoul(argv[5]);
+            limits.max_bytes = static_cast<size_t>(std::stod(argv[6]) * 1024.0 * 1024.0);
+        }
+        TinyVocaRuntime runtime(assets, backend, limits);
         std::ifstream cases(argv[2]);
         std::string line;
         while (std::getline(cases, line)) {
@@ -85,6 +94,9 @@ int main(int argc, char ** argv) {
             durations << "\n";
             std::cout << f[0] << "\t" << out.samples.size() << " samples\t" << seconds << " s\n";
         }
+        const GraphCacheStats cache = runtime.graph_cache_stats();
+        std::cerr << "graph cache: " << cache.hits << " hits, " << cache.misses << " misses, " << cache.kept_graphs << " graphs kept, "
+                  << static_cast<double>(cache.kept_bytes) / (1024.0 * 1024.0) << " MB kept\n";
     } catch (const std::exception & error) {
         std::cerr << "tiny_voca_synth_probe: " << error.what() << "\n";
         return 1;

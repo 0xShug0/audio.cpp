@@ -38,7 +38,7 @@ The voices are `M2` (male, the default) and `F2` (female).
 | `pitch_shift` | -1.4 to 1.4 | `0.0` | Fine pitch shift, added to `semitone_shift`. The unit is the natural log of the pitch: 0.0578 is one semitone, 0.693 one octave. |
 | `pitch_range` | 0 to 3 | `1.0` | Scales the movement of the pitch around its mean: below 1 is flatter, above 1 livelier. |
 | `seed` | whole number, 0 or more | `0` | Seed of the noise in the voice. The same seed gives the same audio. |
-| `language` | `en`, `en-us`, `English` | `en` | The model reads English only. |
+| `language` | `en`, `en-us`, `English` | `en` | The model reads English only. Any other language is refused: the command-line tool fails with an error and the server answers HTTP 400. The same holds for `--language` and for the `language` field of a server request. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
 | `text_chunk_size` | positive integer | `400` | Maximum Unicode codepoints per chunk. |
 
@@ -73,10 +73,20 @@ in CMUdict notation: `{HH AH0 L OW1}`.
   framework and can be built by itself.
 
 Memory is kept low on purpose. Attention scores are worked out for blocks of
-rows, so they never take more than 4 MB however long the sentence is. A graph
-is made for each sentence and freed after it (making one takes under a
-millisecond, under one percent of running it), and the waveform head works
-through the audio in blocks.
+rows, so they never take more than 4 MB however long the sentence is. The
+waveform head works through the audio in blocks.
+
+A graph is made for one stack and one length. The session keeps the graphs it
+used last in a bounded cache (the framework's `CacheSlots`) and runs a kept
+graph again when the same stack meets the same length. It keeps 6 graphs at
+most (three for a sentence) and 4 MB of buffers at most, least recently used
+first out. A graph larger than 4 MB, which is a sentence of more than about
+four seconds, is freed after its sentence, because a kept graph of the longest
+sentence would hold 25 MB. So the cache serves short sentences that come
+back; a long sentence builds its graphs each time, which takes under a
+millisecond. With `--log`, the lines
+`tiny_voca.<stack>_graph.cache_hit` show each reuse and
+`tiny_voca.graph_cache.kept_mb` what is kept.
 
 ## Convert the released model
 
@@ -121,6 +131,8 @@ of one part in a million moves the pulses a little by the end.
 `tests/community_models/tiny_voca/reference_audio.py` and the
 `tiny_voca_synth_probe` target repeat the audio comparison;
 `reference.py` and `tiny_voca_dizione_probe` repeat the phonemizer one.
+`language_test.py` checks with the real command-line tool and server that
+English is taken and other languages are refused.
 
 ## Speed and memory
 
@@ -128,22 +140,22 @@ AMD EPYC 4585PX, Linux, CPU backend, FP32, one session, release build.
 
 | Threads | Real-time factor | Peak memory |
 |---:|---:|---:|
-| 1 | 0.042 | 51 MB |
-| 2 | 0.024 | 51 MB |
-| 4 | 0.017 | 50 MB |
+| 1 | 0.043 | 54 MB |
+| 2 | 0.026 | 54 MB |
+| 4 | 0.019 | 54 MB |
 
 120 utterances, 518 seconds of audio, best of five runs on a shared machine
 (8 virtual cores). Memory is the resident set of the
-process: 33 MB once the model is loaded, of which the weights are 17 MB, and
+process: 32 MB once the model is loaded, of which the weights are 17 MB, and
 it does not grow with the number of requests (2,100 utterances in one session
-peak at 52 MB). A single sentence of 14 seconds peaks at 43 MB, and one at
-the model's limit of 32 seconds at 59 MB. The command-line tool peaks at
-36 MB for a short sentence and at 62 MB for three 42-second requests in one
-session.
+peak at 54 MB, of which the kept graphs are up to 4 MB). A single sentence of
+14 seconds peaks at 43 MB, and one at the model's limit of 32 seconds at
+60 MB. The command-line tool peaks at 39 MB for a short sentence and at
+62 to 66 MB for three 42-second requests in one session.
 
 ## Limits
 
-- English only.
+- English only. A request that names another language is refused.
 - Offline only: the audio of a request is returned when all of it is made.
 - Tested on the CPU backend. FP32 weights only.
 - A seed gives different noise here than in the Python package, because the

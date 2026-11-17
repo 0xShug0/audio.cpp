@@ -14,6 +14,12 @@ namespace engine::models::tiny_voca {
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_tiny_voca_loader();
 
+// Turns a request away, with runtime::InvalidRequestError, when it names a
+// language other than English. The language of a request comes with its text
+// (the command-line tool's --language, the speech endpoint's "language") or as
+// the request option "language"; both are looked at. No language is English.
+void require_english(const runtime::TaskRequest & request);
+
 class TinyVocaSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession {
