@@ -17,7 +17,7 @@
 
 namespace engine::modules {
 
-enum class DitModulation { None, PerLayer, SharedTable };
+enum class DitModulation { None, PerLayer, SharedTable, AdaptiveRms };
 enum class DitProjectionType { Native, Bf16Autocast };
 enum class DitQKNorm { None, Heads, Projection };
 enum class DitResidualGate { Linear, SigmoidOneMinus };
@@ -62,6 +62,7 @@ struct DitConfig {
     // Grouped positional convolutions are causal, stride one, with Mish between stages.
     int64_t position_kernel = 0;
     int64_t position_groups = 1;
+    bool additive_frame_conditioning = false;
 };
 
 // Checkpoint naming belongs to binding, not architecture or graph dispatch.
@@ -81,6 +82,7 @@ struct DitLayerNames {
     DitLinearNames modulation;
     std::vector<DitLinearNames> local_embedding;
     std::string modulation_table;
+    DitLinearNames self_scale{}, feed_forward_scale{};
 };
 struct DitWeightNames {
     DitLinearNames input, output, preprocess, postprocess;
@@ -96,6 +98,7 @@ struct DitWeightNames {
     std::array<int, 6> modulation_planes{0, 1, 2, 3, 4, 5};
     int final_shift_plane = 0;
     int final_scale_plane = 1;
+    std::vector<DitLinearNames> input_embedding{}, output_embedding{}, frame_embedding{};
 };
 
 struct DitAttentionWeights {
@@ -108,6 +111,7 @@ struct DitLayerWeights {
     LinearWeights feed_forward_in, feed_forward_out, modulation;
     std::vector<LinearWeights> local_embedding;
     core::TensorValue modulation_table;
+    LinearWeights self_scale{}, feed_forward_scale{};
 };
 struct DitWeights {
     LinearWeights input, output, preprocess, postprocess;
@@ -120,6 +124,7 @@ struct DitWeights {
     std::array<int, 6> modulation_planes{0, 1, 2, 3, 4, 5};
     int final_shift_plane = 0;
     int final_scale_plane = 1;
+    std::vector<LinearWeights> input_embedding{}, output_embedding{}, frame_embedding{};
 };
 
 DitWeights load_dit_weights(core::BackendWeightStore & store,

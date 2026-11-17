@@ -69,6 +69,18 @@ public:
         const core::TensorValue & guidance) const;
 };
 
+// Linear CFG followed by per-example standard-deviation rescaling over [T,C]. Guidance uses
+// negative + guidance * (positive - negative); rescale is in [0,1].
+class FlowSamplerRescaledCfgGraphModule {
+public:
+    explicit FlowSamplerRescaledCfgGraphModule(float rescale);
+    core::TensorValue build(core::ModuleBuildContext & ctx,
+        const core::TensorValue & positive, const core::TensorValue & negative,
+        const core::TensorValue & guidance) const;
+private:
+    float rescale_;
+};
+
 // Shared APG math. Axes use logical rank-three dimensions and exclude batch.
 class FlowSamplerApgGraphModule {
 public:

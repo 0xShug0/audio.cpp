@@ -2751,6 +2751,16 @@ audiocpp_add_model(sopro_tts
         engine::community_models::sopro_tts::make_sopro_tts_loader
 )
 
+audiocpp_add_model(soulx_singer
+    SOURCES
+        src/models/soulx_singer/runtime.cpp
+        src/models/soulx_singer/score.cpp
+        src/models/soulx_singer/session.cpp
+        src/models/soulx_singer/routing.cpp
+    INCLUDES engine/models/soulx_singer/session.h
+    LOADERS engine::models::soulx_singer::make_soulx_singer_loader
+)
+
 audiocpp_add_model(soprano_tts
     SOURCES
         src/community_models/soprano_tts/assets.cpp
@@ -3971,6 +3981,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(m5_tts_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     endif()
 
+    if (ENGINE_BUILD_MODEL_TESTS AND soulx_singer IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(soulx_singer_components tests/soulx_singer/components.cpp app/cli/args.cpp)
+        target_link_libraries(soulx_singer_components PRIVATE engine_runtime ggml)
+        target_include_directories(soulx_singer_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
+
     if (ENGINE_BUILD_MODEL_TESTS AND moss_soundeffect IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(moss_soundeffect_parity tests/moss_soundeffect/validate_reference.cpp)
         target_link_libraries(moss_soundeffect_parity PRIVATE engine_runtime ggml)
@@ -4059,6 +4075,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     add_engine_unittest(dit_runtime_test tests/unittests/test_dit_runtime.cpp)
     add_test(NAME dit_runtime_test COMMAND dit_runtime_test
         --log ${CMAKE_CURRENT_BINARY_DIR}/dit_runtime_test.log)
+    if (ENGINE_BUILD_TESTS)
+        add_engine_unittest(convnext_modules_test tests/unittests/test_convnext_modules.cpp)
+        add_test(NAME convnext_modules_test COMMAND convnext_modules_test
+            --log ${CMAKE_CURRENT_BINARY_DIR}/convnext_modules_test.log)
+    endif()
     add_engine_unittest(prepared_graph_test tests/unittests/test_prepared_graph.cpp)
     target_sources(prepared_graph_test PRIVATE tests/unittests/test_allocation_failure.cpp)
     target_include_directories(prepared_graph_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/ggml/src)

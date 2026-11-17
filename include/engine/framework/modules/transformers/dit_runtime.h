@@ -6,6 +6,7 @@
 #include "engine/framework/sampling/torch_random.h"
 
 #include <memory>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -14,7 +15,7 @@ namespace engine::modules {
 enum class DitTimeFeatures { SinCos, CosSin, Fourier };
 enum class DitSampler { Euler, PingPong };
 enum class DitConditioningCache { Unprojected, ProjectedKV };
-enum class DitGuidance { Linear, AdaptiveProjected };
+enum class DitGuidance { Linear, AdaptiveProjected, Rescaled };
 enum class DitSchedule { Linear, Cosine, Shifted };
 
 struct DitRuntimeConfig {
@@ -35,6 +36,7 @@ struct DitRuntimeConfig {
     DitGuidance guidance = DitGuidance::Linear;
     DitConditioningCache conditioning_cache = DitConditioningCache::ProjectedKV;
     DeviceDenoiserOptimizations optimizations{};
+    float guidance_rescale = 0;
 };
 
 struct DitConditioning {
@@ -48,6 +50,15 @@ struct DitConditioning {
     std::vector<int64_t> frame_channels, vector_channels;
     std::vector<std::vector<float>> frame_features, vector_features;
     std::vector<float> value_mask, latent_mask, local_condition;
+};
+
+// Explicit input composition for a denoiser that sees a fixed reference followed
+// by a sampled target. DitConditioning::frames includes both; sampled latents do not.
+// Reference values use [B,frames,C]; optional valid keys are branch-major [B,T].
+struct DitFixedPrefixConditioning {
+    int64_t frames = 0;
+    std::vector<float> latent;
+    std::vector<uint8_t> key_mask;
 };
 
 struct DitSamplingRequest {
@@ -108,6 +119,7 @@ public:
     DitRuntime & operator=(const DitRuntime &) = delete;
 
     void prepare_conditioning(DitConditioning conditioning);
+    void prepare_conditioning(DitConditioning conditioning, DitFixedPrefixConditioning prefix);
     std::vector<float> predict(const std::vector<float> & latent, float timestep, int64_t branch = 0);
     std::vector<float> predict_cfg(const std::vector<float> & latent, float timestep);
     std::vector<float> sample(const DitSamplingRequest & request);

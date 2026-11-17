@@ -309,6 +309,9 @@ DitWeights load_dit_weights(core::BackendWeightStore & store, const assets::Tens
     const bool autocast = config.projection_type == DitProjectionType::Bf16Autocast;
     const auto scalar_storage = autocast ? assets::TensorStorageType::F32 : storage;
     DitWeights out;
+    for (const auto & name : names.input_embedding) out.input_embedding.push_back(load_projection(store, source, name, storage, 0, autocast, backend));
+    for (const auto & name : names.output_embedding) out.output_embedding.push_back(load_projection(store, source, name, storage, 0, autocast, backend));
+    for (const auto & name : names.frame_embedding) out.frame_embedding.push_back(load_projection(store, source, name, storage, 0, autocast, backend));
     out.input = load_projection(store, source, names.input, storage, 0, autocast, backend);
     out.output = load_projection(store, source, names.output, storage, 0, autocast, backend);
     out.preprocess = load_projection(store, source, names.preprocess, storage, 0, autocast, backend);
@@ -329,6 +332,8 @@ DitWeights load_dit_weights(core::BackendWeightStore & store, const assets::Tens
     }
     for (int64_t layer = 0; layer < config.layers; ++layer) {
         DitLayerWeights w;
+        w.self_scale = load_projection(store, source, names.layer.self_scale, scalar_storage, layer, false, backend);
+        w.feed_forward_scale = load_projection(store, source, names.layer.feed_forward_scale, scalar_storage, layer, false, backend);
         w.self_norm = load_norm(store, source, names.layer.self_norm, layer);
         auto cross_names = names.layer.cross_attention;
         const bool fold_query = autocast && storage == assets::TensorStorageType::Native &&
@@ -444,7 +449,8 @@ TensorValue DitModule::build(core::ModuleBuildContext & ctx, const DitForwardInp
     const auto & c = config_;
     if (weights.layers.size() != static_cast<size_t>(c.layers)) throw std::invalid_argument("DiT layer count mismatch");
     auto input = in.latent;
-    for (const auto & condition : in.frame_conditions) input = ConcatModule({2}).build(ctx, input, condition);
+    if (!c.additive_frame_conditioning)
+        for (const auto & condition : in.frame_conditions) input = ConcatModule({2}).build(ctx, input, condition);
     for (const auto & condition : in.vector_conditions) {
         auto value = core::reshape_tensor(ctx, condition, TensorShape::from_dims({input.shape.dims[0], 1, condition.shape.last_dim()}));
         value = RepeatModule({TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], value.shape.last_dim()})}).build(ctx, value);
@@ -452,7 +458,11 @@ TensorValue DitModule::build(core::ModuleBuildContext & ctx, const DitForwardInp
     }
     input = core::ensure_backend_addressable_layout(ctx, input);
     if (weights.preprocess.weight.valid()) input = AddModule().build(ctx, project(ctx, input, weights.preprocess, c, true), input);
-    auto x = project(ctx, input, weights.input, c, true);
+    auto x = weights.input_embedding.empty() ? project(ctx, input, weights.input, c, true)
+        : mlp(ctx, input, weights.input_embedding, c, true);
+    if (c.additive_frame_conditioning)
+        for (const auto & condition : in.frame_conditions)
+            x = AddModule().build(ctx, x, mlp(ctx, condition, weights.frame_embedding, c, true));
     if (!weights.position_convolutions.empty()) x = position_convolution(ctx, core::ensure_backend_addressable_layout(ctx, x), weights.position_convolutions, c);
     if (weights.memory_tokens.valid()) {
         auto prefix = core::reshape_tensor(ctx, weights.memory_tokens, TensorShape::from_dims({1, c.memory_tokens, c.hidden_size}));
@@ -494,6 +504,10 @@ TensorValue DitModule::build(core::ModuleBuildContext & ctx, const DitForwardInp
         };
         const auto normalized = [&](TensorValue value, const NormWeights & n, int shift, int scale) {
             value = norm(ctx, value, n, c);
+            if (c.modulation == DitModulation::AdaptiveRms) {
+                const auto & scale = shift == 0 ? w.self_scale : w.feed_forward_scale;
+                return MulModule(true).build(ctx, value, project(ctx, time, scale, c, false));
+            }
             if (modulation.valid()) value = AdaptiveLayerNormModule({c.hidden_size, c.norm_eps, AdaptiveLayerNormMode::Affine}).build(ctx, value, {plane(shift), plane(scale)});
             return value;
         };
@@ -563,7 +577,9 @@ TensorValue DitModule::build(core::ModuleBuildContext & ctx, const DitForwardInp
     }
     if (c.memory_tokens) x = SliceModule({1, c.memory_tokens, in.latent.shape.dims[1]}).build(ctx, x);
     if (in.output_tokens > 0) x = SliceModule({1, in.output_start, in.output_tokens}).build(ctx, x);
-    if (weights.final_modulation.weight.valid() || weights.final_modulation_table.valid()) {
+    if (c.modulation == DitModulation::AdaptiveRms) {
+        x = MulModule(true).build(ctx, norm(ctx, x, {}, c), project(ctx, time, weights.final_modulation, c, false));
+    } else if (weights.final_modulation.weight.valid() || weights.final_modulation_table.valid()) {
         auto final = in.modulations.valid()
             ? SliceModule({1, c.layers * 6 * c.hidden_size, 2 * c.hidden_size}).build(ctx, in.modulations)
             : weights.final_modulation.weight.valid() ? project(ctx, SiluModule().build(ctx, time), weights.final_modulation, c, false) : time;
@@ -579,7 +595,8 @@ TensorValue DitModule::build(core::ModuleBuildContext & ctx, const DitForwardInp
         x = AdaptiveLayerNormModule({c.hidden_size, c.norm_eps, AdaptiveLayerNormMode::LayerAffine}).build(ctx, x,
             {SliceModule({1, weights.final_shift_plane, 1}).build(ctx, final), scale});
     }
-    x = project(ctx, x, weights.output, c, true);
+    x = weights.output_embedding.empty() ? project(ctx, x, weights.output, c, true)
+        : mlp(ctx, x, weights.output_embedding, c, true);
     if (weights.postprocess.weight.valid()) x = AddModule().build(ctx, x, project(ctx, x, weights.postprocess, c, true));
     return x;
 }

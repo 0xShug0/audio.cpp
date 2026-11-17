@@ -121,10 +121,171 @@ void check_apg(core::ExecutionContext & execution) {
     }
 }
 
+void check_rescaled_cfg(core::ExecutionContext &execution) {
+    const std::vector<float> positive{.3f, -.7f, .2f, .9f, 1.3f, -2.1f,  .03f, -.07f, .02f, .09f, .13f, -.21f},
+        negative{1.3f, .2f, .7f, -.4f, .1f, .6f, -.2f, .7f, -.4f, .1f, .3f, -.6f};
+    for (const float rescale : {0.f, .75f, 1.f}) {
+        core::PreparedGraph graph(execution, {"test.rescaled_cfg", 1024 * 1024, 128});
+        auto &ctx = graph.build_context();
+        auto p = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, 2, 3}));
+        auto n = core::make_tensor(ctx, GGML_TYPE_F32, p.shape);
+        auto g = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1}));
+        for (auto value : {p, n, g}) {
+            ggml_set_input(value.tensor);
+            ggml_set_output(value.tensor);
+        }
+        const auto output = modules::FlowSamplerRescaledCfgGraphModule(rescale).build(ctx, p, n, g);
+        ggml_set_output(output.tensor);
+        ggml_build_forward_expand(graph.graph(), output.tensor);
+        graph.allocate();
+        core::write_tensor_f32(p, positive);
+        core::write_tensor_f32(n, negative);
+        for (const float gain : {1.f, 4.f, 1.f}) {
+            core::write_tensor_f32(g, {gain});
+            graph.compute();
+            const auto actual = core::read_tensor_f32(output.tensor);
+            for (size_t batch = 0; batch < 2; ++batch) {
+                std::vector<double> guided;
+                double pm = 0, gm = 0;
+                for (size_t j = 0; j < 6; ++j) {
+                    const auto index = batch * 6 + j;
+                    guided.push_back(negative[index] + double(gain) * (positive[index] - negative[index]));
+                    pm += positive[index];
+                    gm += guided.back();
+                }
+                pm /= 6;
+                gm /= 6;
+                double pv = 0, gv = 0;
+                for (size_t j = 0; j < 6; ++j) {
+                    pv += (positive[batch * 6 + j] - pm) * (positive[batch * 6 + j] - pm);
+                    gv += (guided[j] - gm) * (guided[j] - gm);
+                }
+                for (size_t j = 0; j < 6; ++j)
+                    test::require_close(actual[batch * 6 + j],
+                        float(guided[j] * (1 - rescale + rescale * std::sqrt(pv / gv))), 3e-6f,
+                        "rescaled CFG independent per-batch reference");
+            }
+        }
+    }
+}
+
+void check_adaptive_prefix(core::ExecutionContext &execution, const assets::TensorSource &source) {
+    modules::DitRuntimeConfig config;
+    config.label = "test.adaptive_rms";
+    config.graph_metadata_bytes = 2 * 1024 * 1024;
+    config.graph_nodes = 2048;
+    auto &c = config.model;
+    c.input_channels = c.output_channels = 2;
+    c.hidden_size = c.intermediate_size = 4;
+    c.layers = 1;
+    c.time_features = 4;
+    c.modulation = modules::DitModulation::AdaptiveRms;
+    c.normalization = modules::DitNormalization::Rms;
+    c.additive_frame_conditioning = true;
+    c.self_attention = {
+        1, 1, 4, modules::DitQKNorm::None, 1e-6f, {}, modules::ScaledDotProductAttentionLowering::Explicit};
+    modules::DitWeightNames names;
+    names.input_embedding = {{"input_two", ""}};
+    names.frame_embedding = {{"frame_two", ""}};
+    names.output_embedding = {{"output", ""}};
+    names.final_modulation.weight = "input";
+    names.layer.self_scale.weight = names.layer.feed_forward_scale.weight = "input";
+    names.layer.self_attention = {
+        {"self.q", ""}, {"self.k", ""}, {"self.v", ""}, {"self.out", ""}, {}, {}, {}, {}};
+    names.layer.feed_forward_in.weight = "up";
+    names.layer.feed_forward_out.weight = "down";
+    modules::DitConditioning plain;
+    plain.frames = 2;
+    plain.frame_channels = {2};
+    plain.frame_features = {{.7f, -.3f, .2f, .9f}};
+    const std::vector<float> latent{.2f, -.7f, .5f, 1.f};
+    modules::DitRuntime runtime(execution, source, config, names);
+    runtime.prepare_conditioning(plain);
+    const auto expected = runtime.predict(latent, .2f);
+    // Scalar reference: uniform QK attention over independently RMS-normalized rows.
+    const double t[] = {std::cos(.2), std::cos(.002), std::sin(.2), std::sin(.002)};
+    double x[2][4] = {{.2, .5, .7, -.3}, {-.7, 1, .2, .9}}, mean[4] = {};
+    for (const auto &row : x) {
+        double squares = 0;
+        for (double v : row)
+            squares += v * v;
+        for (int j = 0; j < 4; ++j)
+            mean[j] += .5 * row[j] / std::sqrt(squares / 4 + c.norm_eps) * t[j];
+    }
+    for (int row = 0; row < 2; ++row) {
+        double squares = 0;
+        for (int j = 0; j < 4; ++j) {
+            x[row][j] += mean[j];
+            squares += x[row][j] * x[row][j];
+        }
+        for (int j = 0; j < 2; ++j)
+            test::require_close(expected[static_cast<size_t>(j * 2 + row)],
+                                float(x[row][j + 2] / std::sqrt(squares / 4 + c.norm_eps) * t[j + 2]), 2e-5f,
+                                "adaptive RMS independent reference");
+    }
+    auto prefixed = plain;
+    prefixed.frames = 3;
+    modules::DitFixedPrefixConditioning prefix;
+    prefix.frames = 1;
+    prefix.latent = {12, -7};
+    prefixed.frame_features = {{20, -30, .7f, -.3f, .2f, .9f}};
+    prefix.key_mask = {0, 1, 1};
+    runtime.prepare_conditioning(prefixed, prefix);
+    const auto compare = [&](const std::vector<float> &actual) {
+        for (size_t i = 0; i < expected.size(); ++i)
+            test::require_close(actual[i], expected[i], 2e-5f, "masked fixed prefix preserves target result");
+    };
+    compare(runtime.predict(latent, .2f));
+    auto invalid_prefix = prefix;
+    invalid_prefix.latent.pop_back();
+    bool rejected = false;
+    try {
+        runtime.prepare_conditioning(prefixed, invalid_prefix);
+    } catch (const std::invalid_argument &) {
+        rejected = true;
+    }
+    require(rejected, "fixed prefix validates its own latent shape");
+    compare(runtime.predict(latent, .2f));
+    prefix.latent = {-80, 300};
+    prefixed.frame_features[0][0] = -100;
+    runtime.prepare_conditioning(prefixed, prefix);
+    compare(runtime.predict(latent, .2f));
+    prefix.key_mask = {1, 1, 1};
+    runtime.prepare_conditioning(prefixed, prefix);
+    const auto unmasked = runtime.predict(latent, .2f);
+    bool different = false;
+    for (size_t i = 0; i < expected.size(); ++i)
+        different |= std::abs(unmasked[i] - expected[i]) > 1e-4f;
+    require(different, "unmasked prefix must contribute to attention");
+    prefix.key_mask.clear();
+    runtime.prepare_conditioning(prefixed, prefix);
+    const auto no_mask = runtime.predict(latent, .2f);
+    for (size_t i = 0; i < unmasked.size(); ++i)
+        test::require_close(no_mask[i], unmasked[i], 2e-5f, "removing all-visible key mask preserves output");
+    runtime.release_graphs();
+    runtime.prepare_conditioning(prefixed, prefix);
+    const auto rebuilt = runtime.predict(latent, .2f);
+    for (size_t i = 0; i < unmasked.size(); ++i)
+        test::require_close(rebuilt[i], unmasked[i], 2e-5f, "fixed prefix release/reprepare preserves output");
+    // The full denoiser extent stays the same, but sampled state now includes all rows.
+    const std::vector<float> full_latent{12, .2f, -.7f, -7, .5f, 1.f};
+    modules::DitRuntime direct(execution, source, config, names);
+    direct.prepare_conditioning(prefixed);
+    const auto direct_expected = direct.predict(full_latent, .2f);
+    runtime.prepare_conditioning(prefixed);
+    const auto direct_restored = runtime.predict(full_latent, .2f);
+    for (size_t i = 0; i < direct_expected.size(); ++i)
+        test::require_close(direct_restored[i], direct_expected[i], 2e-5f,
+                            "returning to direct input with unchanged extent rebuilds the graph");
+    runtime.prepare_conditioning(plain);
+    compare(runtime.predict(latent, .2f));
+}
+
 } // namespace
 
-int main(int argc, char ** argv) {
-    if (argc != 3 || std::string(argv[1]) != "--log") return 2;
+int main(int argc, char **argv) {
+    if (argc != 3 || std::string(argv[1]) != "--log")
+        return 2;
     debug::configure_logging({true, argv[2]});
     const auto started = std::chrono::steady_clock::now();
     const auto path = std::filesystem::temp_directory_path() /
@@ -153,11 +314,15 @@ int main(int argc, char ** argv) {
         add("final", 8, 4, final);
         add("final_table", 2, 4, {.1f,.2f,.3f,.4f, .03f,.02f,.01f,.04f});
         tensors.back().shape = {1,2,4};
+        add("input_two",4,2,{1,0,0,1,0,0,0,0});
+        add("frame_two",4,2,{0,0,0,0,1,0,0,1});
         io::write_safetensors_file(path, tensors);
         {
             const auto source = assets::open_tensor_source(path);
             core::ExecutionContext execution({core::BackendType::Cpu, 0, 8});
             check_apg(execution);
+            check_rescaled_cfg(execution);
+            check_adaptive_prefix(execution,*source);
             modules::DitRuntimeConfig config;
             config.label = "test.dit";
             config.graph_metadata_bytes = 2 * 1024 * 1024;
