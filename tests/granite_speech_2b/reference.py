@@ -89,6 +89,74 @@ def build_prompt(language: str | None) -> tuple[str, str | None]:
     return hinted, language
 
 
+def dump_model_config(model) -> dict:
+    """Derive the trace's model_config from the loaded checkpoint config.
+
+    Every value is read from ``model.config`` / ``model.generation_config``.
+    Anything missing is an explicit RuntimeError (loud FAIL in main), never a
+    silent constant, so the trace cannot lie about a drifted checkpoint.
+    """
+    def need(obj, field: str, where: str):
+        try:
+            value = getattr(obj, field)
+        except AttributeError:
+            raise RuntimeError(f"FAIL: model config missing {where}.{field}; "
+                               f"refusing to emit trace with guessed constants")
+        if value is None:
+            raise RuntimeError(f"FAIL: model config {where}.{field} is None; "
+                               f"refusing to emit trace with guessed constants")
+        return value
+
+    cfg = need(model, "config", "model")
+    enc = need(cfg, "encoder_config", "config")
+    proj = need(cfg, "projector_config", "config")
+    txt = need(cfg, "text_config", "config")
+    gen = need(model, "generation_config", "model")
+    rope = need(txt, "rope_scaling", "text_config")
+    if isinstance(rope, dict):
+        rope_map = {k: rope[k] for k in
+                    ("factor", "original_max_position_embeddings", "rope_type")}
+    else:
+        rope_map = {k: need(rope, k, "text_config.rope_scaling") for k in
+                    ("factor", "original_max_position_embeddings", "rope_type")}
+    return {
+        "audio_token_id": need(cfg, "audio_token_id", "config"),
+        "encoder": {
+            "input_dim": need(enc, "input_dim", "encoder_config"),
+            "hidden_dim": need(enc, "hidden_dim", "encoder_config"),
+            "num_layers": need(enc, "num_layers", "encoder_config"),
+            "num_heads": need(enc, "num_heads", "encoder_config"),
+            "dim_head": need(enc, "dim_head", "encoder_config"),
+            "context_size": need(enc, "context_size", "encoder_config"),
+            "output_dim": need(enc, "output_dim", "encoder_config"),
+        },
+        "projector": {
+            "window_size": need(cfg, "window_size", "config"),
+            "downsample_rate": need(cfg, "downsample_rate", "config"),
+            "hidden_size": need(proj, "hidden_size", "projector_config"),
+            "qformer_layers": need(proj, "num_hidden_layers", "projector_config"),
+            "qformer_heads": need(proj, "num_attention_heads", "projector_config"),
+        },
+        "text": {
+            "num_layers": need(txt, "num_hidden_layers", "text_config"),
+            "hidden_size": need(txt, "hidden_size", "text_config"),
+            "num_attention_heads": need(txt, "num_attention_heads", "text_config"),
+            "num_key_value_heads": need(txt, "num_key_value_heads", "text_config"),
+            "intermediate_size": need(txt, "intermediate_size", "text_config"),
+            "vocab_size": need(txt, "vocab_size", "text_config"),
+            "bos_token_id": need(gen, "bos_token_id", "generation_config"),
+            "eos_token_id": need(gen, "eos_token_id", "generation_config"),
+            "pad_token_id": need(gen, "pad_token_id", "generation_config"),
+            "embedding_multiplier": need(txt, "embedding_multiplier", "text_config"),
+            "attention_multiplier": need(txt, "attention_multiplier", "text_config"),
+            "logits_scaling": need(txt, "logits_scaling", "text_config"),
+            "residual_multiplier": need(txt, "residual_multiplier", "text_config"),
+            "rope_theta": need(txt, "rope_theta", "text_config"),
+            "rope_scaling": rope_map,
+        },
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
@@ -103,6 +171,9 @@ def main() -> int:
     parser.add_argument("--dataset", default=None)
     parser.add_argument("--license", default=None)
     parser.add_argument("--human-ref-txt", type=Path, default=None)
+    parser.add_argument("--allow-unpinned", action="store_true",
+                        help="proceed even if model.safetensors does not match the pinned "
+                             "SHA-256 (trace is then recorded as unpinned)")
     args = parser.parse_args()
 
     import soundfile as sf
@@ -111,7 +182,6 @@ def main() -> int:
 
     torch.set_num_threads(NUM_THREADS)
     out_dir: Path = args.out_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     samples, rate = sf.read(args.audio, dtype="float32")
     assert rate == 16000 and samples.ndim == 1, f"need mono 16 kHz, got sr={rate} ndim={samples.ndim}"
@@ -119,8 +189,13 @@ def main() -> int:
     audio_sha = sha256_file(args.audio)
 
     model_sha = sha256_file(args.model / "model.safetensors")
-    if model_sha != MODEL_SHA256:
-        print(f"WARNING: model.safetensors sha256 {model_sha} != pinned {MODEL_SHA256}", file=sys.stderr)
+    pinned = (model_sha == MODEL_SHA256)
+    if not pinned and not args.allow_unpinned:
+        print(f"FAIL: model.safetensors sha256 {model_sha} != pinned {MODEL_SHA256}; "
+              f"refusing to emit a pinned trace (pass --allow-unpinned to override)",
+              file=sys.stderr)
+        return 1
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     processor = AutoProcessor.from_pretrained(args.model, local_files_only=True)
     model, load_info = AutoModelForSpeechSeq2Seq.from_pretrained(
@@ -261,6 +336,11 @@ def main() -> int:
     import transformers as _tf
     import numpy as _np
 
+    try:
+        derived_config = dump_model_config(model)
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     trace = {
         "family": "granite_speech_2b",
         "revision": REVISION,
@@ -291,27 +371,9 @@ def main() -> int:
         "observed_stop": observed_stop,
         "eos_token_id": eos_id,
         "text": text,
-        "model_config": {
-            "audio_token_id": audio_token_id,
-            "encoder": {"input_dim": 160, "hidden_dim": 1024, "num_layers": 16,
-                        "num_heads": 8, "dim_head": 128, "context_size": 200,
-                        "output_dim": 348},
-            "projector": {"window_size": 15, "downsample_rate": 5,
-                          "hidden_size": 1024, "qformer_layers": 2,
-                          "qformer_heads": 16},
-            "text": {"num_layers": 40, "hidden_size": 2048,
-                     "num_attention_heads": 16, "num_key_value_heads": 4,
-                     "intermediate_size": 4096, "vocab_size": 100353,
-                     "bos_token_id": 100257, "eos_token_id": 100257,
-                     "pad_token_id": 100256,
-                     "embedding_multiplier": 12,
-                     "attention_multiplier": 0.0078125,
-                     "logits_scaling": 8, "residual_multiplier": 0.22,
-                     "rope_theta": 10000,
-                     "rope_scaling": {"factor": 4.0,
-                                      "original_max_position_embeddings": 4096,
-                                      "rope_type": "yarn"}},
-        },
+        "pinned": pinned,
+        "allow_unpinned": args.allow_unpinned,
+        "model_config": derived_config,
         "load_info": {k: list(v) if isinstance(v, (list, tuple)) else v
                       for k, v in (load_info.items() if isinstance(load_info, dict) else [])},
         "stages": [

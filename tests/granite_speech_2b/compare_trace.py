@@ -27,7 +27,10 @@ from pathlib import Path
 def load_f32(path: Path, shape: list[int]):
     import numpy as np
 
-    raw = path.read_bytes()
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return None, f"unreadable file {path}: {exc}"
     expect = 1
     for d in shape:
         expect *= d
@@ -69,6 +72,9 @@ def main() -> int:
         shape = list(entry["shape"])
         rpath = args.reference / fname
         cpath = args.candidate / fname
+        if not rpath.exists():
+            print(f"FAIL [{name}]: reference file missing: {rpath}")
+            return 1
         if not cpath.exists():
             print(f"FAIL [{name}]: candidate file missing: {cpath}")
             return 1

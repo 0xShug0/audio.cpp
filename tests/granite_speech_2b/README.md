@@ -60,10 +60,14 @@ instruction (`The speech is in <Name>. Transcribe it exactly; do not
 translate.`) to the default prompt; without it the prompt is identical to the
 smoke. `--force-ids` takes a JSON list of token IDs as the teacher-forced
 continuation (default: this run's greedy IDs, observed stop included).
+`--allow-unpinned` proceeds when `model.safetensors` does not match the
+pinned SHA-256; without it a mismatch is a hard FAIL (exit 1, no trace).
+The trace records the decision as `pinned` / `allow_unpinned`.
 
 Each out-dir holds `trace.json` (revision, hashes, runtime versions,
 backend/dtype, lengths, sample rate, UTF-8 prompt, input IDs, generated IDs
-including the observed stop, audio span indices, model config values,
+including the observed stop, audio span indices, model config values
+(derived from the loaded checkpoint config, never constants),
 emitted text, tensor file names/shapes, `through: generate`), `*.f32`
 dumps (mel, stacked, input proj, encoder block 1, layer 8 pre/post feedback,
 last encoder layer, projected vectors, merged/scaled prefill, last-position
