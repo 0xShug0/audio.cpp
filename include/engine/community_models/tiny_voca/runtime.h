@@ -1,8 +1,10 @@
 #pragma once
 
 #include "engine/community_models/tiny_voca/assets.h"
+#include "engine/community_models/tiny_voca/graph_cache.h"
 #include "engine/framework/core/backend.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -29,12 +31,23 @@ struct TinyVocaOutput {
     std::vector<float> f0;              // pitch of each frame in Hz
 };
 
+// How much the runtime keeps of the graphs it has made: the graphs of two
+// sentences at most, and 4 MB of buffers at most, so that a session takes
+// about 4 MB more than one that keeps nothing. Zero graphs turns the cache off.
+struct TinyVocaGraphCacheLimits {
+    size_t max_graphs = 6;
+    size_t max_bytes = 4U * 1024U * 1024U;
+};
+
 // Phoneme ids -> waveform. The three transformer stacks run as ggml graphs;
 // the small steps between them (durations, frame expansion, pitch rules) and
 // the source-filter waveform head run on the host.
 class TinyVocaRuntime {
 public:
-    TinyVocaRuntime(std::shared_ptr<const TinyVocaAssets> assets, core::BackendConfig backend_config);
+    TinyVocaRuntime(
+        std::shared_ptr<const TinyVocaAssets> assets,
+        core::BackendConfig backend_config,
+        TinyVocaGraphCacheLimits graph_cache = {});
     ~TinyVocaRuntime();
 
     // `noise`, when given, is the white noise of the voice (one value for each
@@ -44,6 +57,9 @@ public:
         const std::vector<int32_t> & stress,
         const TinyVocaGenerationOptions & options,
         const std::vector<float> * noise = nullptr);
+
+    // Hits, misses and what is kept now, since the runtime was made.
+    GraphCacheStats graph_cache_stats() const;
 
 private:
     struct State;

@@ -73,10 +73,20 @@ in CMUdict notation: `{HH AH0 L OW1}`.
   framework and can be built by itself.
 
 Memory is kept low on purpose. Attention scores are worked out for blocks of
-rows, so they never take more than 4 MB however long the sentence is. A graph
-is made for each sentence and freed after it (making one takes under a
-millisecond, under one percent of running it), and the waveform head works
-through the audio in blocks.
+rows, so they never take more than 4 MB however long the sentence is. The
+waveform head works through the audio in blocks.
+
+A graph is made for one stack and one length. The session keeps the graphs it
+used last in a bounded cache (the framework's `CacheSlots`) and runs a kept
+graph again when the same stack meets the same length. It keeps 6 graphs at
+most (three for a sentence) and 4 MB of buffers at most, least recently used
+first out. A graph larger than 4 MB, which is a sentence of more than about
+four seconds, is freed after its sentence, because a kept graph of the longest
+sentence would hold 25 MB. So the cache serves short sentences that come
+back; a long sentence builds its graphs each time, which takes under a
+millisecond. With `--log`, the lines
+`tiny_voca.<stack>_graph.cache_hit` show each reuse and
+`tiny_voca.graph_cache.kept_mb` what is kept.
 
 ## Convert the released model
 
@@ -130,18 +140,18 @@ AMD EPYC 4585PX, Linux, CPU backend, FP32, one session, release build.
 
 | Threads | Real-time factor | Peak memory |
 |---:|---:|---:|
-| 1 | 0.042 | 51 MB |
-| 2 | 0.024 | 51 MB |
-| 4 | 0.017 | 50 MB |
+| 1 | 0.043 | 54 MB |
+| 2 | 0.026 | 54 MB |
+| 4 | 0.019 | 54 MB |
 
 120 utterances, 518 seconds of audio, best of five runs on a shared machine
 (8 virtual cores). Memory is the resident set of the
-process: 33 MB once the model is loaded, of which the weights are 17 MB, and
+process: 32 MB once the model is loaded, of which the weights are 17 MB, and
 it does not grow with the number of requests (2,100 utterances in one session
-peak at 52 MB). A single sentence of 14 seconds peaks at 43 MB, and one at
-the model's limit of 32 seconds at 59 MB. The command-line tool peaks at
-36 MB for a short sentence and at 62 MB for three 42-second requests in one
-session.
+peak at 54 MB, of which the kept graphs are up to 4 MB). A single sentence of
+14 seconds peaks at 43 MB, and one at the model's limit of 32 seconds at
+60 MB. The command-line tool peaks at 39 MB for a short sentence and at
+62 to 66 MB for three 42-second requests in one session.
 
 ## Limits
 
