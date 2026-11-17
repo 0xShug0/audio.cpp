@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/modules/feed_forward_modules.h"
-#include "engine/framework/modules/moe_module.h"
+#include "engine/framework/moe_engine/moe_module.h"
 #include "engine/framework/modules/norm_modules.h"
 
 #include <optional>
@@ -38,7 +38,7 @@ struct MoeFeedForwardInputs {
 };
 
 // Stateless graph composition. Expert storage, placement and execution remain
-// with MoeResources and the caller's runtime. The split build API expresses the
+// with MoeEngine and the caller's runtime. The split build API expresses the
 // same FFN across staged expert execution, without owning graphs or state.
 class MoeFeedForwardModule {
 public:

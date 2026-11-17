@@ -3,13 +3,14 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/prepared_graph.h"
-#include "engine/framework/core/disk_expert_weight_store.h"
+#include "engine/framework/moe_engine/disk_expert_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/kv_cache.h"
-#include "engine/framework/modules/moe_module.h"
-#include "engine/framework/modules/moe_feed_forward_module.h"
+#include "engine/framework/moe_engine/moe_module.h"
+#include "engine/framework/moe_engine/moe_feed_forward_module.h"
 #include "engine/framework/modules/feed_forward_modules.h"
-#include "engine/framework/modules/staged_moe_runtime.h"
+#include "engine/framework/core/graph_workspace.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 #include "engine/framework/sampling/hf_sampler.h"
 
 #include <ggml-alloc.h>
@@ -148,7 +149,7 @@ struct Weights {
     ggml_tensor * final_norm = nullptr;
     ggml_tensor * output = nullptr;
     std::vector<LayerWeights> layers;
-    core::MoeResources * resources = nullptr;
+    modules::MoeEngine * resources = nullptr;
     core::DiskExpertWeightStore * disk_store = nullptr;
     std::vector<size_t> disk_groups;
 };
@@ -430,20 +431,16 @@ public:
 private:
     void build_offload(const DecoderConfig & c, const Weights & weights,
         ggml_tensor * embeddings) {
-        const auto h = c.hidden_size, k = c.experts_per_token;
+        const auto h = c.hidden_size;
         const auto first = c.block_pattern.find('E');
-        slots_count_ = weights.layers.at(first).ffn.experts.up->ne[2];
         int64_t expert_rows = std::min<int64_t>(steps_, 32);
         while ((expert_rows & (expert_rows - 1)) != 0) ++expert_rows;
-        modules::StagedMoeConfig staged_config;
+        modules::MoeBatchConfig staged_config;
         staged_config.hidden_size = h;
         staged_config.tokens = steps_;
-        staged_config.selected = k;
-        staged_config.experts = c.experts;
-        staged_config.cache_slots = slots_count_;
         for (int64_t count = 1; count <= expert_rows; count *= 2) staged_config.rows_per_expert.push_back(count);
         workspace_ = std::make_shared<core::GraphWorkspace>(execution_.backend());
-        staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution_, std::move(staged_config), workspace_, weights.resources->cpu_execution());
+        moe_ = weights.resources->create_plan(workspace_);
         auto * persistent = prepared_.persistent_build_context().ggml;
         x_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps_);
         shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps_);
@@ -456,6 +453,8 @@ private:
         ctx.module_instance_name = "nemotron_transcribe.offload";
         ctx.elide_identity_reshapes = true;
         ggml_build_forward_expand(graph_, ggml_cpy(g, embeddings, x_));
+        finish_ = prepared_.add_graph("finish", 64);
+        size_t moe_ordinal = 0;
         for (size_t i = 0; i < c.block_pattern.size(); ++i) {
             const auto & layer = weights.layers[i];
             const auto id = prepared_.add_graph("layer_" + std::to_string(i), 128);
@@ -464,7 +463,9 @@ private:
             if (c.block_pattern[i] == 'E') {
                 const auto inputs = modules::MoeFeedForwardModule(ffn_config_).build_inputs(ctx, normalized, layer.ffn);
                 ggml_build_forward_expand(graph, ggml_cpy(g, inputs.shared, shared_));
-                staged_moe_->build_inputs(ctx, graph, inputs.experts, inputs.routing);
+                const auto expert = moe_->add_layer(moe_ordinal++, staged_config, ffn_config_.experts);
+                moe_->build_inputs(expert, ctx, graph, inputs.experts, inputs.routing);
+
             } else {
                 auto * output = c.block_pattern[i] == 'M'
                     ? build_mamba(g, graph, normalized, layer, c, state_, i, sequence_id_, steps_)
@@ -472,14 +473,10 @@ private:
                 ggml_build_forward_expand(graph, ggml_cpy(g, ggml_add(g, output, x_), x_));
             }
             layer_graphs_.push_back(id);
-            if (c.block_pattern[i] == 'E') {
-                staged_layers_.push_back(staged_moe_->add_layer(modules::MoeModule(ffn_config_.experts),
-                    layer.ffn.experts, *weights.disk_store, weights.disk_groups[i]));
-            } else staged_layers_.push_back(-1);
+            expert_layers_.push_back(c.block_pattern[i] == 'E');
         }
 
-        finish_ = prepared_.add_graph("finish", 64);
-        auto * routed = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
+        auto * routed = modules::MoeModule::combine(ctx, moe_->output(0), moe_->routing_weights(0));
         auto * output = modules::MoeFeedForwardModule(ffn_config_).finish(ctx, routed, shared_, weights.layers.at(first).ffn);
         ggml_build_forward_expand(prepared_.graph(finish_), ggml_cpy(g, ggml_add(g, output, x_), x_));
         final_ = prepared_.add_graph("final", 64);
@@ -489,20 +486,9 @@ private:
         ggml_build_forward_expand(prepared_.graph(final_), logits_);
         workspace_->add(prepared_);
         workspace_->prepare();
-        staged_moe_->prepare();
+        moe_->prepare();
         debug::timing_log_scalar("nemotron_transcribe.decoder.offload_workspace_mb",
             workspace_->bytes() / (1024.0 * 1024.0));
-    }
-
-    void run_offload() {
-        prepared_.compute();
-        for (size_t layer = 0; layer < layer_graphs_.size(); ++layer) {
-            prepared_.compute(layer_graphs_[layer]);
-            if (staged_layers_[layer] < 0) continue;
-            staged_moe_->run(static_cast<size_t>(staged_layers_[layer]));
-            prepared_.compute(finish_);
-        }
-        prepared_.compute(final_);
     }
 
     void run(const int32_t * ids, bool output_logits = true) {
@@ -524,8 +510,17 @@ private:
             ggml_backend_tensor_set(slots_, slots_scratch_.data(), 0, slots_scratch_.size() * sizeof(int64_t));
             ggml_backend_tensor_set(mask_, mask_scratch_.data(), 0, mask_scratch_.size() * sizeof(ggml_fp16_t));
         }
-        if (!layer_graphs_.empty()) {
-            run_offload();
+        if (moe_) {
+            prepared_.compute(0);
+            size_t expert = 0;
+            for (size_t layer = 0; layer < layer_graphs_.size(); ++layer) {
+                prepared_.compute(layer_graphs_[layer]);
+                if (expert_layers_[layer]) {
+                    moe_->run(expert++);
+                    prepared_.compute(finish_);
+                }
+            }
+            prepared_.compute(final_);
         } else {
             const bool body_only = !output_logits && prefill_body_ != nullptr;
             auto * graph = body_only ? prefill_body_ : graph_;
@@ -549,13 +544,12 @@ private:
     ggml_tensor * text_mask_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     const Weights & weights_;
-    std::vector<core::PreparedGraph::GraphId> layer_graphs_;
     std::shared_ptr<core::GraphWorkspace> workspace_;
-    std::unique_ptr<modules::StagedMoeRuntime> staged_moe_;
-    std::vector<int64_t> staged_layers_;
+    std::unique_ptr<modules::MoeExecutionPlan> moe_;
+    std::vector<core::PreparedGraph::GraphId> layer_graphs_;
+    std::vector<bool> expert_layers_;
     core::PreparedGraph::GraphId finish_ = 0, final_ = 0;
     ggml_tensor * x_ = nullptr, * shared_ = nullptr;
-    int64_t slots_count_ = 0;
     std::vector<ggml_fp16_t> mask_scratch_;
     std::vector<int64_t> slots_scratch_;
     std::vector<float> audio_scratch_;
@@ -587,7 +581,7 @@ struct NemotronHDecoderRuntime::Impl {
         const auto & s = *source_;
         if (options.moe.residency == core::MoeExpertResidency::Staged && c.block_pattern.find('E') == std::string::npos)
             throw std::runtime_error("Nemotron-H expert cache must cover top-k and not exceed the expert count");
-        resources_ = std::make_unique<core::MoeResources>(execution_, s, store_, options.moe,
+        resources_ = std::make_unique<modules::MoeEngine>(execution_, s, store_, options.moe,
             "nemotron_transcribe.decoder.host_experts", kWeightArenaBytes);
         weights_.resources = resources_.get();
         weights_.disk_store = resources_->disk_store();
@@ -630,14 +624,13 @@ struct NemotronHDecoderRuntime::Impl {
                 layer.ffn.router = store_.load_f32_tensor(s, prefix + "ffn_gate_inp.weight", {c.experts, c.hidden_size});
                 layer.ffn.selection_bias = store_.load_f32_tensor(s, prefix + "exp_probs_b.bias", {c.experts});
                 const auto & expert = resources_->bind_layer(moe_ordinal++, i, {
-                    {prefix + "ffn_up_exps.weight", prefix + "ffn_up_exps.weight",
+                    {modules::MoeExpertProjection::Up, prefix + "ffn_up_exps.weight", prefix + "ffn_up_exps.weight",
                         {c.experts, c.expert_width, expert_row_width(c.hidden_size, c.expert_row_alignment)}, storage},
-                    {prefix + "ffn_down_exps.weight", prefix + "ffn_down_exps.weight",
+                    {modules::MoeExpertProjection::Down, prefix + "ffn_down_exps.weight", prefix + "ffn_down_exps.weight",
                         {c.experts, c.hidden_size, expert_row_width(c.expert_width, c.expert_row_alignment)}, storage}},
                     c.experts_per_token);
                 weights_.disk_groups[i] = expert.disk_group;
-                layer.ffn.experts.up = expert.weights[0].tensor;
-                layer.ffn.experts.down = expert.weights[1].tensor;
+                layer.ffn.experts = expert.projections;
                 auto & shared = std::get<modules::FeedForwardWeights>(layer.ffn.shared);
                 shared.fc1_weight = store_.load_tensor(s, prefix + "ffn_up_shexp.weight", storage,
                     {c.shared_expert_width, c.hidden_size});
@@ -795,7 +788,7 @@ private:
     core::ExecutionContext & execution_;
     DecoderConfig config_;
     core::BackendWeightStore store_;
-    std::unique_ptr<core::MoeResources> resources_;
+    std::unique_ptr<modules::MoeEngine> resources_;
     Weights weights_;
     std::unique_ptr<DecoderState> state_;
     std::unique_ptr<DecoderGraph> decode_;

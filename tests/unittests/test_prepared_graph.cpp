@@ -1,5 +1,8 @@
 #include "engine/framework/core/graph_workspace.h"
 #include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/moe_engine/placement_policy.h"
+#include "engine/framework/moe_engine/staged_moe_runtime.h"
+#include "placement_policy_internal.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -31,17 +34,34 @@ void check_session_moe_option() {
         using RuntimeSessionBase::mark_prepared;
         using RuntimeSessionBase::require_prepared;
     };
+    const auto require_half_share = [](const core::MoePolicyConfig & config) {
+        auto layer = config.placement.create()(4);
+        require(static_cast<bool>(layer), "session option did not retain its prepared placement factory");
+        engine::modules::StagedMoeConfig shape;
+        shape.hidden_size = shape.input_size = 4;
+        shape.tokens = 1;
+        shape.experts = 4;
+        shape.selected = shape.cache_slots = 2;
+        shape.rows_per_expert = {1};
+        auto policy = layer(shape, {});
+        const std::vector<int32_t> ids{2, 3}, resident{0, 1};
+        const std::vector<std::vector<int32_t>> assignments{{}, {}, {0}, {1}};
+        size_t cpu = 0;
+        for (int request = 0; request < 8; ++request)
+            cpu += policy->select(ids, resident, 0, assignments, false).cpu.size();
+        require(cpu == 8, "session option did not preserve the captured half-share value");
+    };
     engine::runtime::SessionOptions options;
     options.backend.type = core::BackendType::Cpu;
     options.backend.threads = 8;
     Session ordinary(options);
-    require(ordinary.execution_context().moe_policy().cpu_share == 0, "omitted session option must disable hybrid execution");
+    require(!ordinary.execution_context().moe_policy().has_placement(), "omitted session option must disable hybrid execution");
     ordinary.mark_prepared();
     auto disabled_options = options;
     disabled_options.options["moe_policy"] = "default";
     Session disabled(disabled_options);
     disabled.mark_prepared();
-    require(!disabled.execution_context().moe_policy().hybrid(), "default policy enabled hybrid resources");
+    require(!disabled.execution_context().moe_policy().placement_requirements().cpu, "default policy enabled hybrid resources");
     auto zero_options = options;
     zero_options.options["moe_policy"] = "placement_cpu_share";
     zero_options.options["moe_policy_params.share"] = "0";
@@ -69,8 +89,8 @@ void check_session_moe_option() {
         active_rejected = std::string(error.what()).find("does not support shared MoE resources") != std::string::npos;
     }
     require(active_rejected, "unsupported active MoE CPU share was accepted");
-    require(enabled.execution_context().moe_policy().cpu_share == 0.5F, "session option did not reach execution context");
-    require(ordinary.execution_context().moe_policy().cpu_share == 0, "session option leaked across sessions");
+    require_half_share(enabled.execution_context().moe_policy());
+    require(!ordinary.execution_context().moe_policy().has_placement(), "session option leaked across sessions");
     Session independent(engine::runtime::SessionOptions{options});
     for (bool registered : {false, true}) {
         if (registered) {
@@ -105,7 +125,7 @@ void check_session_moe_option() {
         require(ordinary.acquire_moe_execution().owns_lock(), "completed execution did not release session ownership");
     }
     core::ExecutionContext moved(std::move(enabled.execution_context()));
-    require(moved.moe_policy().cpu_share == 0.5F, "move lost session execution policy");
+    require_half_share(moved.moe_policy());
     for (const char * value : {"-0.1", "1.1", "nan", "typo"}) {
         options.options["moe_policy_params.share"] = value;
         bool rejected = false;
@@ -122,7 +142,8 @@ void check_owner_allocation_failures() {
     core::BackendConfig backend;
     backend.type = core::BackendType::Cpu;
     backend.threads = 8;
-    core::ExecutionContext execution(backend, {core::MoePlacement::CpuShare, 0.5F});
+    core::ExecutionContext execution(backend, core::parse_moe_policy({
+        {"moe_policy", "placement_cpu_share"}, {"moe_policy_params.share", "0.5"}}));
     auto * handle = execution.backend();
     auto * original = handle->device;
     ggml_backend_device device = *original;

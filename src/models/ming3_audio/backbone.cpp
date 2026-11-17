@@ -5,8 +5,9 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/moe_module.h"
-#include "engine/framework/modules/staged_moe_runtime.h"
+#include "engine/framework/moe_engine/moe_module.h"
+#include "engine/framework/core/graph_workspace.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/packed_linear_weights.h"
@@ -31,7 +32,7 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
     : store(execution.backend(), execution.backend_type(), "ming3_audio.thinker.weights", 4 * 1024 * 1024) {
     namespace binding = modules::binding;
     const auto native = assets::TensorStorageType::Native;
-    experts = std::make_unique<core::MoeResources>(execution, source, store, options.moe,
+    experts = std::make_unique<modules::MoeEngine>(execution, source, store, options.moe,
         "ming3_audio.thinker.cpu_experts", 4 * 1024 * 1024);
     embedding = store.load_tensor(source, "model.word_embeddings.weight", native, {c.vocabulary_size, c.hidden_size});
     head = store.load_tensor(source, "lm_head.weight", native, {c.vocabulary_size, c.hidden_size});
@@ -94,17 +95,15 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
             w.ffn.selection_bias = store.make_f32(core::TensorShape::from_dims({c.experts}), std::move(bias));
             const auto & bank = experts->bind_layer(static_cast<size_t>(layer - c.dense_layers),
                 static_cast<size_t>(layer), {
-                    {prefix + ".mlp.experts.gate_proj.weight", "thinker/" + prefix + ".mlp.experts.gate_proj.weight",
+                    {modules::MoeExpertProjection::Gate, prefix + ".mlp.experts.gate_proj.weight", "thinker/" + prefix + ".mlp.experts.gate_proj.weight",
                         {c.experts, c.expert_intermediate_size, c.hidden_size}, native},
-                    {prefix + ".mlp.experts.up_proj.weight", "thinker/" + prefix + ".mlp.experts.up_proj.weight",
+                    {modules::MoeExpertProjection::Up, prefix + ".mlp.experts.up_proj.weight", "thinker/" + prefix + ".mlp.experts.up_proj.weight",
                         {c.experts, c.expert_intermediate_size, c.hidden_size}, native},
-                    {prefix + ".mlp.experts.down_proj.weight", "thinker/" + prefix + ".mlp.experts.down_proj.weight",
+                    {modules::MoeExpertProjection::Down, prefix + ".mlp.experts.down_proj.weight", "thinker/" + prefix + ".mlp.experts.down_proj.weight",
                         {c.experts, c.hidden_size, c.expert_intermediate_size}, native}}, c.experts_per_token);
             w.disk_store = bank.disk_store;
             w.disk_group = bank.disk_group;
-            w.ffn.experts.gate = bank.weights[0].tensor;
-            w.ffn.experts.up = bank.weights[1].tensor;
-            w.ffn.experts.down = bank.weights[2].tensor;
+            w.ffn.experts = bank.projections;
         }
         modules::GatedFeedForwardConfig shared_config;
         shared_config.hidden_size = c.hidden_size;
@@ -314,16 +313,16 @@ struct Thinker::Impl {
                 "ming3_audio.offload_prefill", static_cast<size_t>(config.layers) * large_bytes + 3 * small_bytes,
                 small_nodes, 64 * ggml_tensor_overhead()});
             const auto h = config.hidden_size;
-            modules::StagedMoeConfig staged_config;
+            modules::MoeBatchConfig staged_config;
             staged_config.hidden_size = h;
             staged_config.tokens = steps;
-            staged_config.selected = config.experts_per_token;
-            staged_config.experts = config.experts;
-            staged_config.cache_slots = weights.layers.at(config.dense_layers).ffn.experts.gate->ne[2];
             staged_config.rows_per_expert = {32};
             staged_config.scatter_index_type = GGML_TYPE_I32;
-            staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, staged_config, workspace_,
-                weights.experts->cpu_execution());
+            moe_ = weights.experts->create_plan(workspace_);
+            for (int64_t layer = config.dense_layers; layer < config.layers; ++layer) {
+                moe_->add_layer(static_cast<size_t>(layer - config.dense_layers), staged_config,
+                    weights.layers.at(layer).ffn_config.experts);
+            }
             auto * persistent = prepared_->persistent_build_context().ggml;
             ids_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
             audio_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
@@ -332,7 +331,7 @@ struct Thinker::Impl {
             mask_ = ggml_new_tensor_4d(persistent, GGML_TYPE_F32, capacity, steps, 1, 1);
             // Residual/shared values are saved before normalized expert input
             // replaces x; the finish graph writes the next layer's state here.
-            x_ = staged_moe_->hidden_input();
+            x_ = moe_->hidden_input(0);
             residual_ = ggml_new_tensor_3d(persistent, GGML_TYPE_F32, h, steps, 1);
             shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
             for (auto * tensor : {ids_, audio_, audio_indices_, positions_, mask_, residual_, shared_})
@@ -343,6 +342,7 @@ struct Thinker::Impl {
             const auto shape = core::TensorShape::from_dims({1, steps, h});
             auto x = core::wrap_tensor(x_, shape);
             initial_ = 0;
+            finish_ = prepared_->add_graph("finish", small_nodes);
             auto * embeddings = ggml_get_rows(ctx.ggml, weights.embedding.tensor, ids_);
             // Non-audio positions write to distinct discarded rows, keeping one graph for every text/audio layout.
             auto * padded = ggml_pad(ctx.ggml, embeddings, 0, static_cast<int>(steps), 0, 0);
@@ -389,14 +389,12 @@ struct Thinker::Impl {
                         ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml,
                             ggml_reshape_2d(ctx.ggml, copy.first, copy.first->ne[0], steps),
                             ggml_reshape_2d(ctx.ggml, copy.second, copy.second->ne[0], steps)));
-                    staged_moe_->build_inputs(ctx, graph, inputs.experts, inputs.routing);
+                    moe_->build_inputs(static_cast<size_t>(layer - config.dense_layers), ctx, graph, inputs.experts, inputs.routing);
                 }
-                attention_graphs_.push_back(id);
-                if (routed) staged_layers_.push_back(staged_moe_->add_layer(modules::MoeModule(w.ffn_config.experts),
-                    w.ffn.experts, *w.disk_store, w.disk_group));
+                layer_graphs_.push_back(id);
+
             }
-            finish_ = prepared_->add_graph("finish", small_nodes);
-            auto * reduced = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
+            auto * reduced = modules::MoeModule::combine(ctx, moe_->output(0), moe_->routing_weights(0));
             const auto & ffn_weights = weights.layers.at(config.dense_layers);
             auto * ffn_output = modules::MoeFeedForwardModule(ffn_weights.ffn_config).finish(ctx, reduced, shared_, ffn_weights.ffn);
             auto combined = core::wrap_tensor(ggml_reshape_3d(ctx.ggml, ffn_output, h, steps, 1), shape);
@@ -413,7 +411,7 @@ struct Thinker::Impl {
         }
 
         void prepare() {
-            staged_moe_->prepare();
+            moe_->prepare();
         }
 
         int64_t steps() const { return steps_; }
@@ -441,11 +439,12 @@ struct Thinker::Impl {
             ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
             ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
             prepared_->compute(initial_);
-            for (int64_t layer = 0; layer < config_.layers; ++layer) {
-                prepared_->compute(attention_graphs_[layer]);
-                if (layer < config_.dense_layers) continue;
-                staged_moe_->run(staged_layers_[static_cast<size_t>(layer - config_.dense_layers)]);
-                prepared_->compute(finish_);
+            for (size_t layer = 0; layer < layer_graphs_.size(); ++layer) {
+                prepared_->compute(layer_graphs_[layer]);
+                if (layer >= static_cast<size_t>(config_.dense_layers)) {
+                    moe_->run(layer - static_cast<size_t>(config_.dense_layers));
+                    prepared_->compute(finish_);
+                }
             }
             prepared_->compute(final_);
             return core::read_tensor_f32(logits_);
@@ -456,10 +455,9 @@ struct Thinker::Impl {
         ThinkerConfig config_;
         int64_t steps_, capacity_;
         std::shared_ptr<core::GraphWorkspace> workspace_;
-        std::unique_ptr<modules::StagedMoeRuntime> staged_moe_;
+        std::unique_ptr<modules::MoeExecutionPlan> moe_;
+        std::vector<core::PreparedGraph::GraphId> layer_graphs_;
         std::unique_ptr<core::PreparedGraph> prepared_;
-        std::vector<size_t> staged_layers_;
-        std::vector<core::PreparedGraph::GraphId> attention_graphs_;
         core::PreparedGraph::GraphId initial_ = 0, finish_ = 0, final_ = 0;
         ggml_tensor * ids_ = nullptr, * audio_ = nullptr, * audio_indices_ = nullptr, * positions_ = nullptr, * mask_ = nullptr;
         ggml_tensor * x_ = nullptr, * residual_ = nullptr, * shared_ = nullptr, * logits_ = nullptr;
@@ -476,7 +474,7 @@ struct Thinker::Impl {
                 tail = std::make_unique<OffloadPrefill>(execution, weights, config, states, remaining, capacity, workspace);
             // Backbone graphs always occupy this primary workspace, even when
             // every expert bank is CPU-staged. Reserve both chunk shapes here;
-            // staged_moe_->prepare() allocates the separate CPU expert workspace.
+            // moe_->prepare() allocates the separate CPU expert workspace.
             workspace->prepare();
             full->prepare();
             if (tail) tail->prepare();

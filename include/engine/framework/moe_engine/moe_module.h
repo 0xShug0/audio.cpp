@@ -64,6 +64,8 @@ public:
     ggml_tensor * build(core::ModuleBuildContext & ctx, ggml_tensor * input,
         const MoeRouting & routing, const MoeExpertWeights & weights, ggml_tensor * bank_ids = nullptr) const;
 private:
+    friend struct MoeGraphState;
+    friend class StagedMoeRuntime;
     void record_region(core::ModuleBuildContext & ctx, ggml_tensor * first, ggml_tensor * output,
         const MoeExpertWeights & weights, ggml_tensor * bank_ids) const;
     MoeExpertConfig experts_;

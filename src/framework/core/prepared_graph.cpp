@@ -334,7 +334,7 @@ void PreparedGraph::reset() {
     entry->label = config_.label;
     entry->graph = ggml_new_graph_custom(context_.get(), config_.graph_nodes, false);
     graphs_.push_back(std::move(entry));
-    if (execution_.moe_policy().hybrid() && !is_host_backend(execution_.backend())) {
+    if (execution_.moe_policy().has_placement() && !is_host_backend(execution_.backend())) {
         build_context_.region_owner = this;
     }
 }

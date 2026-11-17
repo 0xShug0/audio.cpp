@@ -533,9 +533,6 @@ add_library(engine_core OBJECT
     src/framework/core/backend.cpp
     src/framework/core/attention_fallback.cpp
     src/framework/core/deferred_tensor_writer.cpp
-    src/framework/core/disk_expert_weight_store.cpp
-    src/framework/core/moe_policy.cpp
-    src/framework/core/moe_resources.cpp
     src/framework/core/graph_workspace.cpp
     src/framework/core/prepared_graph.cpp
     src/framework/core/execution_context.cpp
@@ -624,9 +621,15 @@ add_library(engine_core OBJECT
     src/framework/modules/attention/positional_encoding.cpp
     src/framework/modules/gated_delta_net_module.cpp
     src/framework/modules/feed_forward_modules.cpp
-    src/framework/modules/moe_feed_forward_module.cpp
-    src/framework/modules/moe_module.cpp
-    src/framework/modules/staged_moe_runtime.cpp
+    src/framework/moe_engine/cache_policy.cpp
+    src/framework/moe_engine/disk_expert_weight_store.cpp
+    src/framework/moe_engine/moe_policy.cpp
+    src/framework/moe_engine/placement_policy.cpp
+    src/framework/moe_engine/moe_config.cpp
+    src/framework/moe_engine/moe_feed_forward_module.cpp
+    src/framework/moe_engine/moe_module.cpp
+    src/framework/moe_engine/staged_moe_runtime.cpp
+    src/framework/moe_engine/moe_engine.cpp
     src/framework/modules/attention/self_attention.cpp
     src/framework/modules/attention/longformer_attention.cpp
     src/framework/modules/attention/longformer_attention_gpu.cpp
@@ -4080,6 +4083,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             --log ${CMAKE_CURRENT_BINARY_DIR}/convnext_modules_test.log)
     endif()
     add_engine_unittest(prepared_graph_test tests/unittests/test_prepared_graph.cpp)
+    target_include_directories(prepared_graph_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/framework/moe_engine)
     target_sources(prepared_graph_test PRIVATE tests/unittests/test_allocation_failure.cpp)
     target_include_directories(prepared_graph_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/ggml/src)
     add_test(NAME prepared_graph_test COMMAND prepared_graph_test
@@ -4656,6 +4660,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(disk_expert_weight_store_test tests/unittests/test_disk_expert_weight_store.cpp)
         target_sources(disk_expert_weight_store_test PRIVATE tests/unittests/test_allocation_failure.cpp)
+        target_include_directories(disk_expert_weight_store_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/external/ggml/src ${CMAKE_CURRENT_SOURCE_DIR}/src/framework/moe_engine)
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(disk_expert_weight_store_test PRIVATE OpenMP::OpenMP_CXX)
         endif()

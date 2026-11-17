@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/module.h"
+#include "engine/framework/moe_engine/cache_policy.h"
 
 #include <ggml-backend.h>
 
@@ -10,11 +11,11 @@
 #include <string>
 #include <vector>
 
+namespace engine::modules { class MoeEngine; }
+
 namespace engine::core {
 
 class ExecutionContext;
-struct MoePolicyConfig;
-struct MoeCpuShareState;
 
 // Session-owned, bounded native-format expert cache. GGUF expert payloads are
 // read by range only after routing, or explicitly pinned in host RAM at load.
@@ -49,7 +50,7 @@ public:
 
     // Select before registering groups; default LRU remains unchanged.
     void use_frequency_cache(uint64_t decay_steps);
-    void configure_cache(const MoePolicyConfig & policy);
+    void configure_cache(MoeCacheFactory factory);
 
     // Borrowed CPU execution context; its owner must outlive staged runtimes and this store.
     ExecutionContext * cpu_execution() const noexcept;
@@ -66,9 +67,6 @@ public:
     // Residency inspection does not change eviction order or choose execution.
     const std::vector<int32_t> & cached_experts(size_t group) const;
     uint64_t cache_epoch() const;
-    // Lazily owned logical-layer placement history. Borrowers must be released
-    // before this store, just like borrowers of its native expert banks.
-    MoeCpuShareState & cpu_share_state(size_t group);
     // Stage one bounded group and return cache-slot IDs in the caller's order.
     std::vector<int32_t> stage(size_t group, const std::vector<int32_t> & expert_ids);
     // Invalidate placement at an independent request boundary, retaining all allocations and statistics.
@@ -82,8 +80,12 @@ public:
     // it and uploads weights; failures propagate instead of executing stale data.
     static bool evaluate(ggml_tensor * tensor, bool ask, void * store);
     Statistics statistics() const noexcept;
+    // Borrowed session owner; standalone low-level stores have no engine.
+    modules::MoeEngine * moe_engine() const noexcept { return engine_; }
 
 private:
+    friend class modules::MoeEngine;
+    modules::MoeEngine * engine_ = nullptr;
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -1,4 +1,4 @@
-#include "engine/framework/modules/moe_feed_forward_module.h"
+#include "engine/framework/moe_engine/moe_feed_forward_module.h"
 
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/primitive_modules.h"

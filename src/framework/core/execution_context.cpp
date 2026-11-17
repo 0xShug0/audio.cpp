@@ -1,15 +1,11 @@
 #include "engine/framework/core/execution_context.h"
 
-#include <cmath>
-#include <stdexcept>
 #include <utility>
 
 namespace engine::core {
 
 ExecutionContext::ExecutionContext(const BackendConfig & config, MoePolicyConfig policy)
     : config_(config), moe_policy_(policy) {
-    if (!std::isfinite(policy.cpu_share) || policy.cpu_share < 0 || policy.cpu_share > 1)
-        throw std::invalid_argument("MoE CPU share must be between zero and one");
     backend_ = init_backend(config);
     if (backend_ != nullptr && config_.threads > 0) {
         set_backend_threads(backend_, config_.threads);

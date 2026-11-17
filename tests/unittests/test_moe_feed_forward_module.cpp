@@ -1,7 +1,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/moe_feed_forward_module.h"
+#include "engine/framework/moe_engine/moe_feed_forward_module.h"
 
 #include <chrono>
 #include <cmath>

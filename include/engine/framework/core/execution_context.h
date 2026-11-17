@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/backend.h"
-#include "engine/framework/core/moe_policy.h"
+#include "engine/framework/moe_engine/moe_policy.h"
 
 namespace engine::core {
 

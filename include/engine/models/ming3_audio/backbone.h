@@ -2,9 +2,9 @@
 
 #include "engine/models/ming3_audio/assets.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/core/moe_resources.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/moe_feed_forward_module.h"
+#include "engine/framework/moe_engine/moe_feed_forward_module.h"
 #include "engine/framework/modules/norm_modules.h"
 
 #include <array>
@@ -12,7 +12,7 @@
 namespace engine::models::ming3_audio {
 
 struct ThinkerOptions {
-    core::MoeExecutionPolicy moe{core::MoeExpertResidency::Backend, true, 8, 1, {}, 0};
+    core::MoeExecutionPolicy moe{core::MoeExpertResidency::Backend, true, 8, 1, {}};
 };
 
 struct KdaWeights {
@@ -51,7 +51,7 @@ struct ThinkerWeights {
                    const ThinkerConfig & config, const ThinkerOptions & options = {});
 
     core::BackendWeightStore store;
-    std::unique_ptr<core::MoeResources> experts;
+    std::unique_ptr<modules::MoeEngine> experts;
     core::TensorValue embedding;
     core::TensorValue head;
     modules::NormWeights norm;

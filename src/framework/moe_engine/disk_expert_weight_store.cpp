@@ -1,10 +1,10 @@
-#include "engine/framework/core/disk_expert_weight_store.h"
+#include "engine/framework/moe_engine/disk_expert_weight_store.h"
 
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/binary.h"
 #include "engine/framework/core/prepared_graph.h"
-#include "engine/framework/core/moe_policy.h"
+#include "engine/framework/moe_engine/cache_policy.h"
 
 #include <ggml-alloc.h>
 #include <gguf.h>
@@ -49,10 +49,7 @@ public:
         std::vector<Projection> projections;
         std::vector<ggml_tensor *> tensors;
         std::vector<int32_t> expert_ids;
-        std::vector<uint64_t> last_used;
-        std::vector<uint64_t> frequency;
-        uint64_t accesses = 0;
-        std::unique_ptr<MoeCpuShareState> cpu_share;
+        std::unique_ptr<MoeCachePolicy> cache_policy;
         std::unique_ptr<ggml_context, ContextDeleter> host_context;
         std::vector<ggml_tensor *> host_tensors;
         std::vector<std::unique_ptr<ggml_backend_buffer, BufferDeleter>> host_views;
@@ -114,42 +111,6 @@ public:
         mapped_file = io::read_binary_blob(path, true);
     }
 
-    void prepare_frequency(Group & group) {
-        group.frequency.assign(static_cast<size_t>(group.projections.front().experts), 0);
-    }
-    void touch_frequency(Group & group, const std::unordered_set<int32_t> & required) {
-        if (++group.accesses % decay_steps == 0)
-            for (auto & count : group.frequency) count /= 2;
-        for (auto id : required) ++group.frequency[id];
-    }
-    void reset_frequency(Group & group) {
-        std::fill(group.frequency.begin(), group.frequency.end(), 0);
-        group.accesses = 0;
-    }
-
-    size_t evict_lru(const Group & group, const std::vector<int32_t> & ids,
-        const std::unordered_set<int32_t> & required) const {
-        size_t slot = ids.size();
-        for (size_t candidate = 0; candidate < ids.size(); ++candidate) {
-            if (required.count(ids[candidate])) continue;
-            if (slot == ids.size() || group.last_used[candidate] < group.last_used[slot]) slot = candidate;
-        }
-        return slot;
-    }
-
-    size_t evict_frequency(const Group & group, const std::vector<int32_t> & ids,
-        const std::unordered_set<int32_t> & required) const {
-        size_t slot = ids.size();
-        for (size_t candidate = 0; candidate < ids.size(); ++candidate) {
-            if (required.count(ids[candidate])) continue;
-            if (ids[candidate] < 0) return candidate;
-            if (slot == ids.size() || group.frequency[ids[candidate]] < group.frequency[ids[slot]] ||
-                (group.frequency[ids[candidate]] == group.frequency[ids[slot]] &&
-                 group.last_used[candidate] < group.last_used[slot])) slot = candidate;
-        }
-        return slot;
-    }
-
     std::vector<int32_t> stage(std::vector<int32_t> ids, size_t index) {
         const auto stage_started = std::chrono::steady_clock::now();
         auto & group = *groups.at(index);
@@ -158,8 +119,7 @@ public:
         for (const auto id : required) {
             if (id < 0 || id >= group.projections.front().experts) throw std::runtime_error("disk expert routing ID out of range");
         }
-        ++clock;
-        if (touch_policy) (this->*touch_policy)(group, required);
+        group.cache_policy->access(required, ++clock);
         struct Miss { int32_t id; size_t slot; };
         std::vector<Miss> misses;
         auto planned_ids = group.expert_ids;
@@ -170,13 +130,15 @@ public:
                 slot = static_cast<size_t>(found - planned_ids.begin());
                 ++stats.cache_hits;
             } else {
-                slot = (this->*evict_policy)(group, planned_ids, required);
+                slot = group.cache_policy->victim(planned_ids, required);
+                if (slot >= planned_ids.size() || required.count(planned_ids[slot]))
+                    throw std::logic_error("cache policy selected an invalid or protected victim");
                 planned_ids[slot] = id;
                 misses.push_back({id, slot});
                 // This slot must not remain a hit if a later read/upload fails.
                 group.expert_ids[slot] = -1;
             }
-            group.last_used[slot] = clock;
+            group.cache_policy->touch(slot, clock);
         }
         std::sort(misses.begin(), misses.end(), [](const Miss & a, const Miss & b) { return a.slot < b.slot; });
         auto * staging = pin_experts ? nullptr : host_staging.at(group.backend)->data();
@@ -270,11 +232,7 @@ public:
     std::map<std::string, size_t> routes;
     std::map<ggml_backend_t, std::unique_ptr<Staging>> host_staging;
     uint64_t clock = 0;
-    uint64_t decay_steps = 0;
-    void (Impl::*prepare_policy)(Group &) = nullptr;
-    void (Impl::*touch_policy)(Group &, const std::unordered_set<int32_t> &) = nullptr;
-    size_t (Impl::*evict_policy)(const Group &, const std::vector<int32_t> &, const std::unordered_set<int32_t> &) const = &Impl::evict_lru;
-    void (Impl::*reset_policy)(Group &) = nullptr;
+    MoeCacheFactory cache_factory = make_moe_lru_cache;
     uint64_t cache_epoch = 0;
     Statistics stats;
 };
@@ -321,8 +279,8 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     // Unoccupied slots are valid zero weights for padded batched expert work.
     ggml_backend_buffer_clear(group->buffer, 0);
     group->expert_ids.assign(static_cast<size_t>(slots), -1);
-    group->last_used.assign(static_cast<size_t>(slots), 0);
-    if (impl_->prepare_policy) (impl_.get()->*impl_->prepare_policy)(*group);
+    group->cache_policy = impl_->cache_factory(static_cast<size_t>(group->projections.front().experts),
+        static_cast<size_t>(slots));
     auto stats = impl_->stats;
     std::unique_ptr<Impl::Staging> replacement_staging;
     const auto staging = impl_->host_staging.find(backend);
@@ -443,18 +401,6 @@ uint64_t DiskExpertWeightStore::cache_epoch() const {
     return impl_->cache_epoch;
 }
 
-MoeCpuShareState & DiskExpertWeightStore::cpu_share_state(size_t group) {
-    auto & cache = *impl_->groups.at(group);
-    if (!cache.cpu_share) {
-        auto state = std::make_unique<MoeCpuShareState>();
-        const auto experts = static_cast<size_t>(cache.projections.front().experts);
-        state->frequency.assign(experts, 0);
-        state->last_use.assign(experts, -1);
-        cache.cpu_share = std::move(state);
-    }
-    return *cache.cpu_share;
-}
-
 ggml_tensor * DiskExpertWeightStore::route(ModuleBuildContext & ctx, ggml_tensor * ids, size_t group) const {
     if (ids->type != GGML_TYPE_I32) throw std::runtime_error("disk expert routing requires I32 IDs");
     if (group >= impl_->groups.size()) throw std::out_of_range("disk expert group not found");
@@ -480,35 +426,19 @@ std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vecto
 }
 
 void DiskExpertWeightStore::use_frequency_cache(uint64_t decay_steps) {
-    if (!decay_steps || !impl_->groups.empty())
-        throw std::invalid_argument("frequency cache must be configured with positive decay_steps before registering groups");
-    impl_->decay_steps = decay_steps;
-    impl_->prepare_policy = &Impl::prepare_frequency;
-    impl_->touch_policy = &Impl::touch_frequency;
-    impl_->evict_policy = &Impl::evict_frequency;
-    impl_->reset_policy = &Impl::reset_frequency;
+    configure_cache(prepare_moe_frequency_cache(decay_steps));
 }
 
-void DiskExpertWeightStore::configure_cache(const MoePolicyConfig & policy) {
-    switch (policy.cache) {
-    case MoeCache::Lru:
-        if (!impl_->groups.empty())
-            throw std::invalid_argument("cache policy must be configured before registering groups");
-        impl_->prepare_policy = nullptr;
-        impl_->touch_policy = nullptr;
-        impl_->evict_policy = &Impl::evict_lru;
-        impl_->reset_policy = nullptr;
-        break;
-    case MoeCache::FrequencyAware: use_frequency_cache(policy.decay_steps); break;
-    }
+void DiskExpertWeightStore::configure_cache(MoeCacheFactory factory) {
+    if (!impl_->groups.empty()) throw std::invalid_argument("cache policy must be configured before registering groups");
+    impl_->cache_factory = std::move(factory);
 }
 
 void DiskExpertWeightStore::invalidate_cache() {
     ++impl_->cache_epoch;
     for (auto & group : impl_->groups) {
         std::fill(group->expert_ids.begin(), group->expert_ids.end(), -1);
-        std::fill(group->last_used.begin(), group->last_used.end(), 0);
-        if (impl_->reset_policy) (impl_.get()->*impl_->reset_policy)(*group);
+        group->cache_policy->reset();
     }
     impl_->clock = 0;
 }

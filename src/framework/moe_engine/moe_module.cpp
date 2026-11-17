@@ -1,4 +1,4 @@
-#include "engine/framework/modules/moe_module.h"
+#include "engine/framework/moe_engine/moe_module.h"
 #include "engine/framework/core/prepared_graph.h"
 
 #include <cmath>

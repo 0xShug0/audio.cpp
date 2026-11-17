@@ -1,7 +1,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/moe_module.h"
+#include "engine/framework/moe_engine/moe_module.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include <ggml-alloc.h>
 

@@ -98,7 +98,7 @@ int main(int argc, char ** argv) {
                 execution.backend_type(), "test.drama3.primary", 1024 * 1024);
             engine::core::MoeExecutionPolicy policy;
             policy.residency = split ? engine::core::MoeExpertResidency::Staged : engine::core::MoeExpertResidency::Backend;
-            weights->experts = std::make_unique<engine::core::MoeResources>(execution, *norm_source,
+            weights->experts = std::make_unique<engine::modules::MoeEngine>(execution, *norm_source,
                 *weights->store, policy, "test.drama3.cpu", 1024 * 1024);
             for (bool buffer_failure : {true, false}) {
                 fail_buffer = buffer_failure;

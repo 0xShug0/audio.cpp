@@ -3,18 +3,18 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/core/disk_expert_weight_store.h"
+#include "engine/framework/moe_engine/disk_expert_weight_store.h"
 #include "engine/framework/core/graph_workspace.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/moe_module.h"
-#include "engine/framework/modules/moe_feed_forward_module.h"
+#include "engine/framework/moe_engine/moe_module.h"
+#include "engine/framework/moe_engine/moe_feed_forward_module.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/positional_modules.h"
-#include "engine/framework/modules/staged_moe_runtime.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 
 #include <ggml-backend.h>
 
@@ -164,30 +164,36 @@ private:
     };
 
     // Expert-cache prefill: a 256-row chunk routes more experts than the per-layer cache holds, so every MoE layer
-    // runs through StagedMoeRuntime between per-layer graphs. Full AttnRes sources cross graph boundaries through
+    // runs through the engine between per-layer graphs. Full AttnRes sources cross graph boundaries through
     // persistent stacks.
     struct OffloadGraph {
         GraphShape shape;
         GraphInputs inputs;
         std::shared_ptr<core::GraphWorkspace> workspace;
         std::unique_ptr<core::PreparedGraph> prepared;
-        std::unique_ptr<modules::StagedMoeRuntime> staged;
-        std::vector<core::PreparedGraph::GraphId> layer_graphs, finish_graphs;
-        std::vector<int64_t> staged_layers;
+        std::unique_ptr<modules::MoeExecutionPlan> moe;
         core::PreparedGraph::GraphId final_graph = 0;
         ggml_tensor * logits = nullptr;
 
+        struct LayerGraph {
+            core::PreparedGraph::GraphId backbone;
+            std::optional<size_t> expert;
+            core::PreparedGraph::GraphId finish = 0;
+        };
+        std::vector<LayerGraph> layers;
+
         void run() {
+            uint64_t expert_rows = 0;
             prepared->compute(0);
-            uint64_t rows = 0;
-            for (size_t layer = 0; layer < layer_graphs.size(); ++layer) {
-                prepared->compute(layer_graphs[layer]);
-                if (staged_layers[layer] < 0) continue;
-                rows += staged->run(static_cast<size_t>(staged_layers[layer]));
-                prepared->compute(finish_graphs[layer]);
+            for (const auto & layer : layers) {
+                prepared->compute(layer.backbone);
+                if (layer.expert) {
+                    expert_rows += moe->run(*layer.expert);
+                    prepared->compute(layer.finish);
+                }
             }
             prepared->compute(final_graph);
-            debug::timing_log_scalar("zonos3.offload_prefill_expert_rows", rows);
+            debug::timing_log_scalar("zonos3.offload_prefill_expert_rows", expert_rows);
         }
     };
 
@@ -329,7 +335,7 @@ private:
                 }
             }
         }
-        resources_ = std::make_unique<core::MoeResources>(execution_, source, *expert_weights, options_.moe,
+        resources_ = std::make_unique<modules::MoeEngine>(execution_, source, *expert_weights, options_.moe,
                                                         "zonos3.backbone.experts", 16 * 1024 * 1024);
         disk_store_ = resources_->disk_store();
         auto native = [&](const std::string & name, std::vector<int64_t> shape) {
@@ -413,18 +419,18 @@ private:
                 const int64_t latent = bank[2];
                 const std::vector<std::string> names{p + "ffn_up_exps.weight", p + "ffn_gate_exps.weight",
                                                      p + "ffn_down_exps.weight"};
-                std::vector<core::MoeExpertTensorBinding> bindings;
+                std::vector<modules::MoeExpertTensorBinding> bindings;
                 const std::vector<std::vector<int64_t>> shapes{bank, bank, {experts, latent, hidden}};
                 for (size_t i = 0; i < names.size(); ++i) {
                     consumed_.insert(names[i]);
-                    bindings.push_back({names[i], names[i], shapes[i], assets::TensorStorageType::Native});
+                    bindings.push_back({i == 0 ? modules::MoeExpertProjection::Up :
+                        i == 1 ? modules::MoeExpertProjection::Gate : modules::MoeExpertProjection::Down,
+                        names[i], names[i], shapes[i], assets::TensorStorageType::Native});
                 }
                 const auto & experts_layer = resources_->bind_layer(static_cast<size_t>(layer - 1),
                     static_cast<size_t>(layer), bindings, w.top_k);
                 w.disk_group = experts_layer.disk_group;
-                w.ffn.experts.up = experts_layer.weights[0].tensor;
-                w.ffn.experts.gate = experts_layer.weights[1].tensor;
-                w.ffn.experts.down = experts_layer.weights[2].tensor;
+                w.ffn.experts = experts_layer.projections;
                 w.ffn.latent_down.weight = matmul(p + "ffn_latent_down.weight", {latent, D});
                 w.ffn.latent_up.weight = matmul(p + "ffn_latent_up.weight", {D, latent});
                 w.ffn.router = matmul(p + "router.weight", {experts, D});
@@ -707,16 +713,13 @@ private:
         const int D = hp_.n_embd;
         int64_t bucket = std::min<int64_t>(T, 32);
         while ((bucket & (bucket - 1)) != 0) ++bucket;
-        modules::StagedMoeConfig staged;
+        modules::MoeBatchConfig staged;
         staged.hidden_size = latent_;
         staged.tokens = T;
-        staged.selected = top_k_;
-        staged.experts = hp_.n_expert;
-        staged.cache_slots = options_.moe.cache_slots;
         for (int64_t count = 1; count <= bucket; count *= 2) staged.rows_per_expert.push_back(count);
         staged.scatter_index_type = GGML_TYPE_I32;
         out->workspace = std::make_shared<core::GraphWorkspace>(execution_.backend());
-        out->staged = std::make_unique<modules::StagedMoeRuntime>(execution_, std::move(staged), out->workspace, resources_->cpu_execution());
+        out->moe = resources_->create_plan(out->workspace);
         const size_t nodes = 2048;
         const size_t graphs = static_cast<size_t>(2 * hp_.n_layer + 2);
         out->prepared = std::make_unique<core::PreparedGraph>(execution_, core::PreparedGraphConfig{
@@ -755,6 +758,7 @@ private:
         };
         auto * embed_graph = out->prepared->graph(0);
         append(embed_graph, embed(ctx, out->inputs, T), 0);
+        size_t moe_ordinal = 0;
         for (int layer = 0; layer < hp_.n_layer; ++layer) {
             const auto & w = layers_[static_cast<size_t>(layer)];
             const auto id = out->prepared->add_graph("layer_" + std::to_string(layer), nodes);
@@ -762,22 +766,19 @@ private:
             auto * input = rms_weighted(ctx, route_stacked(2 * layer + 1, 2 * layer), w.attn_norm, hp_.rms_eps);
             auto * mixer = w.gdn ? gated_delta_net(ctx, graph, w, input, shape) : attention(ctx, w, input, out->inputs, shape);
             input = rms_weighted(ctx, route_with(graph, mixer, 2 * layer + 2, 2 * layer + 1), w.ffn_norm, hp_.rms_eps);
-            out->layer_graphs.push_back(id);
+            out->layers.push_back({id, std::nullopt});
             if (w.top_k == 0) {
                 append(graph, dense_ffn(ctx, w, input), 2 * layer + 2);
-                out->finish_graphs.push_back(0);
-                out->staged_layers.push_back(-1);
                 continue;
             }
             const auto inputs = modules::MoeFeedForwardModule(w.ffn_config).build_inputs(ctx, input, w.ffn);
-            out->staged->build_inputs(ctx, graph, inputs.experts, inputs.routing);
-            out->staged_layers.push_back(static_cast<int64_t>(out->staged->add_layer(
-                modules::MoeModule({modules::MoeActivation::SwiGlu}),
-                w.ffn.experts, *disk_store_, w.disk_group)));
+            const auto expert = out->moe->add_layer(moe_ordinal++, staged, {modules::MoeActivation::SwiGlu});
+            out->moe->build_inputs(expert, ctx, graph, inputs.experts, inputs.routing);
             const auto finish = out->prepared->add_graph("finish_" + std::to_string(layer), nodes);
-            auto * combined = modules::MoeModule::combine(ctx, out->staged->output(), out->staged->routing_weights());
+            auto * combined = modules::MoeModule::combine(ctx, out->moe->output(expert), out->moe->routing_weights(expert));
             append(out->prepared->graph(finish), modules::MoeFeedForwardModule(w.ffn_config).finish(ctx, combined, nullptr, w.ffn), 2 * layer + 2);
-            out->finish_graphs.push_back(finish);
+            out->layers.back().expert = expert;
+            out->layers.back().finish = finish;
         }
         out->final_graph = out->prepared->add_graph("final", nodes);
         out->logits = head(ctx, route_stacked(Q, Q - 1), T, 1);
@@ -785,7 +786,7 @@ private:
         ggml_build_forward_expand(out->prepared->graph(out->final_graph), out->logits);
         out->workspace->add(*out->prepared);
         out->workspace->prepare();
-        out->staged->prepare();
+        out->moe->prepare();
         return out;
     }
 
@@ -859,7 +860,7 @@ private:
     std::unique_ptr<core::BackendWeightStore> store_;
     std::vector<ggml_backend_buffer_type_t> extra_buffer_types_;
     std::vector<std::pair<ggml_backend_buffer_type_t, std::unique_ptr<core::BackendWeightStore>>> extra_stores_;
-    std::unique_ptr<core::MoeResources> resources_;
+    std::unique_ptr<modules::MoeEngine> resources_;
     core::DiskExpertWeightStore * disk_store_ = nullptr;
     std::set<std::string> consumed_;
     std::vector<TensorValue> audio_embd_, cond_embd_;

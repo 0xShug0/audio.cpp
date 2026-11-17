@@ -2,62 +2,14 @@
 
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/graph_workspace.h"
-#include "engine/framework/core/disk_expert_weight_store.h"
-#include "engine/framework/modules/moe_module.h"
+#include "engine/framework/moe_engine/disk_expert_weight_store.h"
+#include "engine/framework/moe_engine/moe_module.h"
+#include "engine/framework/moe_engine/placement_policy.h"
 
 #include <memory>
-#include <optional>
 #include <vector>
 
 namespace engine::modules {
-
-// Opt-in execution policy, separate from weight residency. GPU hits precede
-// misses, so bounded staging cannot evict a hit that has not been consumed.
-// Storage is reserved once; updates reuse it. Cache invalidation resets credit.
-struct StagedMoeConfig;
-
-// Measured costs for this prepared layer/shape. CPU entries match its actual
-// graphs; zero means unsampled. Native GPU nullopt means no original region.
-struct MoePlacementCosts {
-    struct CpuBucket { int64_t rows; double ms; };
-    std::vector<CpuBucket> cpu;
-    double cpu_scale = 1;
-    double gpu_ms_per_row = 0;
-    double mixed_gpu_ms_per_row = 0;
-    double output_copy_ms = 0;
-    double input_submit_ms = 0;
-    double upload_ms_per_expert = 0;
-    double mixed_upload_ms_per_expert = 0;
-    double serial_ms = 0;
-    std::optional<double> native_gpu_ms_per_row;
-};
-
-class MoePlacementPlan {
-public:
-    explicit MoePlacementPlan(size_t experts, core::MoeCpuShareState * history = nullptr);
-    void update(const std::vector<int32_t> & ids, const std::vector<int32_t> & resident,
-        uint64_t cache_epoch, float cpu_share, int64_t tokens = 1);
-    // Distinct logical experts; assignments retain original output-lane indices.
-    void update_cost_aware(const std::vector<int32_t> & ids, const std::vector<int32_t> & resident,
-        const std::vector<std::vector<int32_t>> & assignments,
-        const MoePlacementCosts & costs, const StagedMoeConfig & config);
-    std::vector<int32_t> gpu;
-    std::vector<int32_t> cpu;
-    // True only when unknown candidate costs force CPU execution to sample them.
-    bool calibration_probe = false;
-    struct ChosenPrediction {
-        double cpu_ms; // Unscaled submission-to-completion latency.
-        double gpu_branch_ms;
-        double serial_ms;
-        double gpu_baseline_ms;
-    };
-    std::optional<ChosenPrediction> chosen_prediction;
-private:
-    std::vector<int32_t> misses_;
-    std::vector<uint8_t> seen_;
-    core::MoeCpuShareState owned_history_;
-    core::MoeCpuShareState * history_;
-};
 
 struct StagedMoeConfig {
     int64_t hidden_size = 0;
@@ -72,6 +24,8 @@ struct StagedMoeConfig {
     int64_t input_size = 0;
 };
 
+
+
 // Session-owned staged expert execution. Routing and surrounding backbone graphs
 // are owned by the caller. Expert graph resources live here; activation scratch
 // can be shared with serial backbone phases.
@@ -81,16 +35,6 @@ public:
         uint64_t cpu_assignments = 0;
         uint64_t gpu_assignments = 0;
         double cpu_ms = 0;
-        uint64_t cpu_probe_calls = 0, cpu_probe_assignments = 0;
-        uint64_t cpu_chosen_calls = 0, cpu_chosen_assignments = 0;
-        double cpu_probe_ms = 0, cpu_chosen_ms = 0;
-        // Chosen cost-policy phases only; CPU latency is unscaled and includes
-        // worker scheduling. GPU branch wall is not isolated kernel time.
-        double chosen_cpu_predicted_ms = 0, chosen_cpu_observed_ms = 0;
-        double chosen_gpu_branch_predicted_ms = 0, chosen_gpu_branch_observed_ms = 0;
-        double chosen_serial_predicted_ms = 0, chosen_serial_observed_ms = 0;
-        double chosen_score_ms = 0, chosen_observed_ms = 0;
-        double chosen_gpu_baseline_ms = 0;
     };
     // Hybrid and staged CPU execution borrow a host context that must outlive this runtime.
     StagedMoeRuntime(const core::ExecutionContext & execution, StagedMoeConfig config,
@@ -103,7 +47,7 @@ public:
     // a different backend execute synchronously on the borrowed CPU context;
     // whole-layer CPU placement takes precedence over hybrid sharing.
     size_t add_layer(const MoeModule & module, const MoeExpertWeights & weights,
-        core::DiskExpertWeightStore & store, size_t group);
+        core::DiskExpertWeightStore & store, size_t group, std::shared_ptr<MoePlacementPolicy> placement = {});
     // The caller prepares the primary workspace after registering every GPU graph.
     // CPU-only layers register no primary graphs; do not prepare an empty workspace.
     // Prepares execution plans and the separately owned CPU graph workspace;
@@ -128,6 +72,7 @@ public:
     // owner retains metadata/storage; cost observations include its completion.
     ggml_status run_prepared(size_t layer, ggml_cgraph * output_copy, double input_submit_ms);
     ggml_status run_native(size_t layer, ggml_cgraph * graph, ggml_tensor * bank_ids);
+    bool measures_execution(size_t layer) const;
     size_t workspace_bytes() const;
     Statistics statistics() const;
 private:

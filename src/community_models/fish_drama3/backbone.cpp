@@ -3,16 +3,17 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/core/disk_expert_weight_store.h"
+#include "engine/framework/moe_engine/disk_expert_weight_store.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/gated_delta_net_module.h"
 #include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/moe_module.h"
-#include "engine/framework/modules/moe_feed_forward_module.h"
-#include "engine/framework/modules/staged_moe_runtime.h"
+#include "engine/framework/moe_engine/moe_module.h"
+#include "engine/framework/moe_engine/moe_feed_forward_module.h"
+#include "engine/framework/core/graph_workspace.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/optimizations/fast_kv_modules.h"
@@ -27,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -103,7 +105,7 @@ struct Drama3BackboneWeights {
     modules::GatedDeltaNetModule delta_net;
     modules::MoeFeedForwardConfig ffn_config;
     std::shared_ptr<core::BackendWeightStore> store;
-    std::unique_ptr<core::MoeResources> experts;
+    std::unique_ptr<modules::MoeEngine> experts;
     core::TensorValue token_embedding;
     std::vector<Drama3BackboneLayerWeights> layers;
     modules::NormWeights final_norm;
@@ -196,7 +198,7 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         "drama3_backbone.weights",
         weight_context_bytes);
     const auto & c = config;
-    weights->experts = std::make_unique<core::MoeResources>(execution, source, *weights->store,
+    weights->experts = std::make_unique<modules::MoeEngine>(execution, source, *weights->store,
         c.moe, "drama3_backbone.host_experts", weight_context_bytes);
     const std::string & root = c.weight_prefix;
     weights->token_embedding = weights->store->load_tensor(
@@ -230,17 +232,15 @@ std::shared_ptr<Drama3BackboneWeights> load_qwen35_weights(
         out.ffn.shared_gate.weight = weights->store->load_tensor(source, prefix + ".mlp.shared_expert_gate.weight", storage_type, {1, c.hidden_size});
         const auto bank = prefix + ".mlp.experts.";
         const auto & experts = weights->experts->bind_layer(static_cast<size_t>(layer), static_cast<size_t>(layer), {
-            {bank + "gate_proj.weight", "model_weights/" + bank + "gate_proj.weight",
+            {modules::MoeExpertProjection::Gate, bank + "gate_proj.weight", "model_weights/" + bank + "gate_proj.weight",
                 {layer_experts, c.intermediate_size, c.hidden_size}, storage_type},
-            {bank + "up_proj.weight", "model_weights/" + bank + "up_proj.weight",
+            {modules::MoeExpertProjection::Up, bank + "up_proj.weight", "model_weights/" + bank + "up_proj.weight",
                 {layer_experts, c.intermediate_size, c.hidden_size}, storage_type},
-            {bank + "down_proj.weight", "model_weights/" + bank + "down_proj.weight",
+            {modules::MoeExpertProjection::Down, bank + "down_proj.weight", "model_weights/" + bank + "down_proj.weight",
                 {layer_experts, c.hidden_size, c.intermediate_size}, storage_type}}, c.experts_per_token);
         out.disk_store = experts.disk_store;
         out.disk_group = experts.disk_group;
-        out.ffn.experts.gate = experts.weights[0].tensor;
-        out.ffn.experts.up = experts.weights[1].tensor;
-        out.ffn.experts.down = experts.weights[2].tensor;
+        out.ffn.experts = experts.projections;
         out.ffn_config = weights->ffn_config;
         out.ffn_config.routing.experts = layer_experts;
         out.ffn_config.routing.selected = c.experts_per_token;
@@ -829,21 +829,19 @@ public:
             nodes, 4 * 1024 * 1024});
         auto * persistent = prepared_->persistent_build_context().ggml;
         const auto h = config.hidden_size;
-        const auto k = config.experts_per_token;
         x_ = ggml_new_tensor_3d(persistent, GGML_TYPE_F32, h, steps, 1);
         residual_ = ggml_new_tensor_3d(persistent, GGML_TYPE_F32, h, steps, 1);
         shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
-        modules::StagedMoeConfig staged_config;
+        modules::MoeBatchConfig staged_config;
         staged_config.hidden_size = h;
         staged_config.tokens = steps;
-        staged_config.selected = k;
-        staged_config.experts = config.experts;
-        staged_config.cache_slots = config.moe.cache_slots;
         staged_config.rows_per_expert = {32};
         staged_config.scatter_index_type = GGML_TYPE_I32;
         workspace_ = std::make_shared<core::GraphWorkspace>(execution.backend());
-        staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, std::move(staged_config), workspace_, weights.experts->cpu_execution());
-        hidden_ = staged_moe_->hidden_input();
+        moe_ = weights.experts->create_plan(workspace_);
+        for (size_t layer = 0; layer < weights.layers.size(); ++layer)
+            moe_->add_layer(layer, staged_config, {});
+        hidden_ = moe_->hidden_input(0);
         positions_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
         mask_ = ggml_new_tensor_4d(persistent, GGML_TYPE_F16, steps, steps, 1, 1);
         for (auto * tensor : {x_, residual_, shared_, positions_, mask_})
@@ -863,10 +861,11 @@ public:
         auto & ctx = prepared_->build_context();
         const auto shape = core::TensorShape::from_dims({1, steps, h});
         auto x = core::wrap_tensor(x_, shape);
-        size_t full = 0, linear = 0;
+        finish_ = prepared_->add_graph("finish", small_nodes);
+        size_t full = 0, linear = 0, layer_index = 0;
         for (const auto & layer : weights.layers) {
-            const auto id = attention_graphs_.empty() ? size_t{0}
-                : prepared_->add_graph("layer_" + std::to_string(attention_graphs_.size()), nodes);
+            const auto id = layer_index == 0 ? size_t{0}
+                : prepared_->add_graph("layer_" + std::to_string(layer_index), nodes);
             auto * graph = prepared_->graph(id);
             const auto positions = core::wrap_tensor(positions_, core::TensorShape::from_dims({steps}), GGML_TYPE_I32);
             const auto mask =
@@ -900,7 +899,7 @@ public:
             normalized = round_activation(ctx, normalized, config);
             const auto moe = modules::MoeFeedForwardModule(layer.ffn_config).build_inputs(ctx,
                 ggml_reshape_2d(ctx.ggml, normalized.tensor, h, steps), layer.ffn);
-            staged_moe_->build_inputs(ctx, graph, moe.experts, moe.routing);
+            moe_->build_inputs(layer_index, ctx, graph, moe.experts, moe.routing);
             for (const auto & copy : std::vector<std::pair<ggml_tensor *, ggml_tensor *>>{
                      {residual.tensor, residual_},
                      {moe.shared, shared_}}) {
@@ -908,19 +907,16 @@ public:
                 auto * source = ggml_reshape_2d(ctx.ggml, copy.first, copy.first->ne[0], steps);
                 ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, source, destination));
             }
-            attention_graphs_.push_back(id);
+            layer_graphs_.push_back(id);
+            ++layer_index;
             if (layer.full_attention)
                 ++full;
             else
                 ++linear;
 
-            staged_moe_->add_layer(modules::MoeModule{},
-                layer.ffn.experts,
-                *layer.disk_store, layer.disk_group);
         }
 
-        finish_ = prepared_->add_graph("finish", small_nodes);
-        auto * reduced = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
+        auto * reduced = modules::MoeModule::combine(ctx, moe_->output(0), moe_->routing_weights(0));
         auto * ffn_output = modules::MoeFeedForwardModule(weights.ffn_config)
             .finish(ctx, reduced, shared_, {});
         auto combined = core::wrap_tensor(ggml_reshape_3d(ctx.ggml, ffn_output, h, steps, 1), shape);
@@ -934,7 +930,7 @@ public:
         ggml_build_forward_expand(prepared_->graph(final_), ggml_cpy(ctx.ggml, normalized.tensor, hidden_));
         workspace_->add(*prepared_);
         workspace_->prepare();
-        staged_moe_->prepare();
+        moe_->prepare();
     }
 
     int64_t steps() const noexcept { return steps_; }
@@ -942,25 +938,25 @@ public:
     Drama3BackboneDecoderForwardResult run(const std::vector<float> & embeddings, int64_t steps) {
         ggml_backend_tensor_set(x_, embeddings.data(), 0, embeddings.size() * sizeof(float));
         const auto k = config_.experts_per_token;
-        double attention_ms = 0, expert_ms = 0;
-        uint64_t expert_work_rows = 0;
-        for (size_t layer = 0; layer < weights_.layers.size(); ++layer) {
+        double backbone_ms = 0, experts_ms = 0;
+        uint64_t expert_rows = 0;
+        for (size_t layer = 0; layer < layer_graphs_.size(); ++layer) {
             auto started = std::chrono::steady_clock::now();
-            prepared_->compute(attention_graphs_[layer]);
-            attention_ms += debug::elapsed_ms(started);
+            prepared_->compute(layer_graphs_[layer]);
+            backbone_ms += debug::elapsed_ms(started);
             started = std::chrono::steady_clock::now();
-            expert_work_rows += staged_moe_->run(layer);
+            expert_rows += moe_->run(layer);
             prepared_->compute(finish_);
-            expert_ms += debug::elapsed_ms(started);
+            experts_ms += debug::elapsed_ms(started);
         }
         prepared_->compute(final_);
         Drama3BackboneDecoderForwardResult result;
         result.steps = steps;
         result.hidden.resize(embeddings.size());
         ggml_backend_tensor_get(hidden_, result.hidden.data(), 0, result.hidden.size() * sizeof(float));
-        debug::timing_log_scalar("drama3.offload_prefill_attention_ms", attention_ms);
-        debug::timing_log_scalar("drama3.offload_prefill_experts_ms", expert_ms);
-        debug::timing_log_scalar("drama3.offload_prefill_expert_work_rows", expert_work_rows);
+        debug::timing_log_scalar("drama3.offload_prefill_attention_ms", backbone_ms);
+        debug::timing_log_scalar("drama3.offload_prefill_experts_ms", experts_ms);
+        debug::timing_log_scalar("drama3.offload_prefill_expert_work_rows", expert_rows);
         debug::timing_log_scalar("drama3.offload_prefill_routed_rows", steps * k * config_.layers);
         return result;
     }
@@ -971,9 +967,9 @@ private:
     Drama3BackboneDecoderConfig config_;
     int64_t steps_;
     std::shared_ptr<core::GraphWorkspace> workspace_;
-    std::vector<core::PreparedGraph::GraphId> attention_graphs_;
-    std::unique_ptr<modules::StagedMoeRuntime> staged_moe_;
+    std::unique_ptr<modules::MoeExecutionPlan> moe_;
     std::unique_ptr<core::PreparedGraph> prepared_;
+    std::vector<core::PreparedGraph::GraphId> layer_graphs_;
     core::PreparedGraph::GraphId finish_ = 0, final_ = 0;
     ggml_tensor * x_ = nullptr;
     ggml_tensor * hidden_ = nullptr;
