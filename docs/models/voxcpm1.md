@@ -132,7 +132,7 @@ checkpoint or session setting, or leaves the optional value unset as described.
 | `prompt_text` | `string` | Model/session default | Text prompt for prompt-continuation voice cloning. |
 | `reference_text` | `string` | Model/session default | Alias for prompt_text; text prompt for prompt-continuation voice cloning. |
 | `text_chunk_size` | `int` | `2048` | Maximum characters per offline text chunk; must be positive. Does not control streaming chunk cadence. Declared range: minimum 1. |
-| `language` | `string` | Model/session default | Language hint for Chinese-script normalization; Cantonese/yue preserves Traditional characters. Inherits structured transcript or voice language when provided. |
+| `language` | `string` | Model/session default | Language hint for Chinese-script normalization. Mandarin converts Traditional to Simplified; Cantonese/yue and explicit non-Chinese languages preserve text. Auto preserves text containing kana; kanji-only Japanese requires ja. Inherits structured transcript or voice language when provided. |
 
 ## Session Options (use with `--session-option`)
 

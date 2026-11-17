@@ -179,6 +179,22 @@ std::string maybe_convert_traditional_to_simplified(
         // Keep Traditional for Cantonese
         return std::string(text);
     }
+    const auto hint = to_lower_ascii(trim_ascii(language));
+    const bool automatic = hint.empty() || hint == "auto" || hint == "none";
+    const auto primary = hint.substr(0, hint.find_first_of("-_"));
+    if (!automatic && primary != "zh" && primary != "cmn" && primary != "zho" && primary != "chi" &&
+        hint != "chinese" && hint != "mandarin" && hint != "中文" && hint != "汉语" && hint != "漢語" &&
+        hint != "普通话" && hint != "普通話") {
+        return std::string(text);
+    }
+    if (automatic) {
+        for (const auto cp : decode_utf8_strict(text, "chinese variant text")) {
+            if ((cp >= 0x3040 && cp <= 0x30FF) || (cp >= 0x31F0 && cp <= 0x31FF) ||
+                (cp >= 0xFF66 && cp <= 0xFF9F) || (cp >= 0x1B000 && cp <= 0x1B16F)) {
+                return std::string(text);
+            }
+        }
+    }
     return convert_traditional_to_simplified(text);
 }
 

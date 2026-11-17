@@ -89,7 +89,7 @@ checkpoint or session setting, or leaves the optional value unset as described.
 | `top_k` | `int` | `30` | Top-k sampling value; default 30. Declared range: minimum 1. |
 | `temperature` | `float` | `0.8` | Semantic-token sampling temperature in (0, 2); default 0.8. Declared range: minimum 0.0, maximum 2.0. |
 | `seed` | `int` | random | Sampling seed for reproducible output; omitted uses a random seed. Declared range: minimum 0. |
-| `language` | `string` | Model/session default | Language hint for Chinese-script normalization; Cantonese/yue preserves Traditional characters. Inherits structured transcript or voice language when provided. |
+| `language` | `string` | Model/session default | Language hint for Chinese-script normalization. Mandarin converts Traditional to Simplified; Cantonese/yue and explicit non-Chinese languages preserve text. Auto preserves text containing kana; kanji-only Japanese requires ja. Inherits structured transcript or voice language when provided. |
 
 ## Session Options (use with `--session-option`)
 
