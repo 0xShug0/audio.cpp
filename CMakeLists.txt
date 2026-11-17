@@ -1562,9 +1562,7 @@ audiocpp_add_model(pocket_tts
         src/models/pocket_tts/assets.cpp
         src/models/pocket_tts/backend_weights.cpp
         src/models/pocket_tts/acoustic_model.cpp
-        src/models/pocket_tts/audio_decoder.cpp
         src/models/pocket_tts/flow_lm.cpp
-        src/models/pocket_tts/mimi_decoder.cpp
         src/models/pocket_tts/mimi_encoder.cpp
         src/models/pocket_tts/text_conditioner.cpp
         src/models/pocket_tts/voice_state_assets.cpp
