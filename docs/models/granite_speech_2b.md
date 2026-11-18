@@ -7,9 +7,11 @@ Spanish, Portuguese, and Japanese, and it writes punctuation and capitals
 itself. A language hint selects the prompt language; without one the model
 recognizes automatically with no language label.
 
-> Experimental: native safetensors plus staged GGUF packages. The
-> `granite_speech_2b_q8_0` package entry is staged (remote upload and the
-> community flip land only after the runtime validation gates pass).
+> Community release: install the pinned IBM snapshot package
+> (`granite_speech_2b_safetensors`), or convert it locally to GGUF with
+> `audiocpp_gguf` (recipe below). The default `granite_speech_2b_q8_0`
+> package is the E2-gated prebuilt artifact and becomes installable once
+> it is uploaded to the release remote.
 
 ## CLI Usage
 
@@ -40,9 +42,11 @@ audiocpp_cli --inspect --family granite_speech_2b --model models/Granite-Speech-
 # Force the embedded spec instead of the checkout's model_specs copy
 audiocpp_cli --inspect --family granite_speech_2b --model models/Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf --model-spec-override embedded
 
-# Staged install target (remote upload pending validation)
+# Install the pinned IBM snapshot package (works today), or convert first
 python3 tools/model_manager_v2.py info granite_speech_2b
-python3 tools/model_manager_v2.py install granite_speech_2b --models-root models
+python3 tools/model_manager_v2.py install granite_speech_2b_safetensors --models-root models
+# After the prebuilt Q8_0 remote upload, the default package installs directly:
+# python3 tools/model_manager_v2.py install granite_speech_2b --models-root models
 ```
 
 ### Conversion
@@ -81,7 +85,7 @@ audiocpp_gguf \
   --overwrite
 ```
 
-Stored-type layout of the staged Q8_0 artifact (954 tensors): 280 Q8_0
+Stored-type layout of the Q8_0 artifact (954 tensors): 280 Q8_0
 (the 40 text layers x q/k/o/v/gate/up/down projections), 658 BF16 (whole
 encoder, Q-Former, embedding table, lm head, norms, biases), 16 I64
 (BatchNorm `num_batches_tracked` counters). The orig artifact holds
@@ -95,7 +99,7 @@ encoder, Q-Former, embedding table, lm head, norms, biases), 16 I64
 | Tasks | `asr` |
 | Modes | `offline` |
 | Languages | `en`, `fr`, `de`, `es`, `pt`, `ja` |
-| Default package | `granite_speech_2b_q8_0` (staged, experimental) |
+| Default package | `granite_speech_2b_q8_0` (prebuilt GGUF; installable once uploaded — until then install `granite_speech_2b_safetensors` or convert locally with the recipe below) |
 | Input | Speech audio |
 | Output | Transcript text, no timestamps |
 
@@ -217,7 +221,7 @@ for both — corpus over the 12 manifest rows: chrF 66.04, BLEU 47.73):
 | en→pt | 59.10 / 20.90 | 60.23 / 33.64 | Long: mid-text paraphrase flip vs Python (BLEU 33.64 vs 37.52) — greedy cascade, see parity note |
 | en→it | 54.85 / 20.56 | 60.57 / 34.74 | Prompt-table target; eval-claims row covers en→it. C++ == Python both |
 | ja→en | 83.80 / 61.05 | 65.48 / 49.95 (12.6 s synth) | Source hint ja exercised. C++ == Python both |
-| en→ja, en→zh, fr/de/es/pt→en | smoke only | — | Implemented + prompt-parity covered; no qualified ref author (ja/zh) or no in-tree audio (fr/de/es/pt sources) — NOT advertised |
+| en→ja, en→zh, fr/de/es/pt→en | smoke only | — | Implemented + prompt-parity covered; no independent human ref author (ja/zh) or no in-tree audio (fr/de/es/pt sources) — NOT advertised |
 
 Parity note: 10 of 12 manifest directions are byte-identical C++ vs Python
 (all shorts, fr/de/it longs, both ja→en). The en→es / en→pt longs diverge
@@ -293,5 +297,5 @@ Word timestamps are not produced. `supports_timestamps` is false.
 
 Apache-2.0 source checkpoint
 ([ibm-granite/granite-speech-5.0-2b](https://huggingface.co/ibm-granite/granite-speech-5.0-2b));
-see [Model licenses](../model_licenses.md). The staged GGUF packages convert
-this checkpoint and keep its license.
+see [Model licenses](../model_licenses.md). The Q8_0 GGUF package converts
+this checkpoint and keeps its license.

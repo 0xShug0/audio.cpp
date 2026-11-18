@@ -2,9 +2,9 @@
   "schema_version": 1,
   "family": "granite_speech_2b",
   "display_name": "Granite Speech 5.0 2B",
-  "description": "IBM Granite Speech 5.0 2B autoregressive multilingual ASR (Conformer encoder, Q-Former projector, Granite text decoder). Transcribes English, French, German, Spanish, Portuguese, and Japanese with punctuation and capitalization. Experimental: native safetensors plus staged GGUF packages pending runtime validation.",
+  "description": "IBM Granite Speech 5.0 2B autoregressive multilingual ASR (Conformer encoder, Q-Former projector, Granite text decoder). Transcribes English, French, German, Spanish, Portuguese, and Japanese with punctuation and capitalization.",
   "category": "asr",
-  "status": "experimental",
+  "status": "community",
   "tasks": [
     "asr"
   ],
@@ -131,6 +131,31 @@
   },
   "packages": [
     {
+      "id": "granite_speech_2b_safetensors",
+      "display_name": "Granite Speech 5.0 2B HF Safetensors",
+      "default": false,
+      "format": "safetensors",
+      "precision": "bf16",
+      "target_directory": "Granite-Speech-5.0-2B-hf",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "processor_config.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "ibm-granite/granite-speech-5.0-2b",
+        "revision": "ec49ca6b1a5e7e9176127e09cb303ab78cbacdf7",
+        "gated": false
+      }
+    },
+    {
       "id": "granite_speech_2b_q8_0",
       "display_name": "Granite Speech 5.0 2B Q8_0 GGUF",
       "default": true,
@@ -160,7 +185,7 @@
       "docs/asr.md",
       "docs/gguf.md"
     ],
-    "summary": "IBM Granite Speech 5.0 2B multilingual offline transcription (experimental; native weights plus staged GGUF)."
+    "summary": "IBM Granite Speech 5.0 2B multilingual offline transcription (native weights, local GGUF conversion, or prebuilt Q8_0 package)."
   },
   "sources": [
     {

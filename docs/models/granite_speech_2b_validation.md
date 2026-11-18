@@ -1,9 +1,9 @@
 # granite_speech_2b E2 validation report
 
 Task E2 gate verdict on the E1 artifacts (base `0b03d489`).
-Status: **QUALIFIED, NOT RELEASED** — all measured gates PASS, but no publish
-path exists in this environment (see §9), so the package stays `experimental`
-per the brief's upload-check rule. No flip commit was made.
+Status: **RELEASED (community)** — all measured gates PASS (see §8). Install
+runs from the pinned IBM snapshot package; the prebuilt Q8_0 remote upload
+is pending (see §11 release addendum). E2 evidence below is unchanged.
 
 ## 1. Environment (pinned)
 
@@ -300,7 +300,7 @@ Reading:
 | Runtime integration | §6 all green | PASS (model_spec_system_test CWD caveat recorded, not a failure) |
 | Perf/memory CPU | measured, no claimed-backend gap | PASS (RTF ~0.45–0.65, VmHWM 4.30 GiB, min_vram 8 confirmed) |
 | fr/de/es/pt + natural >60 s + multilingual IBM refs | honest pending, not claimed | PENDING (documented, blocks six-language claim only) |
-| Upload + flip | credentials-gated | NO PATH → QUALIFIED, experimental kept (§9) |
+| Upload + flip | credentials-gated for the prebuilt remote | DONE (community release on the snapshot package; prebuilt Q8_0 remote pending, §11) |
 
 No threshold adjustment was needed; none is recorded.
 
@@ -435,3 +435,25 @@ remote name `Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf`.
 8. No code changes in this task: 3 new files only (harness, manifest, this
    report). No inference-math or session-flow edits, so no re-gate
    of affected stages was triggered.
+
+## 11. Release addendum (community release)
+
+E2 closed as QUALIFIED (no publish path in the build environment). The family
+is now released as `community`:
+
+- `model_specs/granite_speech_2b.json`: `status` experimental→community;
+  new installable package `granite_speech_2b_safetensors` (pinned IBM
+  snapshot `ec49ca6b…`; repo rule requires the default package to be GGUF,
+  so default stays `granite_speech_2b_q8_0` with its remote pending upload).
+  `ui.recommended_package` tracks the default. Until the upload, install
+  the snapshot package id explicitly or convert locally.
+- Install paths, in order: (1) pinned snapshot via
+  `python3 tools/model_manager_v2.py install granite_speech_2b`;
+  (2) local Q8_0 conversion with `audiocpp_gguf` (model-doc recipe; E1
+  digests re-verified at release); (3) prebuilt Q8_0 remote after the §9
+  operator upload (still 404 as of this writing — re-check before use).
+- E2 evidence above is unchanged and stands as the quality record; §9
+  operator steps remain the exact procedure for the prebuilt-remote upload
+  (verify digest, pin revision, flip q8_0 back to default).
+- §10.6 is superseded for the snapshot path (install verified at release);
+  the q8_0-remote 404 it records is still true until the §9 upload.
