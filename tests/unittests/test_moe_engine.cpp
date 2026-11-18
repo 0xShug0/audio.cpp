@@ -221,6 +221,65 @@ void check_host_bank_failures(const std::filesystem::path & path, engine::core::
 }
 
 
+// Fractional placement is inapplicable to a CPU bank, whether the primary
+// backend is CPU or this is a whole-layer CPU offload in a GPU session.
+void cpu_placement_precedence(core::ExecutionContext & execution, const assets::TensorSource & source,
+    const std::vector<core::TensorValue> & reference_weights) {
+    std::unique_ptr<core::ExecutionContext> auxiliary;
+    auto * host = &execution;
+    if (!core::is_host_backend(execution.backend())) {
+        core::BackendConfig config; config.threads = 8;
+        auxiliary = std::make_unique<core::ExecutionContext>(config); host = auxiliary.get();
+    }
+    moe::PolicyConfig selection;
+    selection.placement = {"placement_cpu_share", {{"share", "1"}}};
+    const auto policy = moe::prepare_policy(selection);
+    auto placement = policy.placement(static_cast<size_t>(experts));
+    detail::ExpertStorage storage(source.source_path(), false, 1, execution.backend(), policy.eviction);
+    const auto group = storage.add_group(names, host->backend(), 4);
+    auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
+    detail::ProgramShape shape;
+    shape.identity = 23; shape.hidden_size = width; shape.input_size = width;
+    shape.tokens = 1; shape.selected = selected; shape.experts = experts; shape.cache_slots = 4;
+    shape.rows_per_expert = {1};
+    detail::ExpertProgram program(execution, shape, workspace, host, policy);
+    const detail::ExpertWeights bank{storage.tensor(group, 0).tensor, storage.tensor(group, 1).tensor, storage.tensor(group, 2).tensor};
+    const auto layer = program.add_layer({}, bank, &storage, group, host->backend(), placement.get());
+    core::PreparedGraph producer(execution, {"test.moe.cpu_precedence", 1024 * 1024, 256, 32 * ggml_tensor_overhead()});
+    auto * persistent = producer.persistent_build_context().ggml;
+    auto * x = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, width, 1);
+    auto * ids = ggml_new_tensor_2d(persistent, GGML_TYPE_I32, selected, 1);
+    auto * mix = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, selected, 1);
+    for (auto * tensor : {x, ids, mix}) ggml_set_input(tensor);
+    producer.allocate_persistent();
+    program.build_inputs(producer.build_context(), producer.graph(), x, {ids, mix});
+    workspace->add(producer); workspace->prepare(); program.prepare();
+    core::PreparedGraph reference(execution, {"test.moe.cpu_precedence.reference", 1024 * 1024, 256});
+    auto * g = reference.build_context().ggml;
+    auto * rows = ggml_reshape_3d(g, x, width, 1, 1);
+    auto * up = ggml_mul_mat_id(g, reference_weights[0].tensor, rows, ids);
+    auto * gate = ggml_silu(g, ggml_mul_mat_id(g, reference_weights[1].tensor, rows, ids));
+    auto * expected = ggml_mul_mat_id(g, reference_weights[2].tensor, ggml_mul(g, gate, up), ids);
+    ggml_set_output(expected); ggml_build_forward_expand(reference.graph(), expected); reference.allocate();
+    std::vector<float> input(static_cast<size_t>(width), 0.01F);
+    const std::vector<float> mixing(static_cast<size_t>(selected), 0.5F);
+    ggml_backend_tensor_set(x, input.data(), 0, input.size() * sizeof(float));
+    ggml_backend_tensor_set(mix, mixing.data(), 0, mixing.size() * sizeof(float));
+    // Fill four cache slots, then force misses at share=1. Old CPU-only
+    // placement throws here; old CPU-layer offload evaluates four padded rows.
+    for (const std::vector<int32_t> & route : {std::vector<int32_t>{0, 1}, {2, 3}, {4, 5}, {0, 1}}) {
+        ggml_backend_tensor_set(ids, route.data(), 0, route.size() * sizeof(int32_t));
+        producer.compute();
+        require(program.run(layer) == static_cast<uint64_t>(selected), "CPU-selected single-token experts lost native top-k execution");
+        reference.compute();
+        const auto actual = core::read_tensor_f32(program.output()), oracle = core::read_tensor_f32(expected);
+        for (size_t element = 0; element < actual.size(); ++element)
+            require(std::isfinite(actual[element]) && std::abs(actual[element] - oracle[element]) <= 1e-6F * (1 + std::abs(oracle[element])),
+                "CPU placement precedence changed expert output");
+    }
+    reference.release(); workspace->reset(); producer.release();
+}
+
 struct ObservationState {
     std::vector<moe::ExecutionObservation> completed;
     std::vector<moe::PolicyNotification> placement_events, cache_events;
@@ -393,6 +452,12 @@ int main(int argc, char ** argv) {
                 compare(execution, *source, mode, 7, true);
                 if (staged) compare(execution, *source, mode, 7, false);
             }
+            cpu_placement_precedence(execution, *source, reference);
+            moe::EngineConfig cpu_share; cpu_share.residency = moe::Residency::Staged; cpu_share.cache_slots = 4;
+            cpu_share.policies.placement = {"placement_cpu_share", {{"share", "1"}}};
+            if (!core::is_host_backend(execution.backend())) cpu_share.cpu_layers = {0};
+            compare(execution, *source, cpu_share, 1, false);
+            compare(execution, *source, cpu_share, 7, true);
             if (!core::is_host_backend(execution.backend())) {
                 moe::EngineConfig hybrid; hybrid.residency = moe::Residency::Staged; hybrid.cache_slots = 4;
                 hybrid.policies.placement = {"placement_cpu_share", {{"share", "0.5"}}};

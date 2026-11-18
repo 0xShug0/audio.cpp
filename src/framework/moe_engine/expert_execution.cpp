@@ -22,7 +22,7 @@ public:
         std::vector<ggml_tensor *> cpu_outputs;
         PlacementPolicy * placement = nullptr;
         PlacementDecision decision;
-        bool cpu_staged = false, direct = false;
+        bool cpu_staged = false, direct = false, place_experts = false;
     };
     struct Hybrid {
         core::ExecutionContext & execution;
@@ -279,10 +279,13 @@ size_t ExpertProgram::add_layer(const ExpertMath & math, const ExpertWeights & w
     layer.store = store;
     layer.group = group;
     layer.cpu_staged = backend != s.execution.backend() && core::is_host_backend(backend);
+    // CPU-only and whole-layer CPU execution do not split work across devices.
+    // Keep the policy binding for requested observations, not placement.
+    layer.place_experts = placement && !core::is_host_backend(backend);
     // A single token fits in one cache batch. Preserve native top-k matmul
     // dimensions instead of evaluating every cache slot and scattering padding.
     layer.direct = s.config.resident || (s.config.tokens == 1 && s.config.rows_per_expert.front() == 1 &&
-        s.config.selected <= s.config.cache_slots && !placement);
+        s.config.selected <= s.config.cache_slots && !layer.place_experts);
     if (layer.cpu_staged) {
         if (!s.cpu_execution || s.cpu_execution->backend() != backend)
             throw std::invalid_argument("staged CPU MoE requires the cache's borrowed host execution context");
@@ -495,7 +498,7 @@ uint64_t ExpertProgram::Impl::run(Layer & binding) {
                 return x != y ? x > y : a < b;
             });
             if (binding.cpu_staged) rows = s.run_cpu_staged(binding, experts);
-            else if (binding.placement) {
+            else if (binding.place_experts) {
                 binding.placement->select({s.policy_experts, s.assignment_counts, binding.store->cached_experts(binding.group),
                     binding.store->cache_epoch(), binding.store->expert_bytes(binding.group), s.config.identity}, binding.decision);
                 std::fill(s.placement_destinations.begin(), s.placement_destinations.end(), uint8_t{0});
