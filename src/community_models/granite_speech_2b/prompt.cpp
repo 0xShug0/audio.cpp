@@ -1,6 +1,7 @@
 #include "engine/community_models/granite_speech_2b/prompt.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/io/text.h"
 
 #include <algorithm>
 #include <cctype>
@@ -94,28 +95,9 @@ std::string granite_speech_2b_build_user_content(std::string_view normalized_cod
     return content;
 }
 
-namespace {
-
-std::string trim_ascii_copy(std::string_view text) {
-    size_t begin = 0;
-    while (begin < text.size() &&
-           (text[begin] == ' ' || text[begin] == '\t' || text[begin] == '\n' ||
-            text[begin] == '\r')) {
-        ++begin;
-    }
-    size_t end = text.size();
-    while (end > begin &&
-           (text[end - 1] == ' ' || text[end - 1] == '\t' || text[end - 1] == '\n' ||
-            text[end - 1] == '\r')) {
-        --end;
-    }
-    return std::string(text.substr(begin, end - begin));
-}
-
-}  // namespace
-
 std::string granite_speech_2b_normalize_target_language_code(std::string_view language) {
-    const std::string code = trim_ascii_copy(language);
+    // Shared trim helper (C1/D ASCII whitespace rule reused for F codes).
+    const std::string code = engine::io::trim_ascii_whitespace(std::string(language));
     std::string lowered;
     lowered.reserve(code.size());
     for (const char ch : code) {
@@ -170,7 +152,8 @@ std::vector<std::string> granite_speech_2b_parse_keyword_terms(
         if (comma == std::string_view::npos) {
             comma = keywords_text.size();
         }
-        std::string term = trim_ascii_copy(keywords_text.substr(start, comma - start));
+        std::string term = engine::io::trim_ascii_whitespace(
+            std::string(keywords_text.substr(start, comma - start)));
         if (!term.empty()) {
             terms.push_back(std::move(term));
         }
@@ -612,8 +595,22 @@ runtime::GreedyCausalDecoderRuntime::Prompt GraniteSpeech2BPromptBuilder::build_
     int64_t audio_tokens,
     std::vector<float> projected_values,
     const std::vector<std::string> & reserved_markers) const {
+    return build_decoder_prompt_with_context(normalized_language_code, "", {},
+                                             audio_tokens, std::move(projected_values),
+                                             reserved_markers);
+}
+
+runtime::GreedyCausalDecoderRuntime::Prompt
+GraniteSpeech2BPromptBuilder::build_decoder_prompt_with_context(
+    std::string_view normalized_source_code,
+    std::string_view normalized_target_code,
+    const std::vector<std::string> & keyword_terms,
+    int64_t audio_tokens,
+    std::vector<float> projected_values,
+    const std::vector<std::string> & reserved_markers) const {
     return granite_speech_2b_build_decoder_prompt(
-        build_prompt_ids(normalized_language_code, audio_tokens, reserved_markers),
+        build_prompt_ids_with_context(normalized_source_code, normalized_target_code,
+                                      keyword_terms, audio_tokens, reserved_markers),
         std::move(projected_values), kGraniteSpeech2BTextHiddenSize, audio_token_id_);
 }
 

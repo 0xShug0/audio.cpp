@@ -432,6 +432,34 @@ void test_fixture_token_parity(const std::filesystem::path & model_dir) {
     const auto plain = builder.build_prompt_ids("en", 36, reserved);
     const auto via_context = builder.build_prompt_ids_with_context("en", "", {}, 36, reserved);
     require_ids_eq(via_context.input_ids, plain.input_ids, "empty context == plain");
+    // The unified decoder entry serves every mode: translation/keyword
+    // decoder prompts carry the with_context IDs (never a silent plain
+    // prompt), with injection positions/values passed through; empty
+    // context reproduces the plain decoder prompt exactly.
+    std::vector<float> values(static_cast<size_t>(36 * 2048), 0.25F);
+    for (const auto & [source, target, terms] :
+         {std::tuple<std::string, std::string, std::vector<std::string>>{"en", "fr", {"Concord"}},
+          {"en", "", {"Concord", "tents"}}, {"", "", {}}}) {
+        const auto ids =
+            builder.build_prompt_ids_with_context(source, target, terms, 36, reserved);
+        auto decoder_prompt = builder.build_decoder_prompt_with_context(
+            source, target, terms, 36, values, reserved);
+        require_ids_eq(decoder_prompt.input_ids, ids.input_ids,
+                       "decoder with_context ids (" + target + ")");
+        test::require_eq(decoder_prompt.injection.tokens, int64_t{36},
+                         "decoder with_context tokens (" + target + ")");
+        require_ids_eq(decoder_prompt.injection.positions, ids.audio_positions,
+                       "decoder with_context positions (" + target + ")");
+        test::require_eq(static_cast<int64_t>(decoder_prompt.injection.values.size()),
+                         int64_t{36 * 2048}, "decoder with_context values (" + target + ")");
+    }
+    const auto plain_decoder = builder.build_decoder_prompt("en", 36, values, reserved);
+    const auto empty_decoder =
+        builder.build_decoder_prompt_with_context("en", "", {}, 36, values, reserved);
+    require_ids_eq(empty_decoder.input_ids, plain_decoder.input_ids,
+                   "empty decoder context == plain");
+    require_ids_eq(empty_decoder.injection.positions, plain_decoder.injection.positions,
+                   "empty decoder positions == plain");
     // Reserved markers inside keyword terms are rejected at encode time.
     bool threw = false;
     try {

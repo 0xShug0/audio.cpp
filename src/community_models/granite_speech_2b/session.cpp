@@ -380,24 +380,26 @@ std::string GraniteSpeech2BSession::transcribe_span(
     auto projected =
         projector_.project(encoder_output.last, encoder_output.steps).projected;
 
-    const GraniteSpeech2BPromptIds prompt_ids =
-        (options.target_language.empty() && options.keywords.empty())
-            ? prompt_builder_.build_prompt_ids(
-                  options.language, features.lengths.audio_placeholders, reserved_markers_)
-            : prompt_builder_.build_prompt_ids_with_context(
-                  options.language, options.target_language, options.keywords,
-                  features.lengths.audio_placeholders, reserved_markers_);
-    const GraniteSpeech2BPromptBudget budget = granite_speech_2b_prompt_budget(prompt_ids);
+    // Single builder entry for all modes (plain ASR = empty target +
+    // empty terms): no caller can silently receive the wrong composer.
+    auto decoder_prompt = prompt_builder_.build_decoder_prompt_with_context(
+        options.language, options.target_language, options.keywords,
+        features.lengths.audio_placeholders, std::move(projected), reserved_markers_);
+    // Budget is enforced on the same IDs the decoder consumes (rebuilt from
+    // the prompt so the check and the generate input cannot diverge).
+    GraniteSpeech2BPromptIds budgeted;
+    budgeted.input_ids = decoder_prompt.input_ids;
+    budgeted.audio_positions = decoder_prompt.injection.positions;
+    budgeted.audio_tokens = decoder_prompt.injection.tokens;
+    const GraniteSpeech2BPromptBudget budget = granite_speech_2b_prompt_budget(budgeted);
     granite_speech_2b_require_prompt_fits(budget);
     granite_speech_2b_require_generation_budget(
         budget.prompt_len, options.max_tokens, kGraniteSpeech2BMaxPositionEmbeddings);
 
-    auto decoder_prompt = granite_speech_2b_build_decoder_prompt(
-        prompt_ids, std::move(projected), kGraniteSpeech2BTextHiddenSize);
     const std::vector<int32_t> generated = decoder_.generate(decoder_prompt, options.max_tokens);
     const bool hit_cap = static_cast<int64_t>(generated.size()) >= options.max_tokens;
     engine::debug::trace_log_scalar(
-        "granite_speech_2b.prompt_tokens", static_cast<int64_t>(prompt_ids.input_ids.size()));
+        "granite_speech_2b.prompt_tokens", static_cast<int64_t>(budget.prompt_len));
     engine::debug::trace_log_scalar(
         "granite_speech_2b.generated_tokens", static_cast<int64_t>(generated.size()));
     engine::debug::trace_log_scalar("granite_speech_2b.stop_cap", hit_cap);

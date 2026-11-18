@@ -151,9 +151,14 @@ Whitespace-only text means no biasing (plain ASR path). The same term list
 is applied to every audio chunk. Caller terms are checked against the 85
 reserved control markers up front (a smuggled marker rejects loudly); the
 per-chunk encode re-checks. IBM cites up to 2000 keywords: a 2000-term list
-on a short clip expands to prompt_len 7067 (text 7031), comfortably inside
-the runtime budget (7067 + 512 << 16384); a 20000-term list overflows and is
-rejected naming the 16384 limit.
+on a short clip (A=36, max_tokens=512) expands to prompt_len 7067 (text
+7031), comfortably inside the runtime budget (7067 + 512 << 16384). The bound
+is per-chunk: longer audio (larger A) or a larger max_tokens reduces the
+usable term budget, so a 2000-term list that fits a 3.5 s clip can overflow
+a 60 s one; a 20000-term list overflows even the short clip and is rejected
+naming the 16384 limit. Padding trims ASCII whitespace only (see the
+prompt.h contract): Unicode padding such as a fullwidth space is preserved
+inside the term verbatim.
 
 Measured (paired C++-native-CLI vs pinned-Python runs on identical audio;
 short-form keyword prompts byte-identical everywhere):
@@ -191,10 +196,10 @@ audiocpp_cli --task asr --family granite_speech_2b --model path/to/checkpoint \
 
 `target_language` travels in request options (CLI `--request-option`,
 JSON `options`); the single-file multipart transcription shape has no
-options channel, so multipart carries keywords only — translation over HTTP
-is JSON-only by design (the batch multipart `options` object is accepted by
-the parser but this family has no native batching, so it cannot run there
-either). `target_language` absent/blank = plain ASR (unchanged behavior);
+options channel, so a `target_language` part there is rejected with a 400
+naming the field (translation over HTTP is JSON-only by design; the batch
+multipart `options` object is accepted by the parser but this family has no
+native batching, so it cannot run there either). `target_language` absent/blank = plain ASR (unchanged behavior);
 unsupported targets reject loudly. With keywords set, translation combines
 with biasing (`translate ... Keywords: ...`); source hint adds a bare
 `The speech is in .... ` prefix (the ASR do-not-translate clause is never

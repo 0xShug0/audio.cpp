@@ -72,8 +72,8 @@ inline constexpr float kGraniteSpeech2BMaxChunkSeconds = 120.0F;
 // keeps one parsing/validation path and matches the OpenAI-compat prompt
 // convention on multipart. target_language travels ONLY in request
 // options["target_language"] (CLI --request-option, JSON options): the
-// single-file multipart shape has no options channel, so multipart carries
-// keywords only; translation over multipart is JSON/CLI-only by design.
+// single-file multipart shape has no options channel, so a target_language
+// part there is rejected loudly (never silently transcribed as ASR).
 struct GraniteSpeech2BRequestOptions {
     std::string language;
     std::string target_language;

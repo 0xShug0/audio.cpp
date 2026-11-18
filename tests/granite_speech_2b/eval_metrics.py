@@ -289,6 +289,43 @@ def run_cli_transcribe(cli, family, model, audio, backend, threads, language,
     return parse_cli_text_output(proc.stdout)
 
 
+def check_manifest(manifest_path):
+    """Manifest sha self-check: every row carrying an audio_path must agree
+    with the file on disk, and all rows sharing one audio_path must carry the
+    identical sha256. Returns nonzero on any mismatch."""
+    import hashlib
+    failures = []
+    seen = {}
+    for lineno, line in enumerate(pathlib.Path(manifest_path).read_text().splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        row = json.loads(line)
+        audio = row.get("audio_path")
+        if not audio:
+            continue
+        try:
+            actual = hashlib.sha256(pathlib.Path(audio).read_bytes()).hexdigest()
+        except OSError as exc:
+            failures.append(f"line {lineno} {row.get('clip_id')}: unreadable audio: {exc}")
+            continue
+        claimed = row.get("audio_sha256")
+        if claimed != actual:
+            failures.append(f"line {lineno} {row.get('clip_id')}: sha {claimed} != file {actual}")
+        if audio in seen and seen[audio] != claimed:
+            failures.append(f"line {lineno} {row.get('clip_id')}: sha differs from an earlier "
+                            f"row for {audio}")
+        seen.setdefault(audio, claimed)
+    if failures:
+        print("MANIFEST CHECK FAILURES:")
+        for f in failures:
+            print(f"  {f}")
+        return 1
+    print(f"manifest check ok ({len(seen)} audio files, "
+          f"{sum(1 for _ in pathlib.Path(manifest_path).read_text().splitlines() if _.strip())} rows)")
+    return 0
+
+
 def self_test():
     """Regression checks for the parser + scoring rules. Exit nonzero on failure."""
     failures = []
@@ -391,9 +428,14 @@ def main():
                         help="optional path to write the JSON result rows")
     parser.add_argument("--self-test", action="store_true",
                         help="run parser/scoring regression checks, no CLI needed")
+    parser.add_argument("--check-manifest", default="",
+                        help="verify every manifest row's audio_sha256 against the file "
+                        "on disk (all rows per path share one sha); no CLI needed")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
+    if args.check_manifest:
+        return check_manifest(args.check_manifest)
     for need in ("manifest", "cli", "model"):
         if not getattr(args, need):
             parser.error(f"--{need} is required unless --self-test is given")

@@ -21,7 +21,8 @@
 // no model-owned splitter hook is needed. HuggingFaceTokenizerJson is
 // decode-only and is NOT used for encode.
 //
-// C2 consumes: GraniteSpeech2BPromptBuilder, build_decoder_prompt (returns
+// C2 consumes: GraniteSpeech2BPromptBuilder, build_decoder_prompt /
+// build_decoder_prompt_with_context (return
 // runtime::GreedyCausalDecoderRuntime::Prompt for generate(..., reuse_graphs
 // = true)), check_granite_speech_2b_prompt_assets, and the EOS helpers below.
 
@@ -105,8 +106,12 @@ std::string_view granite_speech_2b_target_language_name(std::string_view normali
 // Keyword parsing: split text_input.text on ',', trim ASCII whitespace per
 // term, drop empties, preserve UTF-8 and multiword terms verbatim (no case
 // folding, no dedup — the joined list round-trips the caller's text).
-// Whitespace-only input yields no terms (plain path). Reserved control
-// markers are NOT stripped here: the per-chunk encode rejects them loudly.
+// Whitespace-only input yields no terms (plain path). Padding is ASCII
+// whitespace only (space/tab/CR/LF): a fullwidth space (U+3000) or other
+// Unicode padding is preserved inside the term verbatim, matching the
+// no-folding rule — callers needing it trimmed must do so before sending.
+// Reserved control markers are NOT stripped here: the per-chunk encode
+// rejects them loudly.
 std::vector<std::string> granite_speech_2b_parse_keyword_terms(
     std::string_view keywords_text);
 std::string granite_speech_2b_join_keyword_terms(
@@ -227,6 +232,18 @@ public:
         const std::vector<std::string> & reserved_markers = {}) const;
     runtime::GreedyCausalDecoderRuntime::Prompt build_decoder_prompt(
         std::string_view normalized_language_code,
+        int64_t audio_tokens,
+        std::vector<float> projected_values,
+        const std::vector<std::string> & reserved_markers = {}) const;
+    // Task F entry: the single decoder-prompt path for all callers. Routes
+    // through build_prompt_ids_with_context, so translation/keyword callers
+    // can never silently receive the plain ASR prompt; empty target + empty
+    // terms reproduces build_decoder_prompt exactly. The plain overload above
+    // delegates here (one path serves all callers).
+    runtime::GreedyCausalDecoderRuntime::Prompt build_decoder_prompt_with_context(
+        std::string_view normalized_source_code,
+        std::string_view normalized_target_code,
+        const std::vector<std::string> & keyword_terms,
         int64_t audio_tokens,
         std::vector<float> projected_values,
         const std::vector<std::string> & reserved_markers = {}) const;
