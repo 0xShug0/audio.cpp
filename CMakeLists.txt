@@ -4304,6 +4304,26 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(granite_speech_2b_b1_units_test PRIVATE engine_runtime ggml)
         target_include_directories(granite_speech_2b_b1_units_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME granite_speech_2b_b1_units_test COMMAND granite_speech_2b_b1_units_test)
+
+        # granite_speech_2b B2: Conformer encoder + Q-Former projector + parity
+        # probe. Same explicit pattern as B1 (no audiocpp_add_model yet; spec,
+        # loader, and session stay Task D).
+        add_executable(granite_speech_2b_b2_units_test
+            tests/granite_speech_2b/test_granite_speech_2b_b2_units.cpp
+            src/community_models/granite_speech_2b/assets.cpp
+            src/community_models/granite_speech_2b/frontend.cpp
+            src/community_models/granite_speech_2b/encoder.cpp
+            src/community_models/granite_speech_2b/projector.cpp)
+        target_link_libraries(granite_speech_2b_b2_units_test PRIVATE engine_runtime ggml)
+        target_include_directories(granite_speech_2b_b2_units_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        add_test(NAME granite_speech_2b_b2_units_test COMMAND granite_speech_2b_b2_units_test)
+        add_executable(granite_speech_2b_parity_probe
+            tests/granite_speech_2b/granite_speech_2b_parity_probe.cpp
+            src/community_models/granite_speech_2b/assets.cpp
+            src/community_models/granite_speech_2b/frontend.cpp
+            src/community_models/granite_speech_2b/encoder.cpp
+            src/community_models/granite_speech_2b/projector.cpp)
+        target_link_libraries(granite_speech_2b_parity_probe PRIVATE engine_runtime ggml)
     endif()
 
     if (sense_asr IN_LIST AUDIOCPP_LINKED_MODELS)
