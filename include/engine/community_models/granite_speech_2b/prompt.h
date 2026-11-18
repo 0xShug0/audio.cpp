@@ -71,7 +71,10 @@ std::string granite_speech_2b_build_user_content(std::string_view normalized_cod
 // controls): throws std::runtime_error naming the offending marker when any
 // entry of reserved_markers occurs in text. The default list is every
 // special (control) added token from the checkpoint tokenizer.json, so
-// caller text can never smuggle a structural ID through encode.
+// caller text can never smuggle a structural ID through encode. F loads the
+// list once per checkpoint with
+// granite_speech_2b_reserved_markers_from_tokenizer_json and passes it to
+// every per-chunk build call below.
 std::vector<std::string> granite_speech_2b_reserved_markers_from_tokenizer_json(
     const std::filesystem::path & tokenizer_json_path);
 void granite_speech_2b_require_no_reserved_markers(
@@ -106,7 +109,8 @@ struct GraniteSpeech2BPromptIds {
 GraniteSpeech2BPromptIds granite_speech_2b_encode_single_marker_prompt(
     const tokenizers::LlamaBpeTokenizer & tokenizer,
     std::string_view user_content,
-    int32_t audio_token_id = kGraniteSpeech2BAudioTokenId);
+    int32_t audio_token_id = kGraniteSpeech2BAudioTokenId,
+    const std::vector<std::string> & reserved_markers = {});
 GraniteSpeech2BPromptIds granite_speech_2b_expand_audio_markers(
     const std::vector<int32_t> & one_marker_ids,
     int32_t audio_token_id,
@@ -153,11 +157,14 @@ public:
         int32_t audio_token_id = kGraniteSpeech2BAudioTokenId);
 
     GraniteSpeech2BPromptIds build_prompt_ids(
-        std::string_view normalized_language_code, int64_t audio_tokens) const;
+        std::string_view normalized_language_code,
+        int64_t audio_tokens,
+        const std::vector<std::string> & reserved_markers = {}) const;
     runtime::GreedyCausalDecoderRuntime::Prompt build_decoder_prompt(
         std::string_view normalized_language_code,
         int64_t audio_tokens,
-        std::vector<float> projected_values) const;
+        std::vector<float> projected_values,
+        const std::vector<std::string> & reserved_markers = {}) const;
     std::string decode_generated(const std::vector<int32_t> & generated_ids) const;
 
     const tokenizers::LlamaBpeTokenizer & tokenizer() const noexcept { return *tokenizer_; }

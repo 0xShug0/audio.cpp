@@ -380,6 +380,19 @@ void test_injection_rules() {
         }
         test::require(threw, "expansion rejects marker-free prompt");
     }
+    {
+        // A two-marker run is rejected before splicing, so injection
+        // positions can never straddle two runs.
+        bool threw = false;
+        try {
+            (void) g2b::granite_speech_2b_expand_audio_markers(
+                {1, g2b::kGraniteSpeech2BAudioTokenId, g2b::kGraniteSpeech2BAudioTokenId, 2},
+                g2b::kGraniteSpeech2BAudioTokenId, 3);
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        test::require(threw, "expansion rejects two-marker input pre-splice");
+    }
 }
 
 void test_budget_rules() {
@@ -475,6 +488,26 @@ void test_tokenizer_parity(const std::filesystem::path & model_dir) {
         test::require_eq(*pad_id, g2b::kGraniteSpeech2BPadTokenId, "pad id");
     }
     const g2b::GraniteSpeech2BPromptBuilder builder(tokenizer);
+    const auto reserved = g2b::granite_speech_2b_reserved_markers_from_tokenizer_json(
+        model_dir / "tokenizer.json");
+    // The reserved check is wired into the text path: the fixed C1 content
+    // passes the real 85-marker list, while a list naming content words
+    // throws (and the structural audio marker itself is excised, not flagged).
+    {
+        const auto ok = builder.build_prompt_ids("", 1, reserved);
+        test::require_eq(static_cast<int64_t>(ok.audio_positions.size()), int64_t{1},
+                         "reserved list passes clean content");
+        const auto audio_only = builder.build_prompt_ids("", 1, {"<|audio|>"});
+        test::require_eq(static_cast<int64_t>(audio_only.audio_positions.size()), int64_t{1},
+                         "structural marker excised");
+        bool threw = false;
+        try {
+            (void) builder.build_prompt_ids("", 1, {"transcribe"});
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        test::require(threw, "reserved marker via build_prompt_ids throws");
+    }
     for (const char * name : {"c1_prompt_none.json", "c1_prompt_en.json",
                               "c1_prompt_ja.json"}) {
         const auto fixture = load_fixture(name);
@@ -491,7 +524,7 @@ void test_tokenizer_parity(const std::filesystem::path & model_dir) {
         test::require_eq(single.prompt_text, prompt_text, std::string(name) + " prompt bytes");
         require_ids_eq(single.input_ids, one_expected, std::string(name) + " one-marker ids");
         // Builder expansion (A=33) == committed Python expansion.
-        const auto built = builder.build_prompt_ids(code, 33);
+        const auto built = builder.build_prompt_ids(code, 33, reserved);
         require_ids_eq(built.input_ids, expanded_expected, std::string(name) + " expanded");
         test::require_eq(static_cast<int64_t>(built.audio_positions.size()), int64_t{33},
                          std::string(name) + " A=33");
@@ -528,7 +561,7 @@ void test_tokenizer_parity(const std::filesystem::path & model_dir) {
         }
         const auto parsed = json::parse_file(trace_path);
         const auto reference_ids = ids_from_json(parsed.require("input_ids"));
-        const auto built = builder.build_prompt_ids("", audio_tokens);
+        const auto built = builder.build_prompt_ids("", audio_tokens, reserved);
         require_ids_eq(built.input_ids, reference_ids, trace + " expanded ids");
         // Injection positions/count mirror the HF audio mask.
         test::require_eq(static_cast<int64_t>(built.audio_positions.size()), audio_tokens,
@@ -573,6 +606,20 @@ void test_tokenizer_parity(const std::filesystem::path & model_dir) {
 void test_prompt_assets(const std::filesystem::path & model_dir) {
     auto resources = prompt_bundle(model_dir);
     g2b::check_granite_speech_2b_prompt_assets(resources);
+    {
+        const auto tokenizer_json = json::parse_file(model_dir / "tokenizer.json");
+        const auto & added = tokenizer_json.require("added_tokens").as_array();
+        test::require_eq(static_cast<int64_t>(added.size()), int64_t{97},
+                         "total added tokens");
+        int64_t specials = 0;
+        for (const auto & entry : added) {
+            const auto * special = entry.find("special");
+            if (special != nullptr && special->is_bool() && special->as_bool()) {
+                ++specials;
+            }
+        }
+        test::require_eq(specials, int64_t{85}, "special added tokens");
+    }
     const auto markers = g2b::granite_speech_2b_reserved_markers_from_tokenizer_json(
         model_dir / "tokenizer.json");
     test::require_eq(static_cast<int64_t>(markers.size()), int64_t{85}, "special marker count");
@@ -586,41 +633,88 @@ void test_prompt_assets(const std::filesystem::path & model_dir) {
         threw = true;
     }
     test::require(threw, "control marker rejected");
-    // Tampered template / tokenizer settings fail loudly.
+    // Tampered template / tokenizer settings fail loudly. Each edit copies
+    // the four prompt resources and flips one pinned byte/flag.
     const auto tmp = std::filesystem::temp_directory_path() / "g2b_c1_assets";
-    std::filesystem::remove_all(tmp);
-    std::filesystem::create_directories(tmp);
-    for (const char * file :
-         {"tokenizer.json", "tokenizer_config.json", "generation_config.json"}) {
-        std::filesystem::copy_file(model_dir / file, tmp / file);
-    }
+    auto copy_bundle_with_edit = [&](const std::string & file, const std::string & from,
+                                     const std::string & to,
+                                     bool expect_unique_needle) {
+        namespace fs = std::filesystem;
+        fs::remove_all(tmp);
+        fs::create_directories(tmp);
+        for (const char * name :
+             {"tokenizer.json", "tokenizer_config.json", "generation_config.json",
+              "chat_template.jinja"}) {
+            if (name != file) {
+                fs::copy_file(model_dir / name, tmp / name);
+                continue;
+            }
+            std::ifstream in(model_dir / name, std::ios::binary);
+            test::require(!!in, "read " + std::string(name));
+            const std::string original((std::istreambuf_iterator<char>(in)),
+                                       std::istreambuf_iterator<char>());
+            const size_t first = original.find(from);
+            test::require(first != std::string::npos, "edit needle: " + file);
+            if (expect_unique_needle) {
+                test::require(original.find(from, first + 1) == std::string::npos,
+                              "unique needle: " + file);
+            }
+            std::string mutated = original;
+            mutated.replace(first, from.size(), to);
+            std::ofstream out(tmp / name, std::ios::binary);
+            out << mutated;
+        }
+        engine::assets::ResourceBundle edited(tmp);
+        edited.add_model_files({
+            {"tokenizer_json", "tokenizer.json", true},
+            {"tokenizer_config", "tokenizer_config.json", true},
+            {"chat_template", "chat_template.jinja", true},
+            {"generation_config", "generation_config.json", true},
+        });
+        return edited;
+    };
+    auto expect_check_throw = [&](const std::string & file, const std::string & from,
+                                  const std::string & to, bool unique,
+                                  const std::string & label) {
+        auto edited = copy_bundle_with_edit(file, from, to, unique);
+        bool threw = false;
+        try {
+            g2b::check_granite_speech_2b_prompt_assets(edited);
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        test::require(threw, label);
+    };
+    // Drop the pinned space before the assistant cue.
     {
-        std::ifstream in(model_dir / "chat_template.jinja", std::ios::binary);
-        const std::string original((std::istreambuf_iterator<char>(in)),
-                                   std::istreambuf_iterator<char>());
-        std::ofstream out(tmp / "chat_template.jinja", std::ios::binary);
-        // Drop the pinned space before the assistant cue.
-        std::string mutated = original;
-        const std::string needle = "\n ASSISTANT:";
-        const auto pos = mutated.find(needle);
-        test::require(pos != std::string::npos, "template needle");
-        mutated.replace(pos, needle.size(), "\nASSISTANT:");
-        out << mutated;
+        auto bad = copy_bundle_with_edit(
+            "chat_template.jinja", "\n ASSISTANT:", "\nASSISTANT:", true);
+        bool threw = false;
+        try {
+            g2b::check_granite_speech_2b_prompt_assets(bad);
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        test::require(threw, "tampered template rejected");
+        // The loader fails closed too: it runs the asset check itself.
+        threw = false;
+        try {
+            (void) g2b::load_granite_speech_2b_tokenizer(bad);
+        } catch (const std::runtime_error &) {
+            threw = true;
+        }
+        test::require(threw, "loader fails closed on tampered template");
     }
-    engine::assets::ResourceBundle bad(tmp);
-    bad.add_model_files({
-        {"tokenizer_json", "tokenizer.json", true},
-        {"tokenizer_config", "tokenizer_config.json", true},
-        {"chat_template", "chat_template.jinja", true},
-        {"generation_config", "generation_config.json", true},
-    });
-    threw = false;
-    try {
-        g2b::check_granite_speech_2b_prompt_assets(bad);
-    } catch (const std::runtime_error &) {
-        threw = true;
-    }
-    test::require(threw, "tampered template rejected");
+    // Drifted tokenizer flags throw.
+    expect_check_throw(
+        "tokenizer.json", "\"use_regex\": false", "\"use_regex\": true", true,
+        "bytelevel use_regex drift rejected");
+    expect_check_throw(
+        "tokenizer.json", "\"byte_fallback\": false", "\"byte_fallback\": true", true,
+        "byte_fallback drift rejected");
+    expect_check_throw(
+        "tokenizer.json", "\"lstrip\": false", "\"lstrip\": true", false,
+        "added-token lstrip drift rejected");
     std::filesystem::remove_all(tmp);
 }
 

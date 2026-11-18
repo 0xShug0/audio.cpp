@@ -26,6 +26,9 @@ constexpr const char * kPinnedChatTemplate =
 
 }  // namespace
 
+// Defined below; the loader calls it first so a drifted bundle fails closed.
+void check_granite_speech_2b_prompt_assets(const assets::ResourceBundle & resources);
+
 std::string granite_speech_2b_normalize_language_code(std::string_view language) {
     size_t begin = 0;
     while (begin < language.size() &&
@@ -134,6 +137,9 @@ std::string granite_speech_2b_render_single_turn_prompt(std::string_view user_co
 
 std::shared_ptr<tokenizers::LlamaBpeTokenizer> load_granite_speech_2b_tokenizer(
     const assets::ResourceBundle & resources) {
+    // Fail closed at load: verify the staged template + tokenizer settings
+    // before binding, so C2/D call sites cannot skip the drift check.
+    check_granite_speech_2b_prompt_assets(resources);
     tokenizers::LlamaBpeTokenizerSpec spec;
     spec.tokenizer_config_path = resources.require_file("tokenizer_config");
     if (const auto * path = resources.find_file("tokenizer_json")) {
@@ -178,6 +184,10 @@ void check_granite_speech_2b_prompt_assets(const assets::ResourceBundle & resour
         ignore_merges != nullptr && ignore_merges->is_bool() && ignore_merges->as_bool()) {
         throw std::runtime_error("granite_speech_2b tokenizer requires ignore_merges=false");
     }
+    if (model.find("byte_fallback") == nullptr ||
+        model.require("byte_fallback").as_bool()) {
+        throw std::runtime_error("granite_speech_2b tokenizer requires byte_fallback=false");
+    }
     if (tokenizer_json.find("normalizer") == nullptr ||
         !tokenizer_json.find("normalizer")->is_null()) {
         throw std::runtime_error("granite_speech_2b tokenizer must have no normalizer");
@@ -203,6 +213,10 @@ void check_granite_speech_2b_prompt_assets(const assets::ResourceBundle & resour
         steps[1].require("add_prefix_space").as_bool()) {
         throw std::runtime_error("granite_speech_2b ByteLevel must not add a prefix space");
     }
+    if (steps[1].find("use_regex") == nullptr ||
+        steps[1].require("use_regex").as_bool()) {
+        throw std::runtime_error("granite_speech_2b ByteLevel must not use regex splitting");
+    }
     const auto * added = tokenizer_json.find("added_tokens");
     if (added == nullptr || !added->is_array()) {
         throw std::runtime_error("granite_speech_2b tokenizer.json has no added_tokens array");
@@ -214,14 +228,21 @@ void check_granite_speech_2b_prompt_assets(const assets::ResourceBundle & resour
         if (content == nullptr || !content->is_string() || id == nullptr || !id->is_number()) {
             continue;
         }
+        // Every added token must be whitespace-neutral: the encoder splits
+        // on these strings verbatim, so an lstrip/rstrip token would
+        // silently eat caller whitespace.
+        const auto * lstrip = token_config.find("lstrip");
+        const auto * rstrip = token_config.find("rstrip");
+        if (lstrip == nullptr || rstrip == nullptr || !lstrip->is_bool() ||
+            !rstrip->is_bool() || lstrip->as_bool() || rstrip->as_bool()) {
+            throw std::runtime_error(
+                "granite_speech_2b added token must have lstrip/rstrip=false: '" +
+                content->as_string() + "'");
+        }
         if (content->as_string() == kGraniteSpeech2BAudioMarker) {
             const auto * special = token_config.find("special");
-            const auto * lstrip = token_config.find("lstrip");
-            const auto * rstrip = token_config.find("rstrip");
             audio_ok = id->as_i64() == kGraniteSpeech2BAudioTokenId && special != nullptr &&
-                special->is_bool() && special->as_bool() && lstrip != nullptr &&
-                lstrip->is_bool() && !lstrip->as_bool() && rstrip != nullptr &&
-                rstrip->is_bool() && !rstrip->as_bool();
+                special->is_bool() && special->as_bool();
         }
     }
     if (!audio_ok) {
@@ -247,7 +268,19 @@ void check_granite_speech_2b_prompt_assets(const assets::ResourceBundle & resour
 GraniteSpeech2BPromptIds granite_speech_2b_encode_single_marker_prompt(
     const tokenizers::LlamaBpeTokenizer & tokenizer,
     std::string_view user_content,
-    int32_t audio_token_id) {
+    int32_t audio_token_id,
+    const std::vector<std::string> & reserved_markers) {
+    if (!reserved_markers.empty()) {
+        // Excise the single structural marker so the check covers caller
+        // text only. A smuggled second marker still fails the exactly-one
+        // count below; this names the offending marker instead.
+        std::string checkable(user_content);
+        const std::string_view structural = kGraniteSpeech2BAudioMarker;
+        if (const size_t at = checkable.find(structural); at != std::string::npos) {
+            checkable.erase(at, structural.size());
+        }
+        granite_speech_2b_require_no_reserved_markers(checkable, reserved_markers);
+    }
     const std::string prompt = granite_speech_2b_render_single_turn_prompt(user_content);
     GraniteSpeech2BPromptIds out;
     out.prompt_text = prompt;
@@ -270,6 +303,15 @@ GraniteSpeech2BPromptIds granite_speech_2b_expand_audio_markers(
     if (audio_tokens <= 0) {
         throw std::runtime_error("granite_speech_2b expansion needs a positive audio token count");
     }
+    // The single-turn prompt carries exactly one structural marker; splicing
+    // a multi-marker run would silently misplace the injection positions.
+    const int64_t markers = static_cast<int64_t>(
+        std::count(one_marker_ids.begin(), one_marker_ids.end(), audio_token_id));
+    if (markers != 1) {
+        throw std::runtime_error(
+            "granite_speech_2b expansion needs exactly one audio marker, found " +
+            std::to_string(markers));
+    }
     GraniteSpeech2BPromptIds out;
     out.audio_tokens = audio_tokens;
     out.input_ids.reserve(one_marker_ids.size() + static_cast<size_t>(audio_tokens - 1));
@@ -282,9 +324,6 @@ GraniteSpeech2BPromptIds granite_speech_2b_expand_audio_markers(
             out.audio_positions.push_back(static_cast<int32_t>(out.input_ids.size()));
             out.input_ids.push_back(audio_token_id);
         }
-    }
-    if (out.audio_positions.empty()) {
-        throw std::runtime_error("granite_speech_2b prompt carries no audio marker to expand");
     }
     return out;
 }
@@ -387,10 +426,12 @@ GraniteSpeech2BPromptBuilder::GraniteSpeech2BPromptBuilder(
 }
 
 GraniteSpeech2BPromptIds GraniteSpeech2BPromptBuilder::build_prompt_ids(
-    std::string_view normalized_language_code, int64_t audio_tokens) const {
+    std::string_view normalized_language_code,
+    int64_t audio_tokens,
+    const std::vector<std::string> & reserved_markers) const {
     GraniteSpeech2BPromptIds single = granite_speech_2b_encode_single_marker_prompt(
         *tokenizer_, granite_speech_2b_build_user_content(normalized_language_code),
-        audio_token_id_);
+        audio_token_id_, reserved_markers);
     GraniteSpeech2BPromptIds expanded =
         granite_speech_2b_expand_audio_markers(single.input_ids, audio_token_id_, audio_tokens);
     expanded.prompt_text = single.prompt_text;
@@ -400,10 +441,11 @@ GraniteSpeech2BPromptIds GraniteSpeech2BPromptBuilder::build_prompt_ids(
 runtime::GreedyCausalDecoderRuntime::Prompt GraniteSpeech2BPromptBuilder::build_decoder_prompt(
     std::string_view normalized_language_code,
     int64_t audio_tokens,
-    std::vector<float> projected_values) const {
+    std::vector<float> projected_values,
+    const std::vector<std::string> & reserved_markers) const {
     return granite_speech_2b_build_decoder_prompt(
-        build_prompt_ids(normalized_language_code, audio_tokens), std::move(projected_values),
-        kGraniteSpeech2BTextHiddenSize, audio_token_id_);
+        build_prompt_ids(normalized_language_code, audio_tokens, reserved_markers),
+        std::move(projected_values), kGraniteSpeech2BTextHiddenSize, audio_token_id_);
 }
 
 std::string GraniteSpeech2BPromptBuilder::decode_generated(
