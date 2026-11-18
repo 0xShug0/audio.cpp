@@ -179,7 +179,7 @@ in the build environment, so status stays `experimental` with a staged
 `Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf`, E2-gated
 digest `0a8aee12…a636e`). Operator upload + flip steps (fetch-back
 `sha256sum` verify, pin revision, one flip commit: status, backend tags,
-docs, catalog) are in `docs/models/granite_speech_2b_validation.md` §9.
+docs, catalog) are in `docs/reports/granite_speech_2b_validation.md` §9.
 Do not flip to community without independent human refs for translation
 and a re-run of the manager install path against the published bytes.
 
@@ -206,7 +206,7 @@ python tests/granite_speech_2b/compare_trace.py --reference "$GRANITE2B_WORK/tra
 
 `src/community_models/granite_speech_2b/{assets,frontend,encoder,projector,decoder,prompt,session}.cpp`,
 `include/engine/community_models/granite_speech_2b/*.h`,
-`model_specs/granite_speech_2b.json`, `docs/models/{granite_speech_2b,granite_speech_2b_validation}.md`,
+`model_specs/granite_speech_2b.json`, `docs/models/granite_speech_2b.md`, `docs/reports/{granite_speech_2b_porting_notes,granite_speech_2b_validation}.md`,
 `tests/granite_speech_2b/{reference,compare_trace,dump_c2_fixtures,eval_metrics,make_{synth,keyword}_fixture}.py`,
 shared-module opt-ins in `framework/modules/{transformers/{decoder,causal_decoder{,_runtime}},positional_modules}`,
 converter scalar guard in `framework/assets/tensor_source.cpp`, multipart
