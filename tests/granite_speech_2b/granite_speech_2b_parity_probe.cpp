@@ -1,28 +1,40 @@
-// granite_speech_2b parity probe (Task B2).
+// granite_speech_2b parity probe (Tasks B2 + C2).
 //
 // Runs the B1 frontend plus the B2 Conformer encoder and Q-Former projector on
-// CPU (FP32, eager math, threads from --threads) and emits a trace directory
-// with the same stage names, file names, shapes, and trace.json keys as
-// tests/granite_speech_2b/reference.py, so tests/granite_speech_2b/compare_trace.py
-// is the acceptance gate.
+// CPU (FP32, eager math, threads from --threads) and, for --through
+// prefill|generate, the C2 Granite text decoder (device embedding lookup,
+// host audio injection, bounded-block prefill, forced single-token decode).
+// Emits a trace directory with the same stage names, file names, shapes, and
+// trace.json keys as tests/granite_speech_2b/reference.py, so
+// tests/granite_speech_2b/compare_trace.py is the acceptance gate.
 //
 // Usage:
-//   granite_speech_2b_parity_probe --model DIR --audio WAV \
-//     --backend cpu --threads 8 --through frontend|encoder|projector \
-//     --out-dir DIR [--projector-input FILE]
+//
+//   granite_speech_2b_parity_probe --model DIR --audio WAV --backend cpu
+//     --threads 8 --through frontend|encoder|projector|prefill|generate
+//     --out-dir DIR [--projector-input FILE] [--language CODE] [--force-ids FILE]
 //
 // --projector-input feeds a direct encoder_last-shaped [T,1024] fixture into
 // the projector (letting decoder work proceed with reference encoder states);
 // the frontend/encoder still run on --audio for the earlier stages and for
-// span/length metadata, and --through is then limited to projector.
+// span/length metadata, and --through is then limited to
+// projector|prefill|generate.
+// --language selects the IBM source-language hint (reference.py --language
+// choices); without it the default transcription prompt is used.
+// --force-ids takes a JSON list of token IDs as the teacher-forced
+// continuation for generate (default: this run's greedy output, mirroring
+// reference.py --force-ids).
 
 #include "engine/community_models/granite_speech_2b/assets.h"
+#include "engine/community_models/granite_speech_2b/decoder.h"
 #include "engine/community_models/granite_speech_2b/encoder.h"
 #include "engine/community_models/granite_speech_2b/frontend.h"
 #include "engine/community_models/granite_speech_2b/projector.h"
+#include "engine/community_models/granite_speech_2b/prompt.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/core/execution_context.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -260,6 +272,66 @@ std::vector<float> read_f32(const std::filesystem::path & path, size_t expect_el
     return values;
 }
 
+// Minimal JSON reader for a flat list of integer token IDs: "[1, 2, 3]".
+// Only what --force-ids needs; anything else throws.
+std::vector<int32_t> read_id_list(const std::filesystem::path & path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("parity probe cannot open --force-ids file: " + path.string());
+    }
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<int32_t> out;
+    std::string token;
+    bool have_bracket = false;
+    for (char ch : text) {
+        if (ch == '[') {
+            if (have_bracket) {
+                throw std::runtime_error("parity probe --force-ids must be a single flat list");
+            }
+            have_bracket = true;
+        } else if (ch == ']') {
+            if (!have_bracket) {
+                throw std::runtime_error("parity probe --force-ids has an unmatched ']'");
+            }
+            have_bracket = false;
+            if (!token.empty()) {
+                out.push_back(static_cast<int32_t>(std::stol(token)));
+                token.clear();
+            }
+        } else if (ch == ',') {
+            if (!token.empty()) {
+                out.push_back(static_cast<int32_t>(std::stol(token)));
+                token.clear();
+            }
+        } else if (ch == '-' || (ch >= '0' && ch <= '9')) {
+            token += ch;
+        } else if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+            if (!token.empty()) {
+                out.push_back(static_cast<int32_t>(std::stol(token)));
+                token.clear();
+            }
+        } else {
+            throw std::runtime_error(
+                std::string("parity probe --force-ids has an unexpected character: ") + ch);
+        }
+    }
+    if (have_bracket || !token.empty()) {
+        throw std::runtime_error("parity probe --force-ids is not a complete [...] list");
+    }
+    return out;
+}
+
+std::string ids_json(const std::vector<int32_t> & ids) {
+    std::string out = "[";
+    for (size_t i = 0; i < ids.size(); ++i) {
+        if (i != 0) {
+            out += ", ";
+        }
+        out += std::to_string(ids[i]);
+    }
+    return out + "]";
+}
+
 int run(int argc, char ** argv) {
     const std::string model = arg_value(argc, argv, "--model");
     const std::string audio_path = arg_value(argc, argv, "--audio");
@@ -268,11 +340,13 @@ int run(int argc, char ** argv) {
     const std::string through = arg_value(argc, argv, "--through");
     const std::string out_dir = arg_value(argc, argv, "--out-dir");
     const std::string projector_input = arg_value(argc, argv, "--projector-input");
+    const std::string language = arg_value(argc, argv, "--language");
+    const std::string force_ids = arg_value(argc, argv, "--force-ids");
     if (model.empty() || audio_path.empty() || backend.empty() || threads_text.empty() || through.empty() ||
         out_dir.empty() || has_flag(argc, argv, "--help")) {
-        std::cerr << "usage: granite_speech_2b_parity_probe --model DIR --audio WAV "
-                     "--backend cpu --threads 8 --through frontend|encoder|projector "
-                     "--out-dir DIR [--projector-input FILE]\n";
+        std::cerr << "usage: granite_speech_2b_parity_probe --model DIR --audio WAV --backend cpu\n"
+                     "  --threads 8 --through frontend|encoder|projector|prefill|generate --out-dir DIR\n"
+                     "  [--projector-input FILE] [--language CODE] [--force-ids FILE]\n";
         return 2;
     }
     if (backend != "cpu") {
@@ -283,16 +357,18 @@ int run(int argc, char ** argv) {
     if (threads <= 0) {
         throw std::runtime_error("parity probe requires a positive thread count");
     }
-    if (through != "frontend" && through != "encoder" && through != "projector") {
+    if (through != "frontend" && through != "encoder" && through != "projector" && through != "prefill" &&
+        through != "generate") {
         throw std::runtime_error(
-            "parity probe through must be frontend|encoder|projector in Task B2 (prefill|generate belong to Task C): " +
-            through);
+            "parity probe through must be frontend|encoder|projector|prefill|generate: " + through);
     }
-    if (!projector_input.empty() && through != "projector") {
-        throw std::runtime_error("parity probe --projector-input limits --through to projector");
+    if (!projector_input.empty() && through != "projector" && through != "prefill" && through != "generate") {
+        throw std::runtime_error("parity probe --projector-input limits --through to projector|prefill|generate");
     }
-    const bool want_encoder = through == "encoder" || through == "projector";
-    const bool want_projector = through == "projector";
+    const bool want_encoder = through != "frontend";
+    const bool want_projector = through != "frontend" && through != "encoder";
+    const bool want_prefill = through == "prefill" || through == "generate";
+    const bool want_generate = through == "generate";
 
     const auto audio_sha = sha256_file(audio_path);
     const auto model_sha = sha256_file(std::filesystem::path(model) / "model.safetensors");
@@ -330,8 +406,10 @@ int run(int argc, char ** argv) {
     if (want_projector) {
         g2b::GraniteSpeech2BProjectorRuntime projector(
             assets, execution, engine::assets::TensorStorageType::F32);
-        // All graph uploads are done; the reopenable source may drop storage.
-        assets->source->release_storage();
+        if (!want_prefill) {
+            // All graph uploads are done; the reopenable source may drop storage.
+            assets->source->release_storage();
+        }
         if (!projector_input.empty()) {
             const auto fixture = read_f32(
                 projector_input,
@@ -342,6 +420,79 @@ int run(int argc, char ** argv) {
         }
     } else if (want_encoder) {
         assets->source->release_storage();
+    }
+
+    // C2 text decoder (prefill|generate): prompt from the C1 builder over the
+    // projector outputs, then block prefill (+ forced single-token decode and
+    // greedy continuation for generate).
+    g2b::GraniteSpeech2BDecoder::PrefillResult decoder_prefill;
+    std::vector<std::vector<float>> forced_steps;
+    std::vector<int32_t> greedy_ids;
+    std::vector<int32_t> forced_continuation;
+    g2b::GraniteSpeech2BPromptIds expanded_prompt;
+    std::string prompt_text = kDefaultPrompt;
+    std::string language_hint;
+    std::string generated_text;
+    if (want_prefill) {
+        const auto tokenizer = g2b::load_granite_speech_2b_tokenizer(assets->resources);
+        const g2b::GraniteSpeech2BPromptBuilder builder(tokenizer);
+        const std::string normalized =
+            language.empty() ? std::string() : g2b::granite_speech_2b_normalize_language_code(language);
+        if (!language.empty()) {
+            language_hint = normalized;
+        }
+        auto prompt = builder.build_decoder_prompt(normalized, projector_out.audio_placeholders,
+                                                   projector_out.projected);
+        expanded_prompt.input_ids = prompt.input_ids;
+        expanded_prompt.audio_positions = prompt.injection.positions;
+        expanded_prompt.audio_tokens = prompt.injection.tokens;
+        const auto budget = g2b::granite_speech_2b_prompt_budget(expanded_prompt);
+        g2b::granite_speech_2b_require_prompt_fits(budget);
+        prompt_text = g2b::granite_speech_2b_render_single_turn_prompt(
+            g2b::granite_speech_2b_build_user_content(normalized));
+        g2b::GraniteSpeech2BDecoder decoder(assets->source, execution);
+        if (!force_ids.empty()) {
+            forced_continuation = read_id_list(force_ids);
+        }
+        decoder_prefill = decoder.prefill(prompt, kProbeMaxTokens);
+        assets->source->release_storage();
+        if (want_generate) {
+            // forced_step{k} predicts continuation[k]: step 0 is the prefill
+            // last-position distribution; step k>=1 feeds continuation[k-1]
+            // (exactly what generate() does per step). Mirrors
+            // reference.py N_FORCED_STEPS.
+            const size_t n_steps =
+                std::min<size_t>(kProbeForcedSteps, forced_continuation.size());
+            forced_steps.reserve(n_steps);
+            if (n_steps > 0) {
+                forced_steps.push_back(decoder_prefill.last_logits);
+                for (size_t k = 1; k < n_steps; ++k) {
+                    forced_steps.push_back(decoder.decode_token(forced_continuation[k - 1]));
+                }
+            }
+            // Fresh full prefill inside; the forced decode above does not
+            // leak into the greedy continuation.
+            greedy_ids = decoder.generate_greedy(prompt, kProbeMaxTokens);
+            if (force_ids.empty()) {
+                forced_continuation = greedy_ids;
+                // Teacher-forcing the greedy path must reproduce it exactly.
+                for (size_t k = 0; k < forced_steps.size(); ++k) {
+                    int32_t top = 0;
+                    for (size_t i = 1; i < forced_steps[k].size(); ++i) {
+                        if (forced_steps[k][i] > forced_steps[k][top]) {
+                            top = static_cast<int32_t>(i);
+                        }
+                    }
+                    if (top != greedy_ids[k]) {
+                        throw std::runtime_error(
+                            "parity probe forced replay diverges at step " + std::to_string(k));
+                    }
+                }
+            }
+        }
+        generated_text = want_generate
+            ? g2b::granite_speech_2b_decode_generated(*tokenizer, greedy_ids)
+            : std::string();
     }
 
     std::filesystem::create_directories(out_dir);
@@ -361,10 +512,38 @@ int run(int argc, char ** argv) {
     if (want_projector) {
         write_f32(std::filesystem::path(out_dir) / "projected.f32", projector_out.projected);
     }
+    if (want_prefill) {
+        write_f32(std::filesystem::path(out_dir) / "merged_prefill.f32", decoder_prefill.merged);
+        write_f32(std::filesystem::path(out_dir) / "scaled_prefill.f32", decoder_prefill.scaled);
+        // Reference last_pos_logits.f32 is the raw lm_head output: the
+        // reference hooks language_model.lm_head itself, which fires BEFORE
+        // GraniteForCausalLM divides by logits_scaling (verified bitwise:
+        // last_pos_logits == 8 * forced_step0 on all fixtures). The C++
+        // decoder carries the post-scale logits (identical to forced_step0),
+        // so this stage emits the exact x8 inverse (exact in fp32).
+        auto raw_logits = decoder_prefill.last_logits;
+        for (float & value : raw_logits) {
+            value *= 8.0F;
+        }
+        write_f32(std::filesystem::path(out_dir) / "last_pos_logits.f32", raw_logits);
+    }
+    if (want_generate) {
+        for (size_t k = 0; k < forced_steps.size(); ++k) {
+            write_f32(
+                std::filesystem::path(out_dir) / ("forced_step" + std::to_string(k) + ".f32"),
+                forced_steps[k]);
+        }
+    }
 
     // trace.json mirrors reference.py keys; thresholds are the reference
     // PIPELINE entries (the gate reads them from the reference side).
     const auto & lengths = features.lengths;
+    const int64_t prompt_len =
+        want_prefill ? static_cast<int64_t>(expanded_prompt.input_ids.size()) : 0;
+    const int64_t generated_len =
+        want_generate ? static_cast<int64_t>(greedy_ids.size()) : 0;
+    const std::string observed_stop =
+        !want_generate ? "" : (generated_len < kProbeMaxTokens ? "eos" : "budget");
     std::ostringstream json;
     json << "{\n";
     json << "  \"family\": \"granite_speech_2b\",\n";
@@ -382,15 +561,16 @@ int run(int argc, char ** argv) {
          << ", \"span\": [0, " << num_samples << "]},\n";
     json << "  \"lengths\": {\"mel_frames\": " << lengths.mel_frames << ", \"encoder_steps\": "
          << lengths.encoder_steps << ", \"windows\": " << lengths.projector_windows << ", \"audio_tokens\": "
-         << lengths.audio_placeholders << ", \"prompt_len\": 0, \"generated_len\": 0},\n";
-    json << "  \"prompt\": " << json_escape(kDefaultPrompt) << ",\n";
-    json << "  \"language_hint\": null,\n";
-    json << "  \"input_ids\": [],\n";
+         << lengths.audio_placeholders << ", \"prompt_len\": " << prompt_len << ", \"generated_len\": "
+         << generated_len << "},\n";
+    json << "  \"prompt\": " << json_escape(prompt_text) << ",\n";
+    json << "  \"language_hint\": " << (language_hint.empty() ? "null" : json_escape(language_hint)) << ",\n";
+    json << "  \"input_ids\": " << (want_prefill ? ids_json(expanded_prompt.input_ids) : "[]") << ",\n";
     json << "  \"max_tokens\": " << kProbeMaxTokens << ",\n";
-    json << "  \"generated_ids\": [],\n";
-    json << "  \"observed_stop\": \"\",\n";
+    json << "  \"generated_ids\": " << (want_generate ? ids_json(greedy_ids) : "[]") << ",\n";
+    json << "  \"observed_stop\": " << json_escape(observed_stop) << ",\n";
     json << "  \"eos_token_id\": " << assets->config.text.eos_token_id << ",\n";
-    json << "  \"text\": \"\",\n";
+    json << "  \"text\": " << json_escape(generated_text) << ",\n";
     json << "  \"pinned\": true,\n";
     json << "  \"allow_unpinned\": false,\n";
     const auto & enc = assets->config.encoder;
@@ -446,21 +626,54 @@ int run(int argc, char ** argv) {
          "projected.f32",
          {lengths.audio_placeholders, 2048},
          "\"max_abs\": null, \"rel_rms\": 0.001"},
+        {"merged_prefill",
+         "merged_prefill.f32",
+         {prompt_len, 2048},
+         "\"max_abs\": null, \"rel_rms\": 0.001"},
+        {"scaled_prefill",
+         "scaled_prefill.f32",
+         {prompt_len, 2048},
+         "\"max_abs\": null, \"rel_rms\": 0.001"},
+        {"last_pos_logits",
+         "last_pos_logits.f32",
+         {assets->config.text.vocab_size},
+         "\"max_abs\": 0.02, \"rel_rms\": 0.001"},
     };
-    size_t stage_count = through == "frontend" ? 2 : (through == "encoder" ? 7 : 8);
+    // Forced cached steps (generate only): forced_step{k} predicts
+    // continuation[k] through the single-token decode cache.
+    std::vector<std::tuple<std::string, std::string, std::vector<int64_t>, const char *>> all_stages = stages;
+    for (size_t k = 0; k < forced_steps.size(); ++k) {
+        all_stages.push_back(
+            {"forced_step" + std::to_string(k),
+             "forced_step" + std::to_string(k) + ".f32",
+             {assets->config.text.vocab_size},
+             "\"max_abs\": 0.02, \"rel_rms\": 0.001"});
+    }
+    size_t stage_count = 0;
+    if (through == "frontend") {
+        stage_count = 2;
+    } else if (through == "encoder") {
+        stage_count = 7;
+    } else if (through == "projector") {
+        stage_count = 8;
+    } else if (through == "prefill") {
+        stage_count = 11;
+    } else {
+        stage_count = all_stages.size();
+    }
     for (size_t i = 0; i < stage_count; ++i) {
-        const auto & [name, file, shape, thresholds] = stages[i];
+        const auto & [name, file, shape, thresholds] = all_stages[i];
         json << "    {\"name\": " << json_escape(name) << ", \"file\": " << json_escape(file) << ", \"shape\": "
              << shape_json(shape) << ", \"dtype\": \"float32\", " << thresholds << "}"
              << (i + 1 == stage_count ? "\n" : ",\n");
     }
     json << "  ],\n";
     // Generate cutoff derived the same way as reference.py: n_steps is
-    // min(N_FORCED_STEPS, continuation length); the probe never generates, so
-    // the continuation is bounded by the emitted max_tokens. This stays
-    // forced_step7 for the default 512 and tracks the reference formula if
-    // that bound ever changes.
-    const int gen_steps = kProbeForcedSteps < kProbeMaxTokens ? kProbeForcedSteps : kProbeMaxTokens;
+    // min(N_FORCED_STEPS, continuation length). For probe generate runs the
+    // continuation is the forced list (reference IDs or own greedy output).
+    const size_t gen_steps = want_generate ? forced_steps.size()
+                           : static_cast<size_t>(kProbeForcedSteps < kProbeMaxTokens ? kProbeForcedSteps
+                                                                                      : kProbeMaxTokens);
     const std::string gen_cutoff =
         gen_steps > 0 ? "forced_step" + std::to_string(gen_steps - 1) : "last_pos_logits";
     json << "  \"cutoffs\": {\"frontend\": \"stacked\", \"encoder\": \"encoder_last\", "

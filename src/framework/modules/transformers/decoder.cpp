@@ -51,7 +51,60 @@ int64_t require_head_dim(const DecoderLayerConfig & config) {
     if (config.activation_cast.fused_round && config.activation_cast.type != GGML_TYPE_BF16) {
         throw std::runtime_error("QwenDecoderLayerConfig fused activation rounding requires bf16");
     }
+    if (config.attention_scale.has_value() &&
+        (!std::isfinite(*config.attention_scale) || *config.attention_scale <= 0.0F)) {
+        throw std::runtime_error("QwenDecoderLayerConfig attention_scale must be positive and finite");
+    }
+    if (!std::isfinite(config.residual_scale) || config.residual_scale <= 0.0F) {
+        throw std::runtime_error("QwenDecoderLayerConfig residual_scale must be positive and finite");
+    }
+    for (const float value :
+         {config.rope_freq_scale, config.rope_ext_factor, config.rope_attn_factor,
+          config.rope_beta_fast, config.rope_beta_slow}) {
+        if (!std::isfinite(value)) {
+            throw std::runtime_error("QwenDecoderLayerConfig RoPE scaling values must be finite");
+        }
+    }
+    if (config.rope_freq_scale <= 0.0F) {
+        throw std::runtime_error("QwenDecoderLayerConfig rope_freq_scale must be positive");
+    }
+    if (config.rope_beta_fast < 0.0F || config.rope_beta_slow < 0.0F || config.rope_orig_context < 0) {
+        throw std::runtime_error("QwenDecoderLayerConfig RoPE beta factors and orig context must be non-negative");
+    }
+    if (config.rope_ext_factor != 0.0F && config.rope_orig_context <= 0) {
+        throw std::runtime_error(
+            "QwenDecoderLayerConfig rope_ext_factor requires a positive rope_orig_context");
+    }
     return config.head_dim;
+}
+
+float resolve_attention_scale(const DecoderLayerConfig & config, int64_t dim) {
+    if (config.attention_scale.has_value()) {
+        return *config.attention_scale;
+    }
+    return 1.0F / std::sqrt(static_cast<float>(dim));
+}
+
+core::TensorValue scale_residual_branch(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & branch,
+    float residual_scale) {
+    if (residual_scale == 1.0F) {
+        return branch;
+    }
+    return core::wrap_tensor(ggml_scale(ctx.ggml, branch.tensor, residual_scale), branch.shape, branch.type);
+}
+
+RoPEConfig make_layer_rope_config(const DecoderLayerConfig & config, int64_t dim) {
+    RoPEConfig rope{dim, config.rope_type, config.rope_theta};
+    rope.freq_scale = config.rope_freq_scale;
+    rope.ext_factor = config.rope_ext_factor;
+    rope.attn_factor = config.rope_attn_factor;
+    rope.beta_fast = config.rope_beta_fast;
+    rope.beta_slow = config.rope_beta_slow;
+    rope.orig_context = config.rope_orig_context;
+    rope.intermediate_round_type = config.activation_cast.rope_intermediate_type;
+    return rope;
 }
 
 core::TensorValue reshape_decoder_heads(
@@ -93,7 +146,7 @@ core::TensorValue attention_from_heads(
     const core::TensorValue & q_heads,
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
-    int64_t dim,
+    float scale,
     const std::optional<core::TensorValue> & attention_mask) {
     const MatMulModule matmul;
     auto scores = matmul.build(ctx, q_heads, TransposeModule({{0, 1, 3, 2}, k_heads.shape.rank}).build(ctx, k_heads));
@@ -105,13 +158,13 @@ core::TensorValue attention_from_heads(
                 ctx.ggml,
                 scores.tensor,
                 attention_mask->tensor,
-                1.0F / std::sqrt(static_cast<float>(dim)),
+                scale,
                 0.0F),
             scores.shape,
             GGML_TYPE_F32);
     } else {
         scores = core::wrap_tensor(
-            ggml_scale(ctx.ggml, scores.tensor, 1.0F / std::sqrt(static_cast<float>(dim))),
+            ggml_scale(ctx.ggml, scores.tensor, scale),
             scores.shape,
             GGML_TYPE_F32);
         scores = core::wrap_tensor(ggml_diag_mask_inf(ctx.ggml, scores.tensor, 0), scores.shape, GGML_TYPE_F32);
@@ -127,7 +180,7 @@ core::TensorValue attention_from_grouped_query_heads(
     const core::TensorValue & q_heads,
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
-    int64_t dim,
+    float scale,
     int64_t attention_heads,
     int64_t key_value_heads,
     const core::TensorValue & attention_mask) {
@@ -139,7 +192,7 @@ core::TensorValue attention_from_grouped_query_heads(
         auto q_head = SliceModule({1, head, 1}).build(ctx, q_heads);
         auto k_head = SliceModule({1, key_value_head, 1}).build(ctx, k_heads);
         auto v_head = SliceModule({1, key_value_head, 1}).build(ctx, v_heads);
-        head_outputs.push_back(attention_from_heads(ctx, q_head, k_head, v_head, dim, attention_mask));
+        head_outputs.push_back(attention_from_heads(ctx, q_head, k_head, v_head, scale, attention_mask));
     }
     return concat_all(ctx, head_outputs, 2);
 }
@@ -149,7 +202,7 @@ core::TensorValue flash_attention_from_grouped_heads(
     const core::TensorValue & q_heads,
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
-    int64_t dim,
+    float scale,
     const core::TensorValue & attention_mask,
     ggml_prec precision) {
     if (!core::has_backend_addressable_layout(q_heads.tensor) ||
@@ -163,13 +216,14 @@ core::TensorValue flash_attention_from_grouped_heads(
         k_heads.tensor,
         v_heads.tensor,
         attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(dim)),
+        scale,
         0.0F,
         0.0F);
     ggml_flash_attn_ext_set_prec(flash, precision);
     return core::wrap_tensor(
         flash,
-        core::TensorShape::from_dims({q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], dim}),
+        core::TensorShape::from_dims(
+            {q_heads.shape.dims[0], q_heads.shape.dims[2], q_heads.shape.dims[1], q_heads.shape.dims[3]}),
         GGML_TYPE_F32);
 }
 
@@ -178,7 +232,7 @@ core::TensorValue flash_attention_from_grouped_heads_view_kv(
     const core::TensorValue & q_heads,
     const core::TensorValue & k_heads,
     const core::TensorValue & v_heads,
-    int64_t dim,
+    float scale,
     const core::TensorValue & attention_mask,
     ggml_prec precision) {
     const auto q_contiguous = core::ensure_backend_addressable_layout(ctx, q_heads);
@@ -188,13 +242,17 @@ core::TensorValue flash_attention_from_grouped_heads_view_kv(
         k_heads.tensor,
         v_heads.tensor,
         attention_mask.tensor,
-        1.0F / std::sqrt(static_cast<float>(dim)),
+        scale,
         0.0F,
         0.0F);
     ggml_flash_attn_ext_set_prec(flash, precision);
     return core::wrap_tensor(
         flash,
-        core::TensorShape::from_dims({q_contiguous.shape.dims[0], q_contiguous.shape.dims[2], q_contiguous.shape.dims[1], dim}),
+        core::TensorShape::from_dims(
+            {q_contiguous.shape.dims[0],
+             q_contiguous.shape.dims[2],
+             q_contiguous.shape.dims[1],
+             q_contiguous.shape.dims[3]}),
         GGML_TYPE_F32);
 }
 
@@ -235,8 +293,7 @@ void apply_batched_static_rope(
     const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
         ? &*weights.rope_frequency_factors
         : nullptr;
-    RoPEConfig rope{dim, config.rope_type, config.rope_theta};
-    rope.intermediate_round_type = config.activation_cast.rope_intermediate_type;
+    const RoPEConfig rope = make_layer_rope_config(config, dim);
     if (positions.shape.rank == 1 && positions.shape.dims[0] == q.shape.dims[1]) {
         q = RoPEModule(rope).build(ctx, q, positions, rope_factors);
         k = RoPEModule(rope).build(ctx, k, positions, rope_factors);
@@ -378,6 +435,14 @@ DecoderLayerConfig decoder_layer_config_from_stack(const DecoderStackConfig & co
     out.projection_precision = config.projection_precision;
     out.qkv_layout = config.qkv_layout;
     out.use_qk_norm = config.use_qk_norm;
+    out.attention_scale = config.attention_scale;
+    out.residual_scale = config.residual_scale;
+    out.rope_freq_scale = config.rope_freq_scale;
+    out.rope_ext_factor = config.rope_ext_factor;
+    out.rope_attn_factor = config.rope_attn_factor;
+    out.rope_beta_fast = config.rope_beta_fast;
+    out.rope_beta_slow = config.rope_beta_slow;
+    out.rope_orig_context = config.rope_orig_context;
     out.activation_cast = config.activation_cast;
     out.runtime = config.runtime;
     return out;
@@ -580,8 +645,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
         const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
             ? &*weights.rope_frequency_factors
             : nullptr;
-        RoPEConfig rope{dim, config_.rope_type, config_.rope_theta};
-        rope.intermediate_round_type = config_.activation_cast.rope_intermediate_type;
+        const RoPEConfig rope = make_layer_rope_config(config_, dim);
         q = RoPEModule(rope).build(ctx, q, positions, rope_factors);
         k = RoPEModule(rope).build(ctx, k, positions, rope_factors);
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
@@ -623,6 +687,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
         all_v = ConcatModule({1}).build(ctx, *attention_prefix_value, v);
     }
     core::TensorValue context;
+    const float attention_scale = resolve_attention_scale(config_, dim);
     if (allow_flash && !prefix_key.has_value() && attention_mask.has_value() &&
         config_.runtime.attention.prefill_mode == DecoderAttentionMode::FlashGroupedViewKV) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
@@ -633,7 +698,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             *attention_mask,
             config_.attention_precision);
     } else if (allow_flash && attention_mask.has_value() && use_prefix_flash) {
@@ -645,7 +710,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             *attention_mask,
             config_.attention_precision);
     } else if (allow_flash && attention_mask.has_value() && !prefix_key.has_value() &&
@@ -660,7 +725,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             *attention_mask,
             config_.attention_precision);
     } else {
@@ -672,7 +737,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
             ctx,
             TransposeModule({{0, 2, 1, 3}, all_v.shape.rank}).build(ctx, all_v),
             kv_repeats);
-        context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+        context = attention_from_heads(ctx, q_heads, k_heads, v_heads, attention_scale, attention_mask);
     }
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention) {
         context = activation_cast(ctx, context, config_.activation_cast);
@@ -697,7 +762,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention_output) {
         attn_out = activation_cast(ctx, attn_out, config_.activation_cast);
     }
-    auto x = AddModule{}.build(ctx, input, attn_out);
+    auto x = AddModule{}.build(ctx, input, scale_residual_branch(ctx, attn_out, config_.residual_scale));
     if (config_.activation_cast.enabled && config_.activation_cast.after_residual) {
         x = activation_cast(ctx, x, config_.activation_cast);
     }
@@ -709,7 +774,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
     }
     auto ff = build_mlp(ctx, ff_in, config_, weights.mlp);
-    auto output = AddModule{}.build(ctx, x, ff);
+    auto output = AddModule{}.build(ctx, x, scale_residual_branch(ctx, ff, config_.residual_scale));
     if (config_.activation_cast.enabled && config_.activation_cast.after_output) {
         output = activation_cast(ctx, output, config_.activation_cast);
     }
@@ -799,8 +864,7 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
         const core::TensorValue * rope_factors = weights.rope_frequency_factors.has_value()
             ? &*weights.rope_frequency_factors
             : nullptr;
-        RoPEConfig rope{dim, config_.rope_type, config_.rope_theta};
-        rope.intermediate_round_type = config_.activation_cast.rope_intermediate_type;
+        const RoPEConfig rope = make_layer_rope_config(config_, dim);
         q = RoPEModule(rope).build(ctx, q, positions, rope_factors);
         k = RoPEModule(rope).build(ctx, k, positions, rope_factors);
         if (config_.activation_cast.enabled && config_.activation_cast.after_rope) {
@@ -845,6 +909,7 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
     core::TensorValue context;
+    const float attention_scale = resolve_attention_scale(config_, dim);
     const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
         config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery &&
@@ -859,7 +924,7 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             config_.num_attention_heads,
             config_.num_key_value_heads,
             attention_mask);
@@ -868,14 +933,14 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
                config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery) {
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
-        context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+        context = attention_from_heads(ctx, q_heads, k_heads, v_heads, attention_scale, attention_mask);
     } else if (config_.runtime.attention.static_mode == DecoderAttentionMode::FlashGroupedViewKV) {
         context = flash_attention_from_grouped_heads_view_kv(
             ctx,
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             attention_mask,
             config_.attention_precision);
     } else {
@@ -886,7 +951,7 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             attention_mask,
             config_.attention_precision);
     }
@@ -913,7 +978,7 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention_output) {
         attn_out = activation_cast(ctx, attn_out, config_.activation_cast);
     }
-    auto x = AddModule{}.build(ctx, input, attn_out);
+    auto x = AddModule{}.build(ctx, input, scale_residual_branch(ctx, attn_out, config_.residual_scale));
     if (config_.activation_cast.enabled && config_.activation_cast.after_residual) {
         x = activation_cast(ctx, x, config_.activation_cast);
     }
@@ -925,7 +990,7 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
     }
     auto ff = build_mlp(ctx, ff_in, config_, weights.mlp);
-    auto output = AddModule{}.build(ctx, x, ff);
+    auto output = AddModule{}.build(ctx, x, scale_residual_branch(ctx, ff, config_.residual_scale));
     if (config_.activation_cast.enabled && config_.activation_cast.after_output) {
         output = activation_cast(ctx, output, config_.activation_cast);
     }
@@ -1013,6 +1078,7 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
     core::TensorValue context;
+    const float attention_scale = resolve_attention_scale(config_, dim);
     const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
         config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery &&
@@ -1027,7 +1093,7 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             config_.num_attention_heads,
             config_.num_key_value_heads,
             attention_mask);
@@ -1036,14 +1102,14 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
                config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery) {
         k_heads = repeat_kv_heads(ctx, k_heads, kv_repeats);
         v_heads = repeat_kv_heads(ctx, v_heads, kv_repeats);
-        context = attention_from_heads(ctx, q_heads, k_heads, v_heads, dim, attention_mask);
+        context = attention_from_heads(ctx, q_heads, k_heads, v_heads, attention_scale, attention_mask);
     } else if (config_.runtime.attention.static_mode == DecoderAttentionMode::FlashGroupedViewKV) {
         context = flash_attention_from_grouped_heads_view_kv(
             ctx,
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             attention_mask,
             config_.attention_precision);
     } else {
@@ -1054,7 +1120,7 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
             q_heads,
             k_heads,
             v_heads,
-            dim,
+            attention_scale,
             attention_mask,
             config_.attention_precision);
     }
@@ -1081,7 +1147,7 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention_output) {
         attn_out = activation_cast(ctx, attn_out, config_.activation_cast);
     }
-    auto x = AddModule{}.build(ctx, input, attn_out);
+    auto x = AddModule{}.build(ctx, input, scale_residual_branch(ctx, attn_out, config_.residual_scale));
     if (config_.activation_cast.enabled && config_.activation_cast.after_residual) {
         x = activation_cast(ctx, x, config_.activation_cast);
     }
@@ -1093,7 +1159,7 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
     }
     auto ff = build_mlp(ctx, ff_in, config_, weights.mlp);
-    auto output = AddModule{}.build(ctx, x, ff);
+    auto output = AddModule{}.build(ctx, x, scale_residual_branch(ctx, ff, config_.residual_scale));
     if (config_.activation_cast.enabled && config_.activation_cast.after_output) {
         output = activation_cast(ctx, output, config_.activation_cast);
     }

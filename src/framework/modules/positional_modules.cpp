@@ -83,7 +83,7 @@ core::TensorValue RoPEModule::build(
             ggml_fill(ctx.ggml, basis, 0.0f), 0);
         auto * table = ggml_rope_ext(ctx.ggml, identity, positions.tensor,
             frequency_factors ? frequency_factors->tensor : nullptr, config_.dimensions,
-            config_.mode, 0, config_.theta, config_.freq_scale, config_.ext_factor,
+            config_.mode, config_.orig_context, config_.theta, config_.freq_scale, config_.ext_factor,
             config_.attn_factor, config_.beta_fast, config_.beta_slow);
         table = *config_.intermediate_round_type == GGML_TYPE_BF16
             ? ggml_round_bf16(ctx.ggml, table)
@@ -119,7 +119,7 @@ core::TensorValue RoPEModule::build(
             frequency_factors != nullptr ? frequency_factors->tensor : nullptr,
             static_cast<int>(config_.dimensions),
             config_.mode,
-            0,
+            config_.orig_context,
             config_.theta,
             config_.freq_scale,
             config_.ext_factor,

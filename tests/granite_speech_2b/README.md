@@ -105,12 +105,18 @@ contract (documented here so both tracks build against the same surface):
 granite_speech_2b_parity_probe --model DIR --audio WAV \
   --backend cpu --threads 8 \
   --through frontend|encoder|projector|prefill|generate \
-  --out-dir DIR [--projector-input FILE]
+  --out-dir DIR [--projector-input FILE] [--language CODE] [--force-ids FILE]
 ```
 
 - `--model`: native checkpoint dir (same 13 files) or staged equivalent.
 - `--audio`: 16 kHz mono WAV clip.
 - `--backend`/`--threads`: execution backend and CPU thread count.
+- `--language`: optional IBM source-language hint (`en/fr/de/es/pt/ja`,
+  same choices as `reference.py --language`); without it the default
+  transcription prompt is used.
+- `--force-ids`: optional JSON list of token IDs used as the teacher-forced
+  continuation for `generate` (default: this run's greedy output, mirroring
+  `reference.py --force-ids`).
 - `--through`: pipeline cutoff; the probe must emit every trace entry
   through that stage and declare it as `"through"` in its `trace.json`:
   - `frontend`: `mel.f32`, `stacked.f32`
@@ -121,8 +127,10 @@ granite_speech_2b_parity_probe --model DIR --audio WAV \
   - `prefill`: + `merged_prefill.f32`, `scaled_prefill.f32`,
     `last_pos_logits.f32`
   - `generate`: + `forced_step{k}.f32` (teacher-forced on the reference
-    continuation; obtain IDs from the reference trace's `generated_ids` or
-    `--force-ids`), full `trace.json` with emitted text.
+    continuation from the reference trace's `generated_ids` or `--force-ids`;
+    `n_steps` is `min(8, len(continuation))`), full `trace.json` with prompt
+    lengths/IDs, greedy `generated_ids` (EOS excluded, mirroring the shared
+    C++ runtime), `observed_stop`, and decoded `text`.
 - `--projector-input FILE`: optional direct projector fixture (an
   `encoder_last`-shaped `*.f32`) letting decoder work (C) proceed
   independently of the encoder (B); when given, `--audio` still provides

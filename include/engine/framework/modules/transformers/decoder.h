@@ -117,6 +117,22 @@ struct DecoderLayerConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     DecoderQKVLayout qkv_layout = DecoderQKVLayout::Separate;
     bool use_qk_norm = true;
+    // Opt-in attention scale override. Nullopt preserves the legacy
+    // 1/sqrt(head_dim) softmax/scale factor on every attention path.
+    std::optional<float> attention_scale;
+    // Opt-in residual multiplier. The legacy plain addition is preserved at
+    // 1.0; other values compute residual + scale * branch_output once after
+    // the attention output projection and once after the MLP down projection.
+    float residual_scale = 1.0f;
+    // Opt-in YaRN RoPE parameters, forwarded to ggml_rope_ext. Neutral
+    // defaults reproduce the legacy call (freq_scale 1, no extrapolation
+    // blend, unit magnitude, no beta correction range, orig context 0).
+    float rope_freq_scale = 1.0f;
+    float rope_ext_factor = 0.0f;
+    float rope_attn_factor = 1.0f;
+    float rope_beta_fast = 0.0f;
+    float rope_beta_slow = 0.0f;
+    int32_t rope_orig_context = 0;
     DecoderActivationCastPolicy activation_cast;
     DecoderRuntimePolicy runtime;
 };
@@ -227,6 +243,14 @@ struct DecoderStackConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     DecoderQKVLayout qkv_layout = DecoderQKVLayout::Separate;
     bool use_qk_norm = true;
+    std::optional<float> attention_scale;
+    float residual_scale = 1.0f;
+    float rope_freq_scale = 1.0f;
+    float rope_ext_factor = 0.0f;
+    float rope_attn_factor = 1.0f;
+    float rope_beta_fast = 0.0f;
+    float rope_beta_slow = 0.0f;
+    int32_t rope_orig_context = 0;
     DecoderActivationCastPolicy activation_cast;
     DecoderRuntimePolicy runtime;
 };
