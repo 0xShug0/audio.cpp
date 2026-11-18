@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "granite_speech_2b",
   "display_name": "Granite Speech 5.0 2B",
-  "description": "IBM Granite Speech 5.0 2B autoregressive multilingual ASR (Conformer encoder, Q-Former projector, Granite text decoder). Native safetensors only; GGUF packages land in a later task. Transcribes English, French, German, Spanish, Portuguese, and Japanese with punctuation and capitalization.",
+  "description": "IBM Granite Speech 5.0 2B autoregressive multilingual ASR (Conformer encoder, Q-Former projector, Granite text decoder). Transcribes English, French, German, Spanish, Portuguese, and Japanese with punctuation and capitalization. Experimental: native safetensors plus staged GGUF packages pending runtime validation.",
   "category": "asr",
   "status": "experimental",
   "tasks": [
@@ -113,7 +113,7 @@
       {
         "name": "weight_type",
         "type": "enum",
-        "description": "Shared model weight storage type. Native keeps the checkpoint dtype; f32 upcasts the BF16 snapshot for parity.",
+        "description": "Shared model weight storage type. Native keeps the stored dtype (checkpoint or GGUF package mixed types); f32 upcasts the BF16 snapshot for parity.",
         "values": [
           "native",
           "f32"
@@ -123,18 +123,60 @@
       }
     ]
   },
-  "packages": [],
+  "packages": [
+    {
+      "id": "granite_speech_2b_q8_0",
+      "display_name": "Granite Speech 5.0 2B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Granite-Speech-5.0-2B-GGUF",
+      "files": [
+        "Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf"
+      ],
+      "strip_prefix": "Granite-Speech-5.0-2B-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
   "dependencies": [],
   "ui": {
+    "recommended_package": "granite_speech_2b_q8_0",
     "tags": [
       "ASR"
     ],
     "docs": [
-      "docs/asr.md"
+      "docs/models/granite_speech_2b.md",
+      "docs/asr.md",
+      "docs/gguf.md"
     ],
-    "summary": "IBM Granite Speech 5.0 2B multilingual offline transcription (experimental, native weights)."
+    "summary": "IBM Granite Speech 5.0 2B multilingual offline transcription (experimental; native weights plus staged GGUF)."
   },
   "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "generation_config": "model:generation_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
     {
       "format": "safetensors",
       "roots": {

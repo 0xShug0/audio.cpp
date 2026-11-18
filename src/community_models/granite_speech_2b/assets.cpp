@@ -1,7 +1,10 @@
 #include "engine/community_models/granite_speech_2b/assets.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/model_spec/package.h"
 
+#include <algorithm>
+#include <cctype>
 #include <stdexcept>
 #include <utility>
 
@@ -274,9 +277,10 @@ assets::ResourceBundle build_resource_bundle(const std::filesystem::path & model
         throw std::runtime_error(
             "granite_speech_2b expects a native checkpoint directory, got: " + model_path.string());
     }
-    // Manual bundle: Task D owns the model_specs JSON + GGUF `$gguf` binding.
-    // The logical tensor entry stays `weights` so the later spec binds the
-    // same name (native root `model:.` here, `model:model.safetensors` file).
+    // Manual bundle for native checkpoint directories only (Task D path,
+    // unchanged): the logical tensor entry stays `weights` (native root
+    // `model:.` here, `model:model.safetensors` file), the same name the
+    // spec-backed GGUF `$gguf` source binds for packages.
     assets::ResourceBundle resources(model_path);
     resources.add_model_files({
         {"config", "config.json", true},
@@ -290,6 +294,42 @@ assets::ResourceBundle build_resource_bundle(const std::filesystem::path & model
     });
     resources.add_tensor_source("weights", model_path / "model.safetensors");
     return resources;
+}
+
+bool is_gguf_file_path(const std::filesystem::path & path) {
+    std::string extension = path.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value) {
+        return static_cast<char>(std::tolower(value));
+    });
+    return extension == ".gguf";
+}
+
+// A GGUF package is a standalone .gguf file, or a directory that holds the
+// single package GGUF instead of a native checkpoint. Native checkpoint
+// directories (config.json triple, model.safetensors) never take this path,
+// even if a stray GGUF sits beside them.
+bool is_gguf_package_path(const std::filesystem::path & model_path) {
+    if (is_gguf_file_path(model_path)) {
+        return true;
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_directory(model_path, ec)) {
+        return false;
+    }
+    if (granite_speech_2b_can_load(model_path)) {
+        return false;
+    }
+    return engine::assets::find_directory_gguf(model_path).has_value();
+}
+
+assets::ResourceBundle load_granite_speech_2b_resources(const std::filesystem::path & model_path) {
+    if (is_gguf_package_path(model_path)) {
+        // Spec-backed bundle: validates the embedded model spec family and
+        // materializes the sidecars; tensor entry keeps the logical `weights`
+        // name so the inventory check below is unchanged.
+        return engine::model_spec::load_resource_bundle_for_family(model_path, kGraniteSpeech2BFamily);
+    }
+    return build_resource_bundle(model_path);
 }
 
 }  // namespace
@@ -368,7 +408,7 @@ void check_granite_speech_2b_tensor_inventory(const assets::TensorSource & sourc
 std::shared_ptr<const GraniteSpeech2BAssets> load_granite_speech_2b_assets(
     const std::filesystem::path & model_path) {
     auto assets = std::make_shared<GraniteSpeech2BAssets>();
-    assets->resources = build_resource_bundle(model_path);
+    assets->resources = load_granite_speech_2b_resources(model_path);
     assets->config = parse_config(assets->resources);
     validate_config(assets->config);
 

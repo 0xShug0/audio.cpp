@@ -529,10 +529,10 @@ std::unique_ptr<GraniteSpeech2BLoadedModel> load_granite_speech_2b_model(
     if (request.family_hint.has_value() && *request.family_hint != "granite_speech_2b") {
         throw std::runtime_error("Granite Speech 2B loader cannot load family '" + *request.family_hint + "'");
     }
-    if (is_gguf_path(request.model_path)) {
-        throw std::runtime_error(
-            "Granite Speech 2B GGUF loading lands in Task E; pass the native checkpoint directory");
-    }
+    // Both native checkpoint directories and GGUF packages resolve through
+    // load_granite_speech_2b_assets (spec-backed bundle for GGUF, manual
+    // bundle for native). Mixed GGUF types are kept as stored under the
+    // default native weight storage; explicit f32 upcasts.
     const auto weight_storage = parse_load_weight_storage(request.options);
     auto assets = load_granite_speech_2b_assets(request.model_path);
 
@@ -571,20 +571,36 @@ public:
     }
 
     bool can_load(const runtime::ModelLoadRequest & request) const override {
-        if (request.family_hint.has_value()) {
-            if (*request.family_hint != family()) {
-                return false;
-            }
-            // Explicit family on a GGUF source is rejected at load() with an
-            // actionable error (Task E owns GGUF); never claim it here.
-            if (is_gguf_path(request.model_path)) {
+        if (request.family_hint.has_value() && *request.family_hint != family()) {
+            return false;
+        }
+        // GGUF packages claim through the spec-backed bundle (a GGUF
+        // embedding another family's spec, or with no usable GGUF source,
+        // is rejected). Native directories keep the Task D config-triple
+        // probe: the exact granite_speech conditional-generation triple.
+        // TurboCTC/NAR snapshots stamped "granite_speech" return false via
+        // the encoder/projector/text triple check.
+        if (is_gguf_path(request.model_path)) {
+            try {
+                (void) engine::model_spec::load_resource_bundle_for_family(request.model_path, family());
+                return true;
+            } catch (...) {
                 return false;
             }
         }
-        // Metadata-only probe: exact granite_speech conditional-generation
-        // triple. TurboCTC/NAR snapshots stamped "granite_speech" return
-        // false via the encoder/projector/text triple check.
-        return granite_speech_2b_can_load(request.model_path);
+        if (granite_speech_2b_can_load(request.model_path)) {
+            return true;
+        }
+        // Installed package directory: a single GGUF, no native checkpoint.
+        try {
+            if (!engine::assets::find_directory_gguf(request.model_path).has_value()) {
+                return false;
+            }
+            (void) engine::model_spec::load_resource_bundle_for_family(request.model_path, family());
+            return true;
+        } catch (...) {
+            return false;
+        }
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
@@ -664,7 +680,8 @@ public:
         inspection.cli.load_options = {
             {"granite_speech_2b.weight_type",
              "native|f32",
-             "Shared model weight storage type. Native keeps the checkpoint dtype; f32 upcasts for parity. "
+             "Shared model weight storage type. Native keeps the stored dtype (native checkpoint or GGUF "
+             "mixed package types); f32 upcasts for parity. "
              "Default: native.",
              false,
              "native",

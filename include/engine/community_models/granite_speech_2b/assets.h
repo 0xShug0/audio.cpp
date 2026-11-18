@@ -120,9 +120,14 @@ struct GraniteSpeech2BAssets {
 // Metadata-only probe: inspects config.json sidecar text, never tensor data.
 bool granite_speech_2b_can_load(const std::filesystem::path & model_path);
 
-// Full typed load: builds the manual resource bundle (native `model:.`
-// roots, tensor entry `weights` -> model:model.safetensors), parses the
-// model-local configs, and runs the tensor inventory check.
+// Full typed load: native checkpoint directories build the manual resource
+// bundle (native `model:.` roots, tensor entry `weights` ->
+// model:model.safetensors), exactly as in Task D. GGUF packages (a standalone
+// .gguf file, or a directory holding the single package GGUF instead of a
+// native checkpoint) resolve through the spec-backed bundle, which validates
+// the embedded model spec family and materializes the 8 sidecars; both paths
+// then parse the model-local configs and run the tensor inventory check.
+// Tensor storage stays caller-selected (native keeps the GGUF mixed types).
 std::shared_ptr<const GraniteSpeech2BAssets> load_granite_speech_2b_assets(
     const std::filesystem::path & model_path);
 
