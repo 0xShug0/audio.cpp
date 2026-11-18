@@ -10,6 +10,7 @@
 #include <memory>
 #include <regex>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace engine::models::omnivoice {
@@ -42,8 +43,10 @@ OmniVoiceTextTokenizer::OmniVoiceTextTokenizer(std::shared_ptr<const OmniVoiceAs
     impl_ = load_impl(*assets);
 }
 
-std::vector<int32_t> OmniVoiceTextTokenizer::encode(const std::string & text) const {
-    if (text.empty()) return impl_->tokenizer->encode(text);
+std::string OmniVoiceTextTokenizer::normalize_nfc(std::string_view text) {
+    if (text.empty()) {
+        return {};
+    }
     if (text.size() > static_cast<size_t>(std::numeric_limits<utf8proc_ssize_t>::max())) {
         throw runtime::InvalidRequestError("OmniVoice text is too large to normalize");
     }
@@ -58,8 +61,11 @@ std::vector<int32_t> OmniVoiceTextTokenizer::encode(const std::string & text) co
         throw runtime::InvalidRequestError(
             "OmniVoice text normalization: " + std::string(utf8proc_errmsg(size)));
     }
-    return impl_->tokenizer->encode(
-        std::string(reinterpret_cast<const char *>(normalized.get()), static_cast<size_t>(size)));
+    return std::string(reinterpret_cast<const char *>(normalized.get()), static_cast<size_t>(size));
+}
+
+std::vector<int32_t> OmniVoiceTextTokenizer::encode(const std::string & text) const {
+    return impl_->tokenizer->encode(normalize_nfc(text));
 }
 
 std::vector<int32_t> OmniVoiceTextTokenizer::encode_with_nonverbal_tags(const std::string & text) const {

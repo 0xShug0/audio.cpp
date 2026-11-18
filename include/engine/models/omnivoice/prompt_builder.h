@@ -21,7 +21,8 @@ public:
         std::string_view text,
         const std::optional<std::string> & ref_text,
         const std::optional<int64_t> & ref_audio_tokens,
-        float speed) const;
+        float speed,
+        std::string_view language = {}) const;
     std::vector<std::string> chunk_text_punctuation(
         std::string_view text,
         int64_t chunk_len,

@@ -517,17 +517,18 @@ public:
         const std::string & target_text,
         const std::string & ref_text,
         double ref_duration,
+        bool double_macron_vowels = false,
         std::optional<double> low_threshold = 50.0,
         double boost_strength = 3.0) const {
         if (ref_duration <= 0.0 || ref_text.empty()) {
             return 0.0;
         }
-        const double ref_weight = calculate_total_weight(ref_text);
+        const double ref_weight = calculate_total_weight(ref_text, double_macron_vowels);
         if (ref_weight == 0.0) {
             return 0.0;
         }
         const double speed_factor = ref_weight / ref_duration;
-        const double target_weight = calculate_total_weight(target_text);
+        const double target_weight = calculate_total_weight(target_text, double_macron_vowels);
         double estimated_duration = target_weight / speed_factor;
         if (low_threshold.has_value() && estimated_duration < *low_threshold) {
             const double alpha = 1.0 / boost_strength;
@@ -541,7 +542,20 @@ private:
     std::vector<std::pair<uint32_t, std::string>> ranges_;
     std::vector<uint32_t> breakpoints_;
 
-    double char_weight(uint32_t codepoint) const {
+    double char_weight(uint32_t codepoint, bool double_macron_vowels = false) const {
+        if (double_macron_vowels) {
+            switch (codepoint) {
+                case 0x0100U: case 0x0101U:  // Ā ā
+                case 0x0112U: case 0x0113U:  // Ē ē
+                case 0x012AU: case 0x012BU:  // Ī ī
+                case 0x014CU: case 0x014DU:  // Ō ō
+                case 0x016AU: case 0x016BU:  // Ū ū
+                case 0x0232U: case 0x0233U:  // Ȳ ȳ
+                    return weights_.at("latin") * 2.0;
+                default:
+                    break;
+            }
+        }
         if ((codepoint >= 'A' && codepoint <= 'Z') || (codepoint >= 'a' && codepoint <= 'z')) {
             return weights_.at("latin");
         }
@@ -611,7 +625,7 @@ private:
         return weights_.at("default");
     }
 
-    double calculate_total_weight(const std::string & text) const {
+    double calculate_total_weight(const std::string & text, bool double_macron_vowels = false) const {
         double total = 0.0;
         for (size_t i = 0; i < text.size();) {
             const unsigned char ch = static_cast<unsigned char>(text[i]);
@@ -637,7 +651,7 @@ private:
             } else {
                 throw std::runtime_error("OmniVoice duration estimator encountered invalid UTF-8");
             }
-            total += char_weight(codepoint);
+            total += char_weight(codepoint, double_macron_vowels);
             i += len;
         }
         return total;
@@ -658,13 +672,20 @@ int64_t estimate_target_tokens(
     const std::string & text,
     const std::optional<std::string> & ref_text,
     const std::optional<int64_t> & ref_audio_tokens,
-    float speed) {
+    float speed,
+    std::string_view language = {}) {
     static const RuleDurationEstimator estimator;
-    const std::string effective_ref_text =
-        ref_text.has_value() && !ref_text->empty() ? *ref_text : std::string(kReferenceDurationFallbackText);
+    const std::string normalized_text = OmniVoiceTextTokenizer::normalize_nfc(text);
+    const std::string normalized_ref_text = ref_text.has_value() && !ref_text->empty()
+        ? OmniVoiceTextTokenizer::normalize_nfc(*ref_text)
+        : std::string(kReferenceDurationFallbackText);
     const int64_t effective_ref_frames =
         ref_audio_tokens.has_value() && *ref_audio_tokens > 0 ? *ref_audio_tokens : kReferenceDurationFallbackFrames;
-    double estimate = estimator.estimate_duration(text, effective_ref_text, static_cast<double>(effective_ref_frames));
+    double estimate = estimator.estimate_duration(
+        normalized_text,
+        normalized_ref_text,
+        static_cast<double>(effective_ref_frames),
+        language == "la" || language == "Latin");
     if (speed > 0.0F && speed != 1.0F) {
         estimate /= static_cast<double>(speed);
     }
@@ -815,7 +836,8 @@ OmniVoicePrompt OmniVoicePromptBuilder::build(const OmniVoiceRequest & request) 
         prompt.reference_audio_tokens.has_value()
             ? std::make_optional(prompt.reference_audio_tokens->frames)
             : std::optional<int64_t>(),
-        request.generation.speed);
+        request.generation.speed,
+        prompt.language);
 
     if (request.generation.duration_seconds.has_value()) {
         prompt.target_audio_tokens = std::max<int64_t>(
@@ -854,13 +876,15 @@ int64_t OmniVoicePromptBuilder::estimate_target_tokens(
     std::string_view text,
     const std::optional<std::string> & ref_text,
     const std::optional<int64_t> & ref_audio_tokens,
-    float speed) const {
+    float speed,
+    std::string_view language) const {
     return engine::models::omnivoice::estimate_target_tokens(
         *assets_,
         trim_copy(text),
         ref_text,
         ref_audio_tokens,
-        speed);
+        speed,
+        language);
 }
 
 std::vector<std::string> OmniVoicePromptBuilder::chunk_text_punctuation(

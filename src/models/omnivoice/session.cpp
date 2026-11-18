@@ -532,7 +532,8 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
                 prompt.reference_audio_tokens.has_value()
                     ? std::make_optional(prompt.reference_audio_tokens->frames)
                     : std::optional<int64_t>(),
-                1.0F);
+                1.0F,
+                prompt.language);
             const int64_t duration_target = std::max<int64_t>(
                 1,
                 static_cast<int64_t>(std::llround(
@@ -694,7 +695,8 @@ std::vector<runtime::TaskResult> OmniVoiceSession::run_batch(const std::vector<r
                 item.prompt.reference_audio_tokens.has_value()
                     ? std::make_optional(item.prompt.reference_audio_tokens->frames)
                     : std::optional<int64_t>(),
-                1.0F);
+                1.0F,
+                item.prompt.language);
             const int64_t duration_target = std::max<int64_t>(
                 1,
                 static_cast<int64_t>(std::llround(
@@ -1065,7 +1067,8 @@ void OmniVoiceSession::initialize_streaming_request(const runtime::TaskRequest &
             prompt.reference_audio_tokens.has_value()
                 ? std::make_optional(prompt.reference_audio_tokens->frames)
                 : std::optional<int64_t>(),
-            1.0F);
+            1.0F,
+            prompt.language);
         const int64_t duration_target = std::max<int64_t>(
             1,
             static_cast<int64_t>(std::llround(
