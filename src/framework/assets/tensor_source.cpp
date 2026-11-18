@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <mutex>
 #include <numeric>
@@ -2290,6 +2291,9 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
             if (item.shape.empty() && type_override.has_value() &&
                 *type_override != TensorStorageType::Native &&
                 !ggml_is_quantized(ggml_type_for_tensor_storage(*type_override))) {
+                std::cerr << "[warning][gguf] ignoring float type override to "
+                          << ggml_type_name(ggml_type_for_tensor_storage(*type_override))
+                          << " for rank-0 tensor '" << item.name << "'; keeping native storage\n";
                 type_override.reset();
             }
             const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
