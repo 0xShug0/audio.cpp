@@ -1,3 +1,4 @@
+#include "engine/framework/runtime/moe_options.h"
 #include "engine/community_models/zonos2/session.h"
 
 #include "engine/community_models/zonos2/codec_decoder.h"
@@ -89,10 +90,6 @@ int64_t session_int(const Options & session, const char * key, int64_t fallback,
     return value;
 }
 
-bool session_bool(const Options & session, const char * key) {
-    return runtime::parse_bool_option(runtime::find_option(session, {key}).value_or("false"), key);
-}
-
 uint64_t fnv1a(uint64_t hash, const void * data, size_t bytes) {
     const auto * p = static_cast<const unsigned char *>(data);
     for (size_t i = 0; i < bytes; ++i) {
@@ -134,10 +131,8 @@ Zonos2Session::Zonos2Session(runtime::TaskSpec task, const runtime::SessionOptio
     }
     const auto & session = options.options;
     Zonos2BackboneOptions backbone;
-    backbone.disk_experts = session_bool(session, "zonos2.disk_experts");
-    backbone.pin_experts = session_bool(session, "zonos2.pin_experts");
-    backbone.expert_cache_size = session_int(session, "zonos2.expert_cache_size", 8, 4, 16);
-    backbone.disk_expert_read_threads = session_int(session, "zonos2.disk_expert_read_threads", 1, 1, 64);
+    const auto moe_layers = static_cast<size_t>(std::count_if(assets_->hparams.expert_used.begin(), assets_->hparams.expert_used.end(), [](auto used) { return used > 0; }));
+    backbone.moe = runtime::resolve_moe_options(session, "zonos2", backbone.moe, moe_layers);
     voices_.set_capacity(static_cast<size_t>(session_int(session, "zonos2.voice_cache_slots", 4, 0,
                                                          std::numeric_limits<int32_t>::max())));
     stream_chunk_frames_ = static_cast<int>(session_int(session, "zonos2.stream_chunk_frames", 40, 1, 256));

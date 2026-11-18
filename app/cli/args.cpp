@@ -38,7 +38,7 @@ const std::set<std::string> & value_options() {
         "--do-sample", "--duration-seconds", "--emotion", "--energy-scale", "--family",
         "--guidance-scale", "--input-channels", "--input-format", "--input-rate", "--instruct",
         "--language", "--load-option", "--load-progress", "--log-file", "--lyrics", "--max-steps",
-        "--max-tokens", "--mode", "--model", "--model-spec-override", "--moe-cpu-share",
+        "--max-tokens", "--mode", "--model", "--model-spec-override", "--moe-policy", "--moe-cpu-share",
         "--moe-disk-experts", "--moe-pin-experts", "--moe-expert-cache-size",
         "--moe-disk-expert-read-threads", "--moe-cpu-expert-layers",
         "--num-beams", "--num-inference-steps", "--out", "--out-dir", "--out-format",
@@ -143,6 +143,7 @@ const std::unordered_map<std::string, std::string> & request_option_aliases() {
 const std::unordered_map<std::string, std::string> & moe_session_option_aliases() {
     static const std::unordered_map<std::string, std::string> option_keys = {
         {"--moe-cpu-share", "moe_cpu_share"},
+        {"--moe-policy", "moe_policy"},
         {"--moe-disk-experts", "moe_disk_experts"},
         {"--moe-pin-experts", "moe_pin_experts"},
         {"--moe-expert-cache-size", "moe_expert_cache_size"},

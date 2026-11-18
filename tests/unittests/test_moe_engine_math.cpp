@@ -1,7 +1,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/moe_module.h"
+#include "../../src/framework/moe_engine/moe_engine_internal.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include <ggml-alloc.h>
 
@@ -18,10 +18,10 @@ namespace modules = engine::modules;
 
 void routing_and_experts(core::ExecutionContext & execution) {
     constexpr int h = 8, tokens = 3, experts = 8, width = 16, selected = 2;
-    for (const auto scoring : {modules::MoeScoring::Softmax, modules::MoeScoring::Sigmoid,
-             modules::MoeScoring::SelectedSoftmax}) {
-        for (const auto normalization : {modules::MoeNormalization::Divide, modules::MoeNormalization::Clamp,
-                 modules::MoeNormalization::AddEpsilon}) {
+    for (const auto scoring : {engine::moe::Scoring::Softmax, engine::moe::Scoring::Sigmoid,
+             engine::moe::Scoring::SelectedSoftmax}) {
+        for (const auto normalization : {engine::moe::Normalization::Divide, engine::moe::Normalization::Clamp,
+                 engine::moe::Normalization::AddEpsilon}) {
             core::BackendWeightStore store(execution.backend(), execution.backend_type(), "test.moe", 1024 * 1024);
             std::vector<float> input(h * tokens), router(h * experts), bias(experts), up(16 * width * experts), down(32 * h * experts);
             for (size_t i = 0; i < input.size(); ++i) input[i] = .2F * std::cos(float(i) * .37F);
@@ -37,21 +37,21 @@ void routing_and_experts(core::ExecutionContext & execution) {
             store.upload();
             std::unique_ptr<ggml_context, decltype(&ggml_free)> context(ggml_init({4 * 1024 * 1024, nullptr, true}), ggml_free);
             core::ModuleBuildContext ctx{context.get(), "test.moe", execution.backend_type()};
-            modules::MoeRoutingConfig config;
+            engine::moe::RoutingConfig config;
             config.experts = experts;
             config.selected = selected;
             config.scoring = scoring;
             config.normalization = normalization;
-            config.contiguous_ids = normalization == modules::MoeNormalization::Clamp;
-            config.denominator_epsilon = normalization == modules::MoeNormalization::Clamp ? 2.0F : .1F;
+            config.contiguous_ids = normalization == engine::moe::Normalization::Clamp;
+            config.denominator_epsilon = normalization == engine::moe::Normalization::Clamp ? 2.0F : .1F;
             config.scale = 1.7F;
             config.precision = GGML_PREC_F32;
             // Exercise top-two group scoring as well as ordinary routing.
-            if (normalization == modules::MoeNormalization::AddEpsilon) {
+            if (normalization == engine::moe::Normalization::AddEpsilon) {
                 config.groups = 2;
                 config.selected_groups = 1;
             }
-            auto routing = modules::MoeModule::build_routing(ctx, x, r, b, config);
+            auto routing = engine::moe::detail::build_routing(ctx, x, r, b, config);
             if (config.contiguous_ids && !ggml_is_contiguous(routing.ids))
                 throw std::runtime_error("MoE selected IDs were not materialized");
             auto * graph = ggml_new_graph_custom(ctx.ggml, 256, false);
@@ -63,14 +63,15 @@ void routing_and_experts(core::ExecutionContext & execution) {
             std::vector<std::pair<ggml_tensor *, ggml_tensor *>> comparisons;
             for (bool relu : {false, true}) {
                 for (bool rounded : {false, true}) {
-                    modules::MoeExpertConfig c;
-                    c.activation = relu ? modules::MoeActivation::ReluSquared : modules::MoeActivation::SwiGlu;
+                    engine::moe::ExpertMath c;
+                    c.activation = relu ? engine::moe::ExpertActivation::ReluSquared : engine::moe::ExpertActivation::SwiGlu;
                     c.round_projections = rounded;
                     c.round_activation = rounded;
                     c.round_product = rounded;
                     c.round_output = rounded;
-                    modules::MoeModule module(c);
-                    auto * actual = module.build(ctx, x, routing, {u, relu ? nullptr : u, d});
+                    auto * actual_rows = engine::moe::detail::build_experts(ctx,
+                        ggml_reshape_3d(ctx.ggml, x, h, 1, tokens), routing.ids, {u, relu ? nullptr : u, d}, c);
+                    auto * actual = engine::moe::detail::combine(ctx, actual_rows, routing.weights);
                     // Independent legacy graph: padding, each rounding boundary,
                     // activation, then the original selected-lane reduction.
                     auto * rows = ggml_reshape_3d(ctx.ggml, x, h, 1, tokens);
@@ -125,12 +126,12 @@ void routing_and_experts(core::ExecutionContext & execution) {
                 for (int e = 0; e < experts; ++e) {
                     float dot = 0;
                     for (int i = 0; i < h; ++i) dot += input[t * h + i] * router[e * h + i];
-                    scores[e] = scoring == modules::MoeScoring::Softmax ? std::exp(dot)
-                        : scoring == modules::MoeScoring::Sigmoid       ? 1.0F / (1.0F + std::exp(-dot))
+                    scores[e] = scoring == engine::moe::Scoring::Softmax ? std::exp(dot)
+                        : scoring == engine::moe::Scoring::Sigmoid       ? 1.0F / (1.0F + std::exp(-dot))
                                                                         : dot;
                     sum += scores[e];
                 }
-                if (scoring == modules::MoeScoring::Softmax) for (auto & score : scores) score /= sum;
+                if (scoring == engine::moe::Scoring::Softmax) for (auto & score : scores) score /= sum;
                 for (int e = 0; e < experts; ++e) selection[e] = scores[e] + bias[e];
                 std::vector<int> order(experts); std::iota(order.begin(), order.end(), 0);
                 if (config.groups > 1) {
@@ -146,15 +147,15 @@ void routing_and_experts(core::ExecutionContext & execution) {
                 std::sort(order.begin(), order.end(), [&](int a, int b) { return selection[a] > selection[b]; });
                 // SelectedSoftmax weighs the selected experts by the softmax of their logits.
                 std::vector<float> routed{scores[order[0]], scores[order[1]]};
-                if (scoring == modules::MoeScoring::SelectedSoftmax) {
+                if (scoring == engine::moe::Scoring::SelectedSoftmax) {
                     const float top = std::max(routed[0], routed[1]);
                     for (auto & value : routed) value = std::exp(value - top);
                     const float total = routed[0] + routed[1];
                     for (auto & value : routed) value /= total;
                 }
                 float denominator = routed[0] + routed[1];
-                if (normalization == modules::MoeNormalization::Clamp) denominator = std::max(denominator, config.denominator_epsilon);
-                if (normalization == modules::MoeNormalization::AddEpsilon) denominator += config.denominator_epsilon;
+                if (normalization == engine::moe::Normalization::Clamp) denominator = std::max(denominator, config.denominator_epsilon);
+                if (normalization == engine::moe::Normalization::AddEpsilon) denominator += config.denominator_epsilon;
                 for (int k = 0; k < selected; ++k) {
                     const float expected = routed[k] / denominator * config.scale;
                     if (ids[t * selected + k] != order[k] || std::abs(weights[t * selected + k] - expected) > 2e-6F)

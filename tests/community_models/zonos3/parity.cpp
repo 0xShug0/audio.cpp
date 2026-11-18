@@ -144,7 +144,7 @@ int backbone(const fs::path & model, const fs::path & oracle, bool disk_experts)
     const size_t vocab = static_cast<size_t>(assets->hparams.audio_vocab);
     zonos3::Zonos3BackboneOptions options;
     if (disk_experts) {
-        options.moe.residency = engine::core::MoeExpertResidency::Staged;
+        options.moe.residency = engine::moe::Residency::Staged;
         options.moe.cache_slots = 8;
     }
     const auto ours = teacher_forced_logits(assets, run, options);

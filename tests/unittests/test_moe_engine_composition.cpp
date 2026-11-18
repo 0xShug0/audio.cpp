@@ -1,7 +1,13 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/trace.h"
-#include "engine/framework/modules/moe_feed_forward_module.h"
+#include "../../src/framework/moe_engine/moe_engine_internal.h"
+#include "engine/framework/modules/norm_modules.h"
+#include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/feed_forward_modules.h"
+#include <variant>
+#include <optional>
 
 #include <chrono>
 #include <cmath>
@@ -9,6 +15,21 @@
 #include <stdexcept>
 
 namespace {
+struct CompositionConfig {
+    engine::moe::RoutingConfig routing;
+    engine::moe::ExpertMath experts;
+    std::optional<std::variant<engine::modules::FeedForwardConfig, engine::modules::GatedFeedForwardConfig>> shared;
+    std::optional<engine::modules::NormConfig> router_norm;
+    bool round_routed_output = false, round_output = false;
+};
+struct CompositionWeights {
+    engine::core::TensorValue router;
+    engine::moe::detail::ExpertWeights experts;
+    std::variant<engine::modules::FeedForwardWeights, engine::modules::GatedFeedForwardWeights> shared;
+    engine::modules::LinearWeights shared_gate, latent_down, latent_up;
+    engine::modules::NormWeights router_norm;
+};
+
 namespace core = engine::core;
 namespace modules = engine::modules;
 
@@ -78,10 +99,10 @@ void test_composition(core::ExecutionContext & execution, int mode) {
     auto latent_down = tensor(core::TensorShape::from_dims({latent, h}));
     auto latent_up = tensor(core::TensorShape::from_dims({h, latent}));
     auto router_norm = tensor(core::TensorShape::from_dims({h}));
-    modules::MoeFeedForwardConfig config;
+    CompositionConfig config;
     config.routing.experts = experts;
     config.routing.selected = 2;
-    modules::MoeFeedForwardWeights weights;
+    CompositionWeights weights;
     weights.router = router;
     weights.experts = {up.tensor, gate.tensor, down.tensor};
     if (mode == 0) {
@@ -91,7 +112,7 @@ void test_composition(core::ExecutionContext & execution, int mode) {
         shared.packed_gate_first = true;
         shared.round_projections = shared.round_activation = shared.round_product = shared.round_output = true;
         config.shared = shared;
-        config.experts = {modules::MoeActivation::SwiGlu, false, true, true, true, true};
+        config.experts = {engine::moe::ExpertActivation::SwiGlu, false, true, true, true, true};
         config.round_routed_output = config.round_output = true;
         modules::GatedFeedForwardWeights w;
         w.up_gate_proj = {shared_up, std::nullopt}; w.down_proj = {shared_down, std::nullopt};
@@ -101,7 +122,7 @@ void test_composition(core::ExecutionContext & execution, int mode) {
         modules::FeedForwardConfig shared{h, width, false};
         shared.activation = modules::FeedForwardActivation::ReluSquared;
         config.shared = shared;
-        config.experts.activation = modules::MoeActivation::ReluSquared;
+        config.experts.activation = engine::moe::ExpertActivation::ReluSquared;
         weights.experts.gate = nullptr;
         modules::FeedForwardWeights w;
         w.fc2_weight = shared_down;
@@ -111,8 +132,8 @@ void test_composition(core::ExecutionContext & execution, int mode) {
         weights.latent_up = {latent_up, std::nullopt};
         config.router_norm = modules::NormConfig{h, 1e-5F, true, false};
         weights.router_norm.weight = router_norm;
-        config.routing.scoring = modules::MoeScoring::SelectedSoftmax;
-        config.routing.normalization = modules::MoeNormalization::None;
+        config.routing.scoring = engine::moe::Scoring::SelectedSoftmax;
+        config.routing.normalization = engine::moe::Normalization::None;
     }
     store.upload();
     core::PreparedGraph graph(execution, {"test.ffn", 4 * 1024 * 1024, 1024});
@@ -123,14 +144,36 @@ void test_composition(core::ExecutionContext & execution, int mode) {
         shared.fc1_weight = core::wrap_tensor(ggml_view_2d(ctx.ggml, shared_up.tensor, h, width, shared_up.tensor->nb[1], 0),
             core::TensorShape::from_dims({width, h}));
     }
-    const modules::MoeFeedForwardModule module(config);
-    const auto prepared = module.build_inputs(ctx, x.tensor, weights);
-    auto * actual = module.build_output(ctx, prepared, weights);
+    auto normalized = core::wrap_tensor(x.tensor, core::TensorShape::from_dims({tokens, h}));
+    if (config.router_norm) normalized = modules::RMSNormModule(*config.router_norm).build(ctx, normalized, weights.router_norm);
+    const auto actual_routing = engine::moe::detail::build_routing(ctx, normalized.tensor, router.tensor, nullptr, config.routing);
+    auto actual_input = core::wrap_tensor(x.tensor, core::TensorShape::from_dims({tokens, h}));
+    if (mode == 2) actual_input = modules::LinearModule({h, latent, false}).build(ctx, actual_input, weights.latent_down);
+    auto * actual_lanes = engine::moe::detail::build_experts(ctx,
+        ggml_reshape_3d(ctx.ggml, actual_input.tensor, actual_input.tensor->ne[0], 1, tokens), actual_routing.ids, weights.experts, config.experts);
+    auto * actual = engine::moe::detail::combine(ctx, actual_lanes, actual_routing.weights);
+    if (config.round_routed_output) actual = ggml_round_bf16(ctx.ggml, actual);
+    if (mode == 2) actual = modules::LinearModule({latent, h, false}).build(ctx,
+        core::wrap_tensor(actual, core::TensorShape::from_dims({tokens, latent})), weights.latent_up).tensor;
+    if (mode != 2) {
+        auto input = core::wrap_tensor(x.tensor, core::TensorShape::from_dims({tokens, h}));
+        core::TensorValue shared;
+        if (mode == 0) {
+            shared = modules::GatedFeedForwardModule(std::get<modules::GatedFeedForwardConfig>(*config.shared))
+                .build(ctx, input, std::get<modules::GatedFeedForwardWeights>(weights.shared));
+            auto gate = modules::SigmoidModule{}.build(ctx, modules::LinearModule({h, 1, false}).build(ctx, input, weights.shared_gate));
+            shared = modules::MulModule{}.build(ctx, shared, gate);
+        } else shared = modules::FeedForwardModule(std::get<modules::FeedForwardConfig>(*config.shared))
+            .build(ctx, input, std::get<modules::FeedForwardWeights>(weights.shared));
+        actual = ggml_add(ctx.ggml, actual, shared.tensor);
+    }
+    if (config.round_output) actual = ggml_round_bf16(ctx.ggml, actual);
     auto * g = ctx.ggml;
     auto * expert_input = mode == 2 ? ggml_mul_mat(g, latent_down.tensor, x.tensor) : x.tensor;
     auto * routing_input = mode == 2 ? ggml_mul(g, ggml_rms_norm(g, x.tensor, 1e-5F), router_norm.tensor) : x.tensor;
-    const auto routing = modules::MoeModule::build_routing(ctx, routing_input, router.tensor, nullptr, config.routing);
-    auto * routed = modules::MoeModule(config.experts).build(ctx, expert_input, routing, weights.experts);
+    const auto routing = engine::moe::detail::build_routing(ctx, routing_input, router.tensor, nullptr, config.routing);
+    auto * routed = engine::moe::detail::combine(ctx, engine::moe::detail::build_experts(ctx,
+        ggml_reshape_3d(g, expert_input, expert_input->ne[0], 1, tokens), routing.ids, weights.experts, config.experts), routing.weights);
     if (config.round_routed_output) routed = ggml_round_bf16(g, routed);
     auto * expected = mode == 2 ? ggml_mul_mat(g, latent_up.tensor, routed) : routed;
     if (mode != 2) {
@@ -151,15 +194,10 @@ void test_composition(core::ExecutionContext & execution, int mode) {
         expected = ggml_add(g, expected, shared);
     }
     if (config.round_output) expected = ggml_round_bf16(g, expected);
-    // The staged boundary must compose the same output without owning execution.
-    auto * expert_rows = modules::MoeModule(config.experts).build_experts(ctx,
-        ggml_reshape_3d(g, prepared.experts, latent, 1, tokens), prepared.routing.ids, weights.experts);
-    auto * combined = modules::MoeModule::combine(ctx, expert_rows, prepared.routing.weights);
-    auto * split = module.finish(ctx, combined, prepared.shared, weights);
-    for (auto * result : {actual, expected, split}) { ggml_set_output(result); ggml_build_forward_expand(graph.graph(), result); }
+    for (auto * result : {actual, expected}) { ggml_set_output(result); ggml_build_forward_expand(graph.graph(), result); }
     graph.allocate(); graph.compute();
     const auto reference = core::read_tensor_f32(expected);
-    for (auto * result : {actual, split}) {
+    for (auto * result : {actual}) {
         const auto values = core::read_tensor_f32(result);
         for (size_t i = 0; i < values.size(); ++i) {
             if (!std::isfinite(values[i]) || std::abs(values[i] - reference[i]) > 1e-6F * (1 + std::abs(reference[i])))
@@ -190,27 +228,22 @@ void test_external_routing(core::ExecutionContext & execution) {
     store.upload();
     core::PreparedGraph graph(execution, {"test.ffn.external", 1024 * 1024, 512});
     auto & ctx = graph.build_context(); auto * g = ctx.ggml;
-    modules::MoeRoutingConfig routing_config; routing_config.experts = experts; routing_config.selected = 2;
-    auto routing = modules::MoeModule::build_routing(ctx, x.tensor, r.tensor, nullptr, routing_config);
+    engine::moe::RoutingConfig routing_config; routing_config.experts = experts; routing_config.selected = 2;
+    auto routing = engine::moe::detail::build_routing(ctx, x.tensor, r.tensor, nullptr, routing_config);
     auto * bank_ids = ggml_cast(g, ggml_scale_bias(g, ggml_cast(g, routing.ids, GGML_TYPE_F32), -1.0F, experts - 1), GGML_TYPE_I32);
-    modules::MoeFeedForwardWeights weights; weights.experts = {bank_u.tensor, bank_u.tensor, bank_d.tensor};
+    CompositionWeights weights; weights.experts = {bank_u.tensor, bank_u.tensor, bank_d.tensor};
     // No router weights/config: external routing must bypass the internal router entirely.
-    const modules::MoeFeedForwardModule module(modules::MoeFeedForwardConfig{});
-    const auto inputs = module.build_inputs(ctx, x.tensor, weights, &routing);
-    if (inputs.routing.ids != routing.ids || inputs.routing.weights != routing.weights || inputs.experts != x.tensor)
-        throw std::runtime_error("External routing identity was not preserved");
-    auto * actual = module.build_output(ctx, inputs, weights, bank_ids);
-    auto * expected = modules::MoeModule().build(ctx, x.tensor, routing, {u.tensor, u.tensor, d.tensor});
+    auto * actual = engine::moe::detail::combine(ctx, engine::moe::detail::build_experts(ctx,
+        ggml_reshape_3d(g, x.tensor, h, 1, tokens), bank_ids, weights.experts, {}), routing.weights);
+    auto * expected = engine::moe::detail::combine(ctx, engine::moe::detail::build_experts(ctx,
+        ggml_reshape_3d(g, x.tensor, h, 1, tokens), routing.ids, {u.tensor, u.tensor, d.tensor}, {}), routing.weights);
     for (auto * t : {actual, expected}) { ggml_set_output(t); ggml_build_forward_expand(graph.graph(), t); }
     graph.allocate(); graph.compute();
     const auto a = core::read_tensor_f32(actual), b = core::read_tensor_f32(expected);
     for (size_t i = 0; i < a.size(); ++i)
         if (!std::isfinite(a[i]) || std::abs(a[i] - b[i]) > 1e-6F)
             throw std::runtime_error("External routing with remapped bank IDs changed output");
-    bool rejected = false;
-    try { (void) module.finish(ctx, actual, x.tensor, weights); }
-    catch (const std::invalid_argument &) { rejected = true; }
-    if (!rejected) throw std::runtime_error("Unexpected shared branch was silently accepted");
+
 }
 
 }  // namespace

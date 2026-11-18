@@ -588,3 +588,7 @@ offload placement can change floating-point results and the sampled take.
 The weights are subject to the Fish Audio Community License. See the model
 repository's [LICENSE](https://huggingface.co/Jmica/Drama-3-GGUF/blob/main/LICENSE)
 and [NOTICE](https://huggingface.co/Jmica/Drama-3-GGUF/blob/main/NOTICE).
+
+### MoE engine policies
+
+The routed backbone accepts independent placement and cache-eviction policies through `moe_policy` and stage-scoped `moe_policy_params.placement.*` / `moe_policy_params.eviction.*`. See [shared controls and policy parameters](../usage.md#independent-moe-policies). Omitted policies preserve the model's existing residency and CPU-layer defaults. Active policies require staged experts; shared/dense branches and model state remain on their existing paths.

@@ -3,6 +3,7 @@
 #include "engine/community_models/zonos2/assets.h"
 #include "engine/community_models/zonos2/prompt.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 
 #include <cstdint>
 #include <memory>
@@ -11,12 +12,7 @@
 namespace engine::models::zonos2 {
 
 struct Zonos2BackboneOptions {
-    // Keep the routed expert banks in the GGUF / host memory and stage the selected experts through a bounded
-    // per-layer cache on the compute backend (core::DiskExpertWeightStore + modules::StagedMoeRuntime).
-    bool disk_experts = false;
-    bool pin_experts = false;
-    int64_t expert_cache_size = 8;
-    int64_t disk_expert_read_threads = 1;
+    moe::EngineConfig moe;
 };
 
 // The ZONOS2 28-layer GQA backbone: dense SwiGLU and EDA-routed MoE layers over a pre-norm residual stream, one

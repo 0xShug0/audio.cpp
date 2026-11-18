@@ -1,3 +1,4 @@
+#include <mutex>
 #include "engine/community_models/fish_drama3/session.h"
 
 #include "engine/framework/audio/wav_reader.h"
@@ -93,7 +94,8 @@ runtime::VoiceTaskKind Drama3Session::task_kind() const { return task_.task; }
 runtime::RunMode Drama3Session::run_mode() const { return task_.mode; }
 
 void Drama3Session::prepare(const runtime::SessionPreparationRequest & request) {
-    const auto execution = acquire_moe_execution();
+    std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+    if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
     defaults_ = {};
     defaults_.text_input = request.text;
     defaults_.voice = request.voice;
@@ -125,7 +127,8 @@ runtime::TaskResult Drama3Session::run(const runtime::TaskRequest & request) { r
 runtime::TaskResult Drama3Session::generate_stream(const runtime::TaskRequest & request) { return synthesize(request, true); }
 
 runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & request, bool streaming) {
-    const auto execution = acquire_moe_execution();
+    std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+    if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
     require_prepared("Fish Drama 3 generation");
     auto effective = defaults_;
     if (request.text_input) effective.text_input = request.text_input;

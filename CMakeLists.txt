@@ -533,11 +533,18 @@ add_library(engine_core OBJECT
     src/framework/core/backend.cpp
     src/framework/core/attention_fallback.cpp
     src/framework/core/deferred_tensor_writer.cpp
-    src/framework/core/disk_expert_weight_store.cpp
-    src/framework/core/moe_resources.cpp
     src/framework/core/graph_workspace.cpp
     src/framework/core/prepared_graph.cpp
     src/framework/core/execution_context.cpp
+    src/framework/moe_engine/moe_engine.cpp
+    src/framework/moe_engine/moe_prepared_graph.cpp
+    src/framework/moe_engine/expert_math.cpp
+    src/framework/moe_engine/expert_storage.cpp
+    src/framework/moe_engine/expert_execution.cpp
+    src/framework/moe_engine/moe_policy.cpp
+    src/framework/moe_engine/placement_policy.cpp
+    src/framework/moe_engine/cache_policy.cpp
+    src/framework/runtime/moe_options.cpp
     src/framework/core/host_memory.cpp
     src/framework/core/load_progress.cpp
     src/framework/runtime/model.cpp
@@ -623,9 +630,6 @@ add_library(engine_core OBJECT
     src/framework/modules/attention/positional_encoding.cpp
     src/framework/modules/gated_delta_net_module.cpp
     src/framework/modules/feed_forward_modules.cpp
-    src/framework/modules/moe_feed_forward_module.cpp
-    src/framework/modules/moe_module.cpp
-    src/framework/modules/staged_moe_runtime.cpp
     src/framework/modules/attention/self_attention.cpp
     src/framework/modules/attention/longformer_attention.cpp
     src/framework/modules/attention/longformer_attention_gpu.cpp
@@ -4640,6 +4644,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(hf_sampler_test tests/unittests/test_hf_sampler.cpp)
         add_test(NAME hf_sampler_test COMMAND hf_sampler_test)
 
+        add_engine_unittest(moe_engine_math_test tests/unittests/test_moe_engine_math.cpp)
+        add_test(NAME moe_engine_math_test COMMAND moe_engine_math_test --log)
+        add_engine_unittest(moe_engine_composition_test tests/unittests/test_moe_engine_composition.cpp)
+        add_test(NAME moe_engine_composition_test COMMAND moe_engine_composition_test --log)
+        add_engine_unittest(moe_engine_test tests/unittests/test_moe_engine.cpp)
+        target_sources(moe_engine_test PRIVATE tests/unittests/test_allocation_failure.cpp)
+        add_test(NAME moe_engine_test COMMAND moe_engine_test --log)
+        add_engine_unittest(moe_policy_test tests/unittests/test_moe_policy.cpp)
+        add_test(NAME moe_policy_test COMMAND moe_policy_test --log)
+
         add_engine_unittest(diffusion_math_test tests/unittests/test_diffusion_math.cpp)
         add_test(NAME diffusion_math_test COMMAND diffusion_math_test)
 
@@ -4648,20 +4662,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(snake_beta_test tests/unittests/test_snake_beta.cpp)
         add_test(NAME snake_beta_test COMMAND snake_beta_test --log)
-
-        add_engine_unittest(moe_feed_forward_module_test tests/unittests/test_moe_feed_forward_module.cpp)
-        add_test(NAME moe_feed_forward_module_test COMMAND moe_feed_forward_module_test --log)
-        add_engine_unittest(gated_delta_net_module_test tests/unittests/test_gated_delta_net_module.cpp)
-        add_test(NAME gated_delta_net_module_test COMMAND gated_delta_net_module_test --log)
-        add_engine_unittest(moe_module_test tests/unittests/test_moe_module.cpp)
-        add_test(NAME moe_module_test COMMAND moe_module_test --log)
-
-        add_engine_unittest(disk_expert_weight_store_test tests/unittests/test_disk_expert_weight_store.cpp)
-        target_sources(disk_expert_weight_store_test PRIVATE tests/unittests/test_allocation_failure.cpp)
-        if (ENGINE_ENABLE_OPENMP)
-            target_link_libraries(disk_expert_weight_store_test PRIVATE OpenMP::OpenMP_CXX)
-        endif()
-        add_test(NAME disk_expert_weight_store_test COMMAND disk_expert_weight_store_test --log)
 
         add_engine_unittest(transpose_module_test tests/unittests/test_transpose_module.cpp)
         add_engine_unittest(lstm_sequence_test tests/unittests/test_lstm_sequence.cpp)

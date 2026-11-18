@@ -319,3 +319,7 @@ The weights are Apache-2.0 according to the
 ported from [Zyphra/ZONOS3](https://github.com/Zyphra/ZONOS3) (MIT, Copyright
 2026 Zyphra, Inc.). zyphra-textnorm (MIT) is linked only when you build with
 `AUDIOCPP_ZONOS3_TEXTNORM=ON`.
+
+### MoE engine policies
+
+The routed backbone accepts independent placement and cache-eviction policies through `moe_policy` and stage-scoped `moe_policy_params.placement.*` / `moe_policy_params.eviction.*`. See [shared controls and policy parameters](../usage.md#independent-moe-policies). Omitted policies preserve the model's existing residency and CPU-layer defaults. Active policies require staged experts; shared/dense branches and model state remain on their existing paths.

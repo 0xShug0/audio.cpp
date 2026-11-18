@@ -654,6 +654,7 @@ void test_cli_key_value_options_override_yaml() {
         config << "session-option:\n"
                << "  - confucius4_r2t2.unfixed_chunk_num=2\n"
                << "  - confucius4_r2t2.chunk_size_ms=320\n"
+               << "  - moe_policy=default\n"
                << "  - moe_cpu_share=0.1\n"
                << "  - moe_disk_experts=true\n"
                << "  - moe_pin_experts=false\n"
@@ -674,6 +675,8 @@ void test_cli_key_value_options_override_yaml() {
         "temperature=0.9",
         "--request-option",
         "top_k=10",
+        "--moe-policy",
+        "placement_cpu_share",
         "--moe-cpu-share",
         "0.5",
         "--moe-disk-experts",
@@ -687,7 +690,7 @@ void test_cli_key_value_options_override_yaml() {
         "--moe-cpu-expert-layers",
         "3",
     };
-    const auto expanded = minitts::cli::expand_cli_args(21, const_cast<char **>(argv));
+    const auto expanded = minitts::cli::expand_cli_args(static_cast<int>(sizeof(argv) / sizeof(argv[0])), const_cast<char **>(argv));
     std::vector<char *> expanded_argv;
     expanded_argv.reserve(expanded.size() + 1);
     for (const auto & arg : expanded) {
@@ -709,6 +712,7 @@ void test_cli_key_value_options_override_yaml() {
         std::string("2"),
         "YAML session option retained");
     for (const auto & key : {
+             "moe_policy",
              "moe_cpu_share",
              "moe_disk_experts",
              "moe_pin_experts",
@@ -718,6 +722,7 @@ void test_cli_key_value_options_override_yaml() {
         engine::test::require(session_options.count(key) == 0, "CLI MoE option overrides YAML session option");
     }
     for (const auto & option : {
+             std::make_pair("--moe-policy", "placement_cpu_share"),
              std::make_pair("--moe-cpu-share", "0.5"),
              std::make_pair("--moe-disk-experts", "false"),
              std::make_pair("--moe-pin-experts", "true"),

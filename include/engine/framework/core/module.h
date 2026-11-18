@@ -60,8 +60,6 @@ struct ModuleBuildContext {
     // Preserve logical shapes while omitting physical identity views. Opt-in:
     // removing those views can enable backend fusion and change rounding.
     bool elide_identity_reshapes = false;
-    // Explicit, session-owned region recorder. Null for ordinary graphs.
-    PreparedGraph * region_owner = nullptr;
 };
 
 enum class PortKind {

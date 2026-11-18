@@ -96,10 +96,10 @@ int main(int argc, char ** argv) {
             weights->experts.reset();
             weights->store = std::make_shared<engine::core::BackendWeightStore>(execution.backend(),
                 execution.backend_type(), "test.drama3.primary", 1024 * 1024);
-            engine::core::MoeExecutionPolicy policy;
-            policy.residency = split ? engine::core::MoeExpertResidency::Staged : engine::core::MoeExpertResidency::Backend;
-            weights->experts = std::make_unique<engine::core::MoeResources>(execution, *norm_source,
-                *weights->store, policy, "test.drama3.cpu", 1024 * 1024);
+            engine::moe::EngineConfig policy;
+            policy.residency = split ? engine::moe::Residency::Staged : engine::moe::Residency::Resident;
+            weights->experts = std::make_unique<engine::moe::MoeEngine>(execution, *weights->store, *norm_source,
+                policy, "test.drama3.cpu", 1024 * 1024);
             for (bool buffer_failure : {true, false}) {
                 fail_buffer = buffer_failure;
                 fail_graph = !buffer_failure;
@@ -308,7 +308,7 @@ int main(int argc, char ** argv) {
                 if (maximum > 1e-4F) throw std::runtime_error("decode optimization changed fixed-input continuation");
             }
         }
-        c.moe.residency = engine::core::MoeExpertResidency::Staged;
+        c.moe.residency = engine::moe::Residency::Staged;
         auto disk = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
         for (int64_t steps : {1, 7}) {
             std::unique_ptr<ggml_context, drama::GgmlContextDeleter> routing_context(
@@ -316,11 +316,11 @@ int main(int argc, char ** argv) {
             engine::core::ModuleBuildContext routing_ctx{routing_context.get(), "routing_layout", test_backend.type};
             auto * input = ggml_new_tensor_3d(routing_ctx.ggml, GGML_TYPE_F32, c.hidden_size, steps, 1);
             const auto & layer = disk->layers.front();
-            const auto routed = engine::modules::MoeFeedForwardModule(layer.ffn_config).build_inputs(routing_ctx,
-                ggml_reshape_2d(routing_ctx.ggml, input, c.hidden_size, steps), layer.ffn);
-            if (!ggml_is_contiguous(routed.routing.ids))
+            const auto routed = disk->experts->route(routing_ctx, layer.expert,
+                ggml_reshape_2d(routing_ctx.ggml, input, c.hidden_size, steps));
+            if (!ggml_is_contiguous(routed.ids))
                 throw std::runtime_error("Drama 3 offload routing IDs must remain compact");
-            if (steps == 1 && routed.routing.ids->op == GGML_OP_CONT)
+            if (steps == 1 && routed.ids->op == GGML_OP_CONT)
                 throw std::runtime_error("single-token routing must not copy already compact IDs");
         }
         drama::Drama3BackboneCachedDecodeGraph reference(prefill_execution, resident, c, 1024, 8 * 1024 * 1024);
