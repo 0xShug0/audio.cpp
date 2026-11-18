@@ -40,7 +40,8 @@
 namespace engine::community_models::granite_speech_2b {
 namespace {
 
-constexpr size_t kProjectorGraphNodes = 65536;
+constexpr size_t kProjectorGraphBaseNodes = 8192;
+constexpr size_t kProjectorGraphNodesPerWindow = 1024;
 constexpr size_t kProjectorWeightContextBytes = 256ull * 1024ull * 1024ull;
 
 std::string shape_text(const std::vector<int64_t> & shape) {
@@ -408,7 +409,12 @@ GraniteSpeech2BProjectorOutputs GraniteSpeech2BProjectorRuntime::project(
         }
         auto projected = modules::LinearModule({1024, 2048, true}).build(ctx, stacked, impl_->weights_.final_linear);
 
-        ggml_cgraph * graph = ggml_new_graph_custom(ggml_ctx, kProjectorGraphNodes, false);
+        // The per-window Q-Former loop adds O(100+) graph nodes per window,
+        // so the node budget scales with the plan instead of assuming a
+        // short clip (a fixed 64k budget aborted on spans above ~60 s).
+        const size_t graph_nodes = kProjectorGraphBaseNodes +
+            kProjectorGraphNodesPerWindow * static_cast<size_t>(plan.windows);
+        ggml_cgraph * graph = ggml_new_graph_custom(ggml_ctx, graph_nodes, false);
         ggml_build_forward_expand(graph, projected.tensor);
         ggml_set_output(projected.tensor);
 

@@ -389,6 +389,33 @@ void test_window_isolation() {
     test::require(threw, "projector rejects T=0");
 }
 
+// Long-span capacity: a 180 s span (T=9000 steps, W=600 windows) must run
+// without exhausting the projector graph node budget. Regression test for
+// the fixed 65536-node budget that aborted on spans above ~60 s.
+void test_long_span_projector_capacity() {
+    FakeDataSource source = full_shapes();
+    auto assets = std::make_shared<g2b::GraniteSpeech2BAssets>();
+    assets->config = g2b::GraniteSpeech2BConfig{};
+    assets->source = std::make_shared<FakeDataSource>(std::move(source));
+    engine::core::ExecutionContext execution(
+        engine::core::BackendConfig{engine::core::BackendType::Cpu, 0, 1});
+    g2b::GraniteSpeech2BProjectorRuntime projector(
+        assets, execution, engine::assets::TensorStorageType::F32);
+
+    const int64_t steps = 9000;
+    std::vector<float> enc(static_cast<size_t>(steps * 1024));
+    for (size_t i = 0; i < enc.size(); ++i) {
+        enc[i] = (static_cast<int64_t>(i % 97) - 48) * 0.01F;
+    }
+    const auto out = projector.project(enc, steps);
+    test::require_eq(out.audio_placeholders, int64_t{1800}, "A=3W for 600 windows");
+    test::require_eq(
+        static_cast<int64_t>(out.projected.size()), int64_t{1800 * 2048}, "projected values");
+    for (float value : out.projected) {
+        test::require(std::isfinite(value), "long-span projected finite");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -396,6 +423,7 @@ int main() {
         test_sizing_rules();
         test_shape_negatives();
         test_window_isolation();
+        test_long_span_projector_capacity();
     } catch (const std::exception & error) {
         std::cerr << "FAIL: " << error.what() << "\n";
         return 1;
