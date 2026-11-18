@@ -90,6 +90,9 @@ struct CallShape {
     ggml_type scatter_index_type = GGML_TYPE_I64;
     int64_t minimum_rows = 1;
     ExpertLowering lowering = ExpertLowering::Default;
+    // Embedded one-token regions replace native top-k expert operations.
+    // Phased execution preserves its expert-row buckets by default.
+    bool native_single_token = false;
 };
 struct ExpertStatistics {
     uint64_t bytes_read = 0, expert_loads = 0, cache_hits = 0;
@@ -132,6 +135,8 @@ private:
     bool needs_primary_workspace(CallId call) const;
     void prepare(CallId call);
     uint64_t execute(CallId call, const std::vector<int32_t> * ids = nullptr);
+    const std::vector<int32_t> & stage_routes(CallId call, const std::vector<int32_t> & ids);
+    ggml_backend_t routing_backend();
     void release(CallId call);
     ggml_tensor * input_port(CallId call) const;
     ggml_tensor * output_port(CallId call) const;

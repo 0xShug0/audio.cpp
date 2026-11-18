@@ -6,6 +6,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::moe {
@@ -65,10 +66,15 @@ private:
     friend class MoeEngine;
     void bind_call(MoeEngine &, CallId);
     class Region;
+    class CacheRoute;
     class Scope;
     std::shared_ptr<core::GraphWorkspace> embedded_workspace();
     void bind_region(MoeEngine &, CallId, ggml_tensor * input,
         ggml_tensor * ids, ggml_tensor * first, ggml_tensor * output);
+    void bind_cache_route(MoeEngine &, CallId, ggml_tensor * ids,
+        ggml_tensor * mapped, ggml_backend_t backend);
+    void record_cache_regions();
+    static bool evaluate(ggml_tensor *, bool ask, void * data);
     void drain();
     void drop_calls();
     void require_idle() const;
@@ -80,6 +86,10 @@ private:
     struct BoundStep { GraphId graph; MoeEngine * engine; CallId call; };
     std::vector<std::vector<BoundStep>> sequences_;
     std::vector<MoeEngine *> engines_;
+    std::vector<std::unique_ptr<CacheRoute>> cache_routes_;
+    std::unordered_map<ggml_tensor *, CacheRoute *> cache_evaluation_;
+    CacheRoute * requested_route_ = nullptr;
+    bool caller_requested_ = false;
     std::atomic<bool> active_{false};
     bool allocated_ = false;
 };

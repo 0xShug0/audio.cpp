@@ -313,7 +313,7 @@ core::TensorValue shared_expert(core::ModuleBuildContext & ctx, const core::Tens
     auto shared = modules::GatedFeedForwardModule(config).build(ctx, input, layer.shared);
     auto gate = modules::LinearModule({input.tensor->ne[0], 1, false}).build(ctx, input, layer.shared_gate);
     gate = modules::SigmoidModule{}.build(ctx, gate);
-    return modules::MulModule{}.build(ctx, shared, gate);
+    return modules::MulModule{true}.build(ctx, shared, gate);
 }
 
 core::TensorValue mlp(core::ModuleBuildContext & ctx, const core::TensorValue & x,

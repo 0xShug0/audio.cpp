@@ -177,8 +177,8 @@ int backbone(const fs::path & model, const fs::path & oracle, bool speaker, bool
         return pass ? 0 : 1;
     }
     zonos2::Zonos2BackboneOptions options;
-    options.disk_experts = true;
-    options.expert_cache_size = 8;
+    options.moe.residency = engine::moe::Residency::Staged;
+    options.moe.cache_slots = 8;
     const auto disk = teacher_forced_logits(assets, run, options);
     const auto disk_decode = compare_logits(disk, run.decode, 0, run.steps, codebooks, vocab);
     float max_diff = 0.0f;

@@ -89,6 +89,47 @@ private:
     std::vector<int32_t> ids_buffer_;
 };
 
+// Default native expert math remains in the parent graph. This region replaces
+// only the ID copy with cache mapping; the enclosing lease protects the weights
+// until the parent's expert operations and consumers complete.
+class MoePreparedGraph::CacheRoute final : public core::GraphRegionExecutor {
+public:
+    friend class MoePreparedGraph;
+    CacheRoute(MoePreparedGraph & parent, MoeEngine & engine, CallId call,
+        ggml_tensor * ids, ggml_tensor * mapped, ggml_backend_t backend)
+        : parent_(parent), engine_(engine), call_(call), ids_(ids), mapped_(mapped), backend_(backend),
+          logical_ids_(static_cast<size_t>(ggml_nelements(ids))) {}
+    void prepare(ggml_backend_t backend, ggml_cgraph *) override {
+        if (backend != backend_) throw std::runtime_error("native MoE routing must retain its expert backend");
+        source_backend_ = parent_.scheduler_
+            ? ggml_backend_sched_get_tensor_backend(parent_.scheduler_, ids_) : parent_.execution().backend();
+        if (!source_backend_) throw std::runtime_error("native MoE routing requires the ID producer backend");
+    }
+    ggml_status compute() override {
+        if (!parent_.active_) throw std::logic_error("native MoE routing requires its enclosing graph scope");
+        // Scheduled producers may still be queued. Complete their work before
+        // the synchronous read, matching the ordinary cache callback contract.
+        if (!evaluated_) {
+            ggml_backend_synchronize(source_backend_);
+            if (backend_ != source_backend_) ggml_backend_synchronize(backend_);
+        }
+        ggml_backend_tensor_get(evaluated_ ? mapped_ : ids_, logical_ids_.data(), 0, logical_ids_.size() * sizeof(int32_t));
+        const auto & mapped = engine_.stage_routes(call_, logical_ids_);
+        ggml_backend_tensor_set(mapped_, mapped.data(), 0, mapped.size() * sizeof(int32_t));
+        return GGML_STATUS_SUCCESS;
+    }
+    void reset() noexcept override {}
+private:
+    MoePreparedGraph & parent_;
+    MoeEngine & engine_;
+    CallId call_;
+    ggml_tensor * ids_, * mapped_;
+    ggml_backend_t backend_;
+    ggml_backend_t source_backend_ = nullptr;
+    bool evaluated_ = false;
+    std::vector<int32_t> logical_ids_;
+};
+
 MoePreparedGraph::MoePreparedGraph(const core::ExecutionContext & execution, core::PreparedGraphConfig config,
     std::shared_ptr<core::GraphWorkspace> workspace)
     : graph_(execution, std::move(config)), workspace_(std::move(workspace)) {}
@@ -171,6 +212,18 @@ std::shared_ptr<core::GraphWorkspace> MoePreparedGraph::embedded_workspace() {
 
 void MoePreparedGraph::allocate() {
     require_idle(); if (allocated_) throw std::logic_error("MoE graph is already allocated");
+    if (!cache_routes_.empty()) {
+        if (!workspace_ && graph_count() == 1) {
+            requirements_.scheduler = true;
+            const bool host = core::is_host_backend(execution().backend()) ||
+                std::any_of(requirements_.backends.begin(), requirements_.backends.end(), core::is_host_backend);
+            if (!host) require_backend(cache_routes_.front()->engine_.routing_backend());
+            for (const auto & route : cache_routes_) {
+                route->evaluated_ = true;
+                cache_evaluation_.emplace(route->mapped_, route.get());
+            }
+        } else record_cache_regions();
+    }
     const bool other_backend = std::any_of(requirements_.backends.begin(), requirements_.backends.end(), [&](auto * backend) { return backend != execution().backend(); });
     if (other_backend || requirements_.scheduler) {
         if (workspace_ || graph_count() != 1) throw std::invalid_argument("scheduled MoE parent requires one graph and no shared workspace");
@@ -182,7 +235,8 @@ void MoePreparedGraph::allocate() {
         if (!core::is_host_backend(backends.back())) throw std::invalid_argument("scheduled MoE parent requires a declared CPU fallback backend");
         scheduler_ = graph_.create_scheduler(std::move(backends));
         for (const auto & placement : requirements_.placements) ggml_backend_sched_set_tensor_backend(scheduler_, placement.first, placement.second);
-        if (requirements_.evaluation) ggml_backend_sched_set_eval_callback(scheduler_, requirements_.evaluation, requirements_.evaluation_data);
+        if (!cache_evaluation_.empty()) ggml_backend_sched_set_eval_callback(scheduler_, evaluate, this);
+        else if (requirements_.evaluation) ggml_backend_sched_set_eval_callback(scheduler_, requirements_.evaluation, requirements_.evaluation_data);
     } else if (requirements_.evaluation) throw std::invalid_argument("graph evaluation callback requires an explicit scheduler");
     if (embedded_workspace_ && std::any_of(calls_.begin(), calls_.end(), [](const auto & binding) {
         return binding.first->needs_primary_workspace(binding.second);
@@ -204,7 +258,7 @@ void MoePreparedGraph::allocate_shared(const std::vector<MoePreparedGraph *> & o
                 [&](auto * backend) { return backend != owner->execution().backend(); }))
             throw std::invalid_argument("incompatible MoE shared graph allocation");
     }
-    for (auto * owner : owners) workspace->add(owner->graph_);
+    for (auto * owner : owners) { owner->record_cache_regions(); workspace->add(owner->graph_); }
     workspace->prepare();
     for (auto * owner : owners) {
         for (const auto & binding : owner->calls_) binding.first->prepare(binding.second);
@@ -241,6 +295,35 @@ void MoePreparedGraph::bind_region(MoeEngine & engine, CallId call, ggml_tensor 
         return std::make_unique<Region>(*this, engine, call, input, ids, output);
     });
 }
+void MoePreparedGraph::bind_cache_route(MoeEngine & engine, CallId call,
+    ggml_tensor * ids, ggml_tensor * mapped, ggml_backend_t backend) {
+    bind_call(engine, call);
+    cache_routes_.push_back(std::make_unique<CacheRoute>(*this, engine, call, ids, mapped, backend));
+}
+void MoePreparedGraph::record_cache_regions() {
+    for (const auto & route : cache_routes_) {
+        ggml_set_output(route->ids_);
+        core::GraphRegion region;
+        region.nodes = {route->mapped_}; region.outputs = {route->mapped_};
+        graph_.record_region(std::move(region), [this, route = route.get()] {
+            return std::make_unique<CacheRoute>(*this, route->engine_, route->call_,
+                route->ids_, route->mapped_, route->backend_);
+        });
+    }
+}
+bool MoePreparedGraph::evaluate(ggml_tensor * tensor, bool ask, void * data) {
+    auto & owner = *static_cast<MoePreparedGraph *>(data);
+    if (ask) {
+        const auto found = owner.cache_evaluation_.find(tensor);
+        owner.requested_route_ = found == owner.cache_evaluation_.end() ? nullptr : found->second;
+        owner.caller_requested_ = owner.requirements_.evaluation &&
+            owner.requirements_.evaluation(tensor, true, owner.requirements_.evaluation_data);
+        return owner.requested_route_ || owner.caller_requested_;
+    }
+    if (owner.requested_route_) owner.requested_route_->compute();
+    return !owner.caller_requested_ ||
+        owner.requirements_.evaluation(tensor, false, owner.requirements_.evaluation_data);
+}
 void MoePreparedGraph::drain() {
     if (scheduler_) ggml_backend_sched_synchronize(scheduler_);
     else ggml_backend_synchronize(execution().backend());
@@ -248,6 +331,7 @@ void MoePreparedGraph::drain() {
 void MoePreparedGraph::drop_calls() {
     for (const auto & binding : calls_) binding.first->release(binding.second);
     calls_.clear(); sequences_.clear(); engines_.clear(); embedded_workspace_.reset();
+    cache_evaluation_.clear(); cache_routes_.clear(); requested_route_ = nullptr; caller_requested_ = false;
 }
 void MoePreparedGraph::reset() {
     require_idle(); drain();

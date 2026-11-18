@@ -162,7 +162,7 @@ void test_composition(core::ExecutionContext & execution, int mode) {
             shared = modules::GatedFeedForwardModule(std::get<modules::GatedFeedForwardConfig>(*config.shared))
                 .build(ctx, input, std::get<modules::GatedFeedForwardWeights>(weights.shared));
             auto gate = modules::SigmoidModule{}.build(ctx, modules::LinearModule({h, 1, false}).build(ctx, input, weights.shared_gate));
-            shared = modules::MulModule{}.build(ctx, shared, gate);
+            shared = modules::MulModule{true}.build(ctx, shared, gate);
         } else shared = modules::FeedForwardModule(std::get<modules::FeedForwardConfig>(*config.shared))
             .build(ctx, input, std::get<modules::FeedForwardWeights>(weights.shared));
         actual = ggml_add(ctx.ggml, actual, shared.tensor);

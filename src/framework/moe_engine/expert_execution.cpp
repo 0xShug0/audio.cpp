@@ -13,6 +13,27 @@
 namespace engine::moe::detail {
 class ExpertProgram::Impl {
 public:
+    // Bucket views must satisfy the buffer provider's offset alignment. Slot
+    // IDs are constants, encoded and uploaded once during program preparation.
+    struct SlotLayout {
+        std::vector<size_t> offsets;
+        std::vector<int32_t> ids;
+        SlotLayout() = default;
+        SlotLayout(ggml_backend_t backend, const ProgramShape & config) {
+            const auto alignment = ggml_backend_buft_get_alignment(ggml_backend_get_default_buffer_type(backend));
+            offsets.reserve(config.rows_per_expert.size());
+            for (auto count : config.rows_per_expert) {
+                const auto bytes = ids.size() * sizeof(int32_t);
+                const auto aligned = ((bytes + alignment - 1) / alignment) * alignment;
+                offsets.push_back(aligned);
+                const auto first = aligned / sizeof(int32_t);
+                const auto rows = static_cast<size_t>(count);
+                ids.resize(first + static_cast<size_t>(config.cache_slots) * rows);
+                for (int64_t slot = 0; slot < config.cache_slots; ++slot)
+                    std::fill_n(ids.begin() + first + static_cast<size_t>(slot) * rows, rows, static_cast<int32_t>(slot));
+            }
+        }
+    };
     struct Layer {
         ExpertStorage * store;
         size_t group;
@@ -105,6 +126,7 @@ public:
     };
     struct CpuStage {
         core::PreparedGraph graphs;
+        SlotLayout slot_layout;
         ggml_tensor * hidden = nullptr;
         ggml_tensor * source = nullptr;
         ggml_tensor * slots = nullptr;
@@ -112,24 +134,16 @@ public:
         std::vector<float> batch_output, ordered_output;
 
         CpuStage(core::ExecutionContext & execution, const ProgramShape & config)
-            : graphs(execution, {"framework.moe.cpu_staged", 16 * 1024 * 1024, 128, 64 * ggml_tensor_overhead()}) {
+            : graphs(execution, {"framework.moe.cpu_staged", 16 * 1024 * 1024, 128, 64 * ggml_tensor_overhead()}),
+              slot_layout(execution.backend(), config) {
             const auto rows = config.resident ? config.selected * config.tokens : config.cache_slots * config.rows_per_expert.back();
-            int64_t slot_rows = 0;
-            for (auto count : config.rows_per_expert) slot_rows += config.cache_slots * count;
             auto & ctx = graphs.persistent_build_context();
             hidden = ggml_new_tensor_2d(ctx.ggml, GGML_TYPE_F32, config.input_size, config.tokens);
             source = ggml_new_tensor_1d(ctx.ggml, GGML_TYPE_I32, rows);
-            slots = ggml_new_tensor_2d(ctx.ggml, GGML_TYPE_I32, 1, slot_rows);
+            slots = ggml_new_tensor_2d(ctx.ggml, GGML_TYPE_I32, 1, static_cast<int64_t>(slot_layout.ids.size()));
             for (auto * tensor : {hidden, source, slots}) ggml_set_input(tensor);
             graphs.allocate_persistent();
-            std::vector<int32_t> slot_ids(static_cast<size_t>(slot_rows));
-            size_t offset = 0;
-            for (auto count : config.rows_per_expert) {
-                for (int64_t slot = 0; slot < config.cache_slots; ++slot)
-                    std::fill_n(slot_ids.begin() + offset + slot * count, count, static_cast<int32_t>(slot));
-                offset += static_cast<size_t>(config.cache_slots * count);
-            }
-            ggml_backend_tensor_set(slots, slot_ids.data(), 0, slot_ids.size() * sizeof(int32_t));
+            ggml_backend_tensor_set(slots, slot_layout.ids.data(), 0, slot_layout.ids.size() * sizeof(int32_t));
             batch_output.resize(static_cast<size_t>(config.hidden_size * rows));
             ordered_output.resize(static_cast<size_t>(config.hidden_size * config.selected * config.tokens));
         }
@@ -147,6 +161,7 @@ public:
     bool prepared = false;
     ggml_tensor * hidden = nullptr, * ids = nullptr, * weights = nullptr, * outputs = nullptr, * result = nullptr;
     ggml_tensor * source = nullptr, * target = nullptr, * slots = nullptr;
+    SlotLayout slot_layout;
     std::vector<int32_t> logical_ids, source_rows;
     std::variant<std::vector<int32_t>, std::vector<int64_t>> target_rows;
     std::vector<size_t> assignment_offsets, assignment_cursor;
@@ -189,8 +204,7 @@ public:
             throw std::invalid_argument("staged MoE assignments exceed indexed graph limits");
         if (hybrid_enabled && config.tokens * config.selected > std::numeric_limits<int32_t>::max() / 2)
             throw std::invalid_argument("hybrid MoE assignments exceed indexed graph limits");
-        int64_t slot_rows = 0;
-        for (auto count : config.rows_per_expert) slot_rows += config.cache_slots * count;
+        slot_layout = SlotLayout(execution.backend(), config);
         inputs.reset(ggml_init({64 * ggml_tensor_overhead(), nullptr, true}));
         context.reset(ggml_init({16 * 1024 * 1024, nullptr, true}));
         if (!inputs || !context) throw std::runtime_error("cannot allocate staged MoE contexts");
@@ -202,7 +216,7 @@ public:
         outputs = ggml_new_tensor_2d(g, GGML_TYPE_F32, config.hidden_size, config.selected * config.tokens + padding_rows);
         source = ggml_new_tensor_1d(g, GGML_TYPE_I32, rows);
         target = ggml_new_tensor_1d(g, config.scatter_index_type, rows);
-        slots = ggml_new_tensor_2d(g, GGML_TYPE_I32, 1, slot_rows);
+        slots = ggml_new_tensor_2d(g, GGML_TYPE_I32, 1, static_cast<int64_t>(slot_layout.ids.size()));
         result = ggml_view_3d(g, outputs, config.hidden_size, config.selected, config.tokens,
             config.hidden_size * sizeof(float), config.hidden_size * config.selected * sizeof(float), 0);
         for (auto * t : {hidden, ids, weights, outputs, source, target, slots}) ggml_set_input(t);
@@ -219,15 +233,7 @@ public:
         source_rows.resize(static_cast<size_t>(rows));
         if (config.scatter_index_type == GGML_TYPE_I64) target_rows.emplace<std::vector<int64_t>>();
         std::visit([rows](auto & targets) { targets.resize(static_cast<size_t>(rows)); }, target_rows);
-        // Slot IDs depend only on the row bucket, not routing or cache contents.
-        std::vector<int32_t> slot_ids(static_cast<size_t>(slot_rows));
-        size_t offset = 0;
-        for (auto count : config.rows_per_expert) {
-            for (int64_t slot = 0; slot < config.cache_slots; ++slot)
-                std::fill_n(slot_ids.begin() + offset + slot * count, count, static_cast<int32_t>(slot));
-            offset += static_cast<size_t>(config.cache_slots * count);
-        }
-        ggml_backend_tensor_set(slots, slot_ids.data(), 0, slot_ids.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(slots, slot_layout.ids.data(), 0, slot_layout.ids.size() * sizeof(int32_t));
         assignment_offsets.resize(static_cast<size_t>(config.experts) + 1);
         assignment_cursor.resize(static_cast<size_t>(config.experts));
         assignment_positions.resize(static_cast<size_t>(config.selected * config.tokens));
@@ -282,9 +288,9 @@ size_t ExpertProgram::add_layer(const ExpertMath & math, const ExpertWeights & w
     // CPU-only and whole-layer CPU execution do not split work across devices.
     // Keep the policy binding for requested observations, not placement.
     layer.place_experts = placement && !core::is_host_backend(backend);
-    // A single token fits in one cache batch. Preserve native top-k matmul
-    // dimensions instead of evaluating every cache slot and scattering padding.
-    layer.direct = s.config.resident || (s.config.tokens == 1 && s.config.rows_per_expert.front() == 1 &&
+    // Preserve the caller's execution layout. Embedded native one-token graphs
+    // use top-k matmuls; phased graphs keep their cache-slot row buckets.
+    layer.direct = s.config.resident || (s.config.native_single_token && s.config.tokens == 1 && s.config.rows_per_expert.front() == 1 &&
         s.config.selected <= s.config.cache_slots && !layer.place_experts);
     if (layer.cpu_staged) {
         if (!s.cpu_execution || s.cpu_execution->backend() != backend)
@@ -308,15 +314,14 @@ size_t ExpertProgram::add_layer(const ExpertMath & math, const ExpertWeights & w
             s.layers.push_back(std::move(layer));
             return s.layers.size() - 1;
         }
-        size_t slot_offset = 0;
+        size_t bucket = 0;
         for (auto count : s.config.rows_per_expert) {
             const auto rows = count * s.config.cache_slots;
             const auto id = !host.has_graphs ? size_t{0}
                 : host.graphs.add_graph("layer_" + std::to_string(s.layers.size()) + "_rows_" + std::to_string(count));
             host.has_graphs = true;
             auto * source = ggml_view_1d(ctx.ggml, host.source, rows, 0);
-            auto * slots = ggml_view_2d(ctx.ggml, host.slots, 1, rows, host.slots->nb[1], slot_offset);
-            slot_offset += static_cast<size_t>(rows) * sizeof(int32_t);
+            auto * slots = ggml_view_2d(ctx.ggml, host.slots, 1, rows, host.slots->nb[1], host.slot_layout.offsets[bucket++]);
             auto * input = ggml_reshape_3d(ctx.ggml, ggml_get_rows(ctx.ggml, host.hidden, source),
                 s.config.input_size, 1, rows);
             auto * output = build_experts(ctx, input, slots, weights, math);
@@ -362,14 +367,13 @@ size_t ExpertProgram::add_layer(const ExpertMath & math, const ExpertWeights & w
         s.layers.push_back(std::move(layer));
         return s.layers.size() - 1;
     }
-    size_t slot_offset = 0;
+    size_t bucket = 0;
     for (auto count : s.config.rows_per_expert) {
         const auto rows = count * s.config.cache_slots;
         auto * graph = ggml_new_graph_custom(ctx.ggml, 128, false);
         auto * source = ggml_view_1d(ctx.ggml, s.source, rows, 0);
         auto * target = ggml_view_1d(ctx.ggml, s.target, rows, 0);
-        auto * slots = ggml_view_2d(ctx.ggml, s.slots, 1, rows, s.slots->nb[1], slot_offset);
-        slot_offset += static_cast<size_t>(rows) * sizeof(int32_t);
+        auto * slots = ggml_view_2d(ctx.ggml, s.slots, 1, rows, s.slots->nb[1], s.slot_layout.offsets[bucket++]);
         auto * input = ggml_reshape_3d(ctx.ggml, ggml_get_rows(ctx.ggml, s.hidden, source), s.config.input_size, 1, rows);
         auto * output = build_experts(ctx, input, slots, weights, math);
         ggml_build_forward_expand(graph, ggml_set_rows(ctx.ggml, s.outputs,

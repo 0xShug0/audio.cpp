@@ -30,6 +30,7 @@ public:
         size_t layer = 0, execution_layer = 0;
         uint64_t generation = 0;
         std::shared_ptr<Program> program;
+        bool native_routing = false;
     };
     core::ExecutionContext & execution;
     core::BackendWeightStore & primary;
@@ -75,6 +76,15 @@ public:
     core::ExecutionContext * cpu_context() {
         return cpu ? cpu.get() : (core::is_host_backend(execution.backend()) ? &execution : nullptr);
     }
+    core::ExecutionContext & require_cpu_context() {
+        if (core::is_host_backend(execution.backend())) return execution;
+        if (!cpu) {
+            core::BackendConfig backend;
+            backend.threads = execution.config().threads;
+            cpu = std::make_unique<core::ExecutionContext>(backend);
+        }
+        return *cpu;
+    }
     void idle() const { if (active) throw std::logic_error("cannot mutate MoE preparation during execution"); }
     Layer & layer(LayerId id) {
         if (id.owner != this || id.index >= layers.size()) throw std::invalid_argument("invalid MoE layer handle");
@@ -84,6 +94,15 @@ public:
         if (id.owner != this || id.index >= calls.size() || !calls[id.index] || calls[id.index]->generation != id.generation)
             throw std::invalid_argument("invalid or retired MoE call handle");
         return *calls[id.index];
+    }
+    CallId retain_call(std::unique_ptr<Call> call) {
+        call->generation = ++generation;
+        size_t index = 0;
+        while (index < calls.size() && calls[index]) ++index;
+        if (index == calls.size()) calls.emplace_back();
+        const auto version = call->generation;
+        calls[index] = std::move(call);
+        return {index, this, version};
     }
 };
 
@@ -208,6 +227,7 @@ CallId MoeEngine::add_call(LayerId id, CallShape shape, std::shared_ptr<core::Gr
         if (!candidate->prepared && candidate->workspace == workspace && workspace &&
             c.tokens == shape.tokens && c.input_width == shape.input_width && c.output_width == shape.output_width &&
             c.maximum_rows == shape.maximum_rows && c.minimum_rows == shape.minimum_rows && c.lowering == shape.lowering && c.scatter_index_type == shape.scatter_index_type &&
+            c.native_single_token == shape.native_single_token &&
             candidate->experts == static_cast<size_t>(layer.math.routing.experts) && candidate->selected == static_cast<size_t>(layer.math.routing.selected)) program = candidate;
         ++it;
     }
@@ -221,6 +241,7 @@ CallId MoeEngine::add_call(LayerId id, CallShape shape, std::shared_ptr<core::Gr
         detail::ProgramShape config;
         config.identity = ++s.generation;
         config.resident = !s.storage;
+        config.native_single_token = shape.native_single_token;
         config.hidden_size = shape.output_width; config.input_size = shape.input_width;
         config.tokens = shape.tokens; config.selected = layer.math.routing.selected;
         config.experts = layer.math.routing.experts;
@@ -239,13 +260,7 @@ CallId MoeEngine::add_call(LayerId id, CallShape shape, std::shared_ptr<core::Gr
     if (math.fused_swiglu && math.round_activation) throw std::invalid_argument("fused expert lowering cannot remove activation rounding");
     call->execution_layer = program->execution->add_layer(math, layer.weights, s.storage.get(), layer.cache_group, layer.backend, layer.placement.get());
     call->program = std::move(program);
-    call->generation = ++s.generation;
-    size_t index = 0;
-    while (index < s.calls.size() && s.calls[index]) ++index;
-    if (index == s.calls.size()) s.calls.emplace_back();
-    const auto generation = call->generation;
-    s.calls[index] = std::move(call);
-    return {index, impl_.get(), generation};
+    return s.retain_call(std::move(call));
 }
 void MoeEngine::build_inputs(CallId id, MoePreparedGraph & graph, size_t graph_id, ggml_tensor * input, const Routing * external) {
     auto & call = impl_->call(id);
@@ -278,15 +293,40 @@ ggml_tensor * MoeEngine::build(MoePreparedGraph & graph, LayerId id, ggml_tensor
         math.fused_swiglu = true;
         if (!impl_->storage) ggml_build_forward_expand(graph.graph(), routing.weights);
     }
-    auto * output = detail::build_experts(ctx, rows, routing.ids, layer.weights, math, &first);
-    if (impl_->storage) {
+    // Native single-token execution needs only logical-to-cache-slot mapping.
+    // Keep its expert operations in the parent graph, preserving its lowering
+    // and avoiding separate expert graphs and boundary-copy submissions.
+    // Policies requesting completion observations still use explicit execution.
+    const auto & requirements = impl_->policy.requirements;
+    const bool native_routing = impl_->storage && input->ne[1] == 1 &&
+        layer.math.routing.selected <= impl_->config.cache_slots &&
+        !impl_->policy.active_placement && !requirements.cache_accesses &&
+        !requirements.completed_work && !requirements.phase_times;
+    auto * expert_ids = routing.ids;
+    if (native_routing) {
+        expert_ids = ggml_cont(ctx.ggml, routing.ids);
+        ggml_set_output(expert_ids);
+        auto call = std::make_unique<Impl::Call>();
+        call->layer = id.index;
+        call->native_routing = true;
+        CallId binding;
+        {
+            std::lock_guard<std::mutex> lock(impl_->mutex);
+            impl_->idle();
+            binding = impl_->retain_call(std::move(call));
+        }
+        graph.bind_cache_route(*this, binding, routing.ids, expert_ids, layer.backend);
+        if (layer.backend != impl_->execution.backend()) graph.place_nodes({expert_ids}, layer.backend);
+    }
+    auto * output = detail::build_experts(ctx, rows, expert_ids, layer.weights, math, &first);
+    if (impl_->storage && !native_routing) {
         auto * boundary = first->src[1];
-        auto call = add_call(id, {input->ne[1], boundary->ne[0], output->ne[0], input->ne[1], GGML_TYPE_I64, 1, lowering}, graph.embedded_workspace());
+        auto call = add_call(id, {input->ne[1], boundary->ne[0], output->ne[0], input->ne[1], GGML_TYPE_I64, 1, lowering, true}, graph.embedded_workspace());
         graph.bind_region(*this, call, boundary, routing.ids, first, output);
     } else if (layer.backend != impl_->execution.backend()) {
         std::vector<ggml_tensor *> nodes;
         const auto visit = [&](const auto & self, ggml_tensor * node) -> void {
-            if (!node || node == rows || node == routing.ids || node->op == GGML_OP_NONE || std::find(nodes.begin(), nodes.end(), node) != nodes.end()) return;
+            if (!node || node == rows || node == expert_ids || node->op == GGML_OP_NONE || std::find(nodes.begin(), nodes.end(), node) != nodes.end()) return;
             for (auto * source : node->src) self(self, source);
             nodes.push_back(node);
         };
@@ -296,11 +336,14 @@ ggml_tensor * MoeEngine::build(MoePreparedGraph & graph, LayerId id, ggml_tensor
     return detail::combine(ctx, output, routing.weights);
 }
 bool MoeEngine::needs_primary_workspace(CallId id) const {
-    return impl_->call(id).program->execution->needs_primary_workspace();
+    const auto & call = impl_->call(id);
+    return !call.native_routing && call.program->execution->needs_primary_workspace();
 }
 void MoeEngine::prepare(CallId id) {
     std::lock_guard<std::mutex> lock(impl_->mutex); impl_->idle();
-    auto & program = *impl_->call(id).program;
+    auto & call = impl_->call(id);
+    if (call.native_routing) return;
+    auto & program = *call.program;
     if (program.prepared) return;
     if (program.owns_workspace && program.execution->needs_primary_workspace()) program.workspace->prepare();
     program.execution->prepare(); program.prepared = true;
@@ -309,6 +352,17 @@ uint64_t MoeEngine::execute(CallId id, const std::vector<int32_t> * ids) {
     if (!impl_->active) throw std::logic_error("MoE execution requires a graph-owned lease");
     auto & call = impl_->call(id);
     return ids ? call.program->execution->run(call.execution_layer, *ids) : call.program->execution->run(call.execution_layer);
+}
+const std::vector<int32_t> & MoeEngine::stage_routes(CallId id, const std::vector<int32_t> & ids) {
+    if (!impl_->active) throw std::logic_error("MoE routing requires a graph-owned lease");
+    const auto & call = impl_->call(id);
+    const auto & layer = impl_->layers[call.layer];
+    return impl_->storage->stage(layer.cache_group, ids);
+}
+ggml_backend_t MoeEngine::routing_backend() {
+    std::lock_guard<std::mutex> lock(impl_->mutex);
+    impl_->idle();
+    return impl_->require_cpu_context().backend();
 }
 ggml_tensor * MoeEngine::input_port(CallId id) const { return impl_->call(id).program->execution->hidden_input(); }
 ggml_tensor * MoeEngine::output_port(CallId id) const { return impl_->call(id).program->execution->output(); }

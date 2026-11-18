@@ -14,7 +14,7 @@ namespace moe = engine::moe;
 using Options = std::unordered_map<std::string, std::string>;
 void require(bool condition, const char * message) { if (!condition) throw std::runtime_error(message); }
 
-void selection_contracts() {
+void selection_contracts(bool existing_only) {
     moe::PolicyConfig config;
     config.placement = {"placement_cpu_share", {{"share", "1"}}};
     config.eviction = {"cache_frequency_aware", {{"decay_steps", "128"}}};
@@ -41,6 +41,15 @@ void selection_contracts() {
     placement->event({moe::PolicyEvent::CacheInvalidated, 0, 1});
     placement->select({experts, counts, resident, 1, 4096, 2}, decision);
     require(decision.gpu == experts && decision.cpu.empty(), "cache invalidation did not reset CPU-share carry");
+
+    placement = moe::prepare_policy(config).placement(12);
+    experts = {0, 2, 3, 4};
+    const std::vector<int32_t> partly_resident{0, -1};
+    placement->select({experts, counts, partly_resident, 0, 4096, 3}, decision);
+    require(decision.gpu == std::vector<int32_t>({0, 2, 3}) && decision.cpu == std::vector<int32_t>({4}),
+        "CPU-share did not preserve a hit, fill its vacant slot, then split remaining misses");
+
+    if (existing_only) return;
 
     auto eviction = prepared.eviction(12);
     eviction->accessed({2, 10}, {0, 0, resident}); eviction->accessed({3, 1}, {0, 0, resident});
@@ -99,11 +108,12 @@ void option_contracts() {
     }
 }
 }
-int main() {
+int main(int argc, char ** argv) {
     const auto start = std::chrono::steady_clock::now();
     try {
         engine::debug::configure_logging({true, std::nullopt});
-        selection_contracts(); option_contracts();
+        const bool existing_only = argc > 1 && std::string(argv[1]) == "--existing-policies-only";
+        selection_contracts(existing_only); option_contracts();
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
         std::cout << "moe_policy: PASS\n"; return 0;
     } catch (const std::exception & error) { std::cerr << error.what() << '\n'; return 1; }

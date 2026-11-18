@@ -7,6 +7,7 @@
 #include "engine/framework/moe_engine/moe_prepared_graph.h"
 #include "test_allocation_failure.h"
 #include "../../src/framework/moe_engine/moe_engine_internal.h"
+#include "../../external/ggml/src/ggml-backend-impl.h"
 
 #include <algorithm>
 #include <chrono>
@@ -31,28 +32,109 @@ struct FixtureDirectory {
     ~FixtureDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
 };
 constexpr int64_t width = 256, experts = 12, selected = 2;
-const std::vector<std::string> names{"up", "gate", "down"};
+const std::vector<std::string> names{"model.layers.0.mlp.experts.up.weight", "model.layers.0.mlp.experts.gate.weight", "model.layers.0.mlp.experts.down.weight"};
 moe::LayerBindings bindings() {
     moe::LayerBindings result;
     result.experts = {
-        {"up", "up", {experts, width, width}, assets::TensorStorageType::Native, moe::ProjectionRole::Up},
-        {"gate", "gate", {experts, width, width}, assets::TensorStorageType::Native, moe::ProjectionRole::Gate},
-        {"down", "down", {experts, width, width}, assets::TensorStorageType::Native, moe::ProjectionRole::Down}};
+        {"model.layers.0.mlp.experts.up.weight", "model.layers.0.mlp.experts.up.weight", {experts, width, width}, assets::TensorStorageType::Native, moe::ProjectionRole::Up},
+        {"model.layers.0.mlp.experts.gate.weight", "model.layers.0.mlp.experts.gate.weight", {experts, width, width}, assets::TensorStorageType::Native, moe::ProjectionRole::Gate},
+        {"model.layers.0.mlp.experts.down.weight", "model.layers.0.mlp.experts.down.weight", {experts, width, width}, assets::TensorStorageType::Native, moe::ProjectionRole::Down}};
     return result;
 }
 moe::LayerMath mathematics() {
     moe::LayerMath result; result.routing.experts = experts; result.routing.selected = selected; return result;
 }
 
+// Independent readback dependency contract. Async downloads are withheld until
+// synchronization; synchronous downloads reject an unfinished producer. This
+// checks ordering without assuming a tiny GPU copy remains physically running.
+struct QueuedReadback {
+    ggml_backend_t backend;
+    ggml_tensor * watched;
+    ggml_backend_buffer_t buffer;
+    decltype(ggml_backend_i::get_tensor_async) original_get;
+    decltype(ggml_backend_i::synchronize) original_sync;
+    decltype(ggml_backend_i::graph_compute) original_compute;
+    decltype(ggml_backend_buffer_i::get_tensor) original_buffer_get;
+    void * destination = nullptr;
+    size_t offset = 0, bytes = 0, completed = 0;
+    bool producer_pending = false, delivering = false;
+    static QueuedReadback * active;
+    QueuedReadback(ggml_backend_t backend, ggml_tensor * watched)
+        : backend(backend), watched(watched), buffer(watched->buffer),
+          original_get(backend->iface.get_tensor_async), original_sync(backend->iface.synchronize),
+          original_compute(backend->iface.graph_compute), original_buffer_get(buffer->iface.get_tensor) {
+        require(!active, "nested queued readback fixture");
+        active = this;
+        backend->iface.graph_compute = [](ggml_backend_t value, ggml_cgraph * graph) {
+            active->producer_pending = true;
+            return active->original_compute(value, graph);
+        };
+        buffer->iface.get_tensor = [](ggml_backend_buffer_t value, const ggml_tensor * tensor,
+            void * output, size_t offset, size_t bytes) {
+            auto & self = *active;
+            if (tensor == self.watched && !self.delivering) {
+                require(!self.producer_pending, "native routing read IDs before producer completion");
+                ++self.completed;
+            }
+            self.original_buffer_get(value, tensor, output, offset, bytes);
+        };
+        backend->iface.get_tensor_async = [](ggml_backend_t value, const ggml_tensor * tensor,
+            void * output, size_t offset, size_t bytes) {
+            auto & self = *active;
+            if (tensor == self.watched) {
+                require(!self.destination, "overlapping watched route downloads");
+                self.destination = output; self.offset = offset; self.bytes = bytes;
+            } else if (self.original_get) self.original_get(value, tensor, output, offset, bytes);
+            else {
+                if (self.original_sync) self.original_sync(value);
+                self.producer_pending = false;
+                ggml_backend_tensor_get(tensor, output, offset, bytes);
+            }
+        };
+        backend->iface.synchronize = [](ggml_backend_t value) {
+            auto & self = *active;
+            self.delivering = true;
+            if (self.destination && !self.original_get) {
+                // Preserve GGML's shared-memory fallback: drain before reading.
+                if (self.original_sync) self.original_sync(value);
+                self.producer_pending = false;
+                ggml_backend_tensor_get(self.watched, self.destination, self.offset, self.bytes);
+            } else {
+                if (self.destination) self.original_get(value, self.watched, self.destination, self.offset, self.bytes);
+                if (self.original_sync) self.original_sync(value);
+                self.producer_pending = false;
+            }
+            self.delivering = false;
+            if (self.destination) { self.destination = nullptr; ++self.completed; }
+        };
+    }
+    ~QueuedReadback() {
+        buffer->iface.get_tensor = original_buffer_get;
+        backend->iface.graph_compute = original_compute;
+        backend->iface.get_tensor_async = original_get;
+        backend->iface.synchronize = original_sync;
+        active = nullptr;
+    }
+};
+QueuedReadback * QueuedReadback::active = nullptr;
+
 // Public engine integration versus a separately built native GGML reference.
 // Route changes exceed four slots and revisit evicted experts. Independent graph
 // work remains live around embedded execution to detect scratch corruption.
 void compare(core::ExecutionContext & execution, const assets::TensorSource & source,
-    moe::EngineConfig config, int64_t tokens, bool phased) {
+    moe::EngineConfig config, int64_t tokens, bool phased,
+    moe::ExpertLowering lowering = moe::ExpertLowering::Default) {
     core::BackendWeightStore weights(execution.backend(), execution.backend_type(), "test.moe.engine.weights", 1024 * 1024);
     moe::MoeEngine engine(execution, weights, source, config);
     const auto layer = engine.register_layer(bindings(), mathematics());
-    weights.upload(); engine.finalize_weights();
+    // Staged banks and auxiliary-CPU banks belong to the engine. This fixture
+    // has no unrelated backbone weights to upload into the caller's store.
+    const bool primary_resident = config.residency == moe::Residency::Resident &&
+        (core::is_host_backend(execution.backend()) ||
+         std::find(config.cpu_layers.begin(), config.cpu_layers.end(), size_t{0}) == config.cpu_layers.end());
+    if (primary_resident) weights.upload();
+    engine.finalize_weights();
     core::BackendWeightStore reference_weights(execution.backend(), execution.backend_type(), "test.moe.reference.weights", 1024 * 1024);
     std::vector<core::TensorValue> native;
     for (const auto & name : names) native.push_back(reference_weights.load_tensor(source, name, assets::TensorStorageType::Native, {experts, width, width}));
@@ -73,11 +155,11 @@ void compare(core::ExecutionContext & execution, const assets::TensorSource & so
     ggml_tensor * actual = nullptr;
     moe::MoePreparedGraph::SequenceId sequence{0};
     if (phased) {
-        const auto call = engine.add_call(layer, {tokens, width, width, 32, GGML_TYPE_I32}, workspace);
+        const auto call = engine.add_call(layer, {tokens, width, width, 32, GGML_TYPE_I32, 1, lowering}, workspace);
         engine.build_inputs(call, *owner, 0, x, &routing);
         actual = engine.build_result(call, *owner);
         sequence = owner->add_sequence({size_t{0}, call, finish});
-    } else actual = engine.build(*owner, layer, x, &routing);
+    } else actual = engine.build(*owner, layer, x, &routing, lowering);
     auto * unrelated = ggml_scale(ctx.ggml, x, 0.03125F);
     auto * result = ggml_add(ctx.ggml, actual, unrelated);
     ggml_set_output(result); ggml_set_output(unrelated);
@@ -97,6 +179,17 @@ void compare(core::ExecutionContext & execution, const assets::TensorSource & so
     ggml_set_output(expected); ggml_build_forward_expand(reference.graph(), expected); reference.allocate();
     std::vector<float> input(static_cast<size_t>(width * tokens)), mixing(static_cast<size_t>(selected * tokens));
     std::vector<int32_t> routes(static_cast<size_t>(selected * tokens));
+    std::unique_ptr<QueuedReadback> queued_ids;
+    if (config.residency == moe::Residency::Staged && tokens == 1 && !phased &&
+        config.policies.placement.name == "default") {
+        ggml_tensor * mapped = nullptr;
+        for (int i = 0; i < ggml_graph_n_nodes(owner->graph()); ++i) {
+            auto * node = ggml_graph_node(owner->graph(), i);
+            if (node->op == GGML_OP_MUL_MAT_ID) { mapped = node->src[2]; break; }
+        }
+        require(mapped && mapped != ids, "native routing must materialize cache slot IDs");
+        queued_ids = std::make_unique<QueuedReadback>(execution.backend(), mapped);
+    }
     for (int repeat = 0; repeat < 6; ++repeat) {
         for (size_t i = 0; i < input.size(); ++i) input[i] = 0.01F * std::sin(static_cast<float>(i) * 0.17F + static_cast<float>(repeat));
         for (size_t i = 0; i < routes.size(); ++i) {
@@ -107,7 +200,12 @@ void compare(core::ExecutionContext & execution, const assets::TensorSource & so
         ggml_backend_tensor_set(x, input.data(), 0, input.size() * sizeof(float));
         ggml_backend_tensor_set(ids, routes.data(), 0, routes.size() * sizeof(int32_t));
         ggml_backend_tensor_set(mix, mixing.data(), 0, mixing.size() * sizeof(float));
+        const auto reads_before = queued_ids ? queued_ids->completed : size_t{0};
         if (phased) owner->compute(sequence); else owner->compute();
+        // A scheduler may also copy the watched IDs between backends. Require
+        // a completed read in this request, not one particular read API/count.
+        if (queued_ids) require(!queued_ids->destination && queued_ids->completed > reads_before,
+            "native routing did not complete its queued ID download before execution");
         reference.compute();
         const auto a = core::read_tensor_f32(result), b = core::read_tensor_f32(expected);
         require(a.size() == b.size(), "engine/reference output shape differs");
@@ -117,8 +215,100 @@ void compare(core::ExecutionContext & execution, const assets::TensorSource & so
         const auto live = core::read_tensor_f32(unrelated);
         for (size_t i = 0; i < live.size(); ++i) require(live[i] == input[i] * 0.03125F, "embedded expert scratch overwrote parent-live data");
     }
-    reference.release(); owner.reset(); engine.release_execution();
+    queued_ids.reset(); reference.release(); owner.reset(); engine.release_execution();
     require(engine.statistics().buffer_bytes == baseline_bytes, "execution release discarded expert weight registration");
+}
+
+// Each token routes to the same two experts, so these are actual per-expert
+// assignment counts, not total token counts spread across a larger bank.
+void bucket_boundaries(core::ExecutionContext & execution, const assets::TensorSource & source,
+    const std::vector<core::TensorValue> & native) {
+    const auto policy = moe::prepare_policy({});
+    detail::ExpertStorage storage(source.source_path(), false, 1, execution.backend(), policy.eviction);
+    const auto group = storage.add_group(names, execution.backend(), 4);
+    for (const int64_t tokens : {31, 32, 33, 65}) {
+        auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
+        detail::ProgramShape shape;
+        shape.hidden_size = width; shape.input_size = width; shape.tokens = tokens;
+        shape.selected = selected; shape.experts = experts; shape.cache_slots = 4;
+        shape.rows_per_expert = {32}; shape.scatter_index_type = GGML_TYPE_I32;
+        detail::ExpertProgram program(execution, shape, workspace, nullptr, policy);
+        const detail::ExpertWeights bank{storage.tensor(group, 0).tensor,
+            storage.tensor(group, 1).tensor, storage.tensor(group, 2).tensor};
+        const auto layer = program.add_layer({}, bank, &storage, group, execution.backend(), nullptr);
+        core::PreparedGraph producer(execution, {"test.moe.bucket.inputs", 1024 * 1024, 256, 32 * ggml_tensor_overhead()});
+        auto * persistent = producer.persistent_build_context().ggml;
+        auto * x = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, width, tokens);
+        auto * ids = ggml_new_tensor_2d(persistent, GGML_TYPE_I32, selected, tokens);
+        auto * mix = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, selected, tokens);
+        for (auto * tensor : {x, ids, mix}) ggml_set_input(tensor);
+        producer.allocate_persistent();
+        program.build_inputs(producer.build_context(), producer.graph(), x, {ids, mix});
+        core::PreparedGraph finish(execution, {"test.moe.bucket.finish", 1024 * 1024, 256});
+        auto * combined = detail::combine(finish.build_context(), program.output(), program.routing_weights());
+        ggml_set_output(combined); ggml_build_forward_expand(finish.graph(), combined);
+        workspace->add(producer); workspace->add(finish); workspace->prepare(); program.prepare();
+        core::PreparedGraph reference(execution, {"test.moe.bucket.reference", 1024 * 1024, 256});
+        auto * g = reference.build_context().ggml;
+        auto * rows = ggml_reshape_3d(g, x, width, 1, tokens);
+        auto * up = ggml_mul_mat_id(g, native[0].tensor, rows, ids);
+        auto * gate = ggml_silu(g, ggml_mul_mat_id(g, native[1].tensor, rows, ids));
+        auto * expected = ggml_mul_mat_id(g, native[2].tensor, ggml_mul(g, gate, up), ids);
+        auto * weighted = ggml_mul(g, expected, ggml_reshape_3d(g, mix, 1, selected, tokens));
+        auto * expected_sum = ggml_reshape_2d(g,
+            ggml_sum_rows(g, ggml_cont(g, ggml_permute(g, weighted, 1, 0, 2, 3))), width, tokens);
+        ggml_set_output(expected); ggml_set_output(expected_sum);
+        ggml_build_forward_expand(reference.graph(), expected_sum); reference.allocate();
+        std::vector<float> input(static_cast<size_t>(width * tokens));
+        std::vector<int32_t> routes(static_cast<size_t>(selected * tokens));
+        std::vector<float> mixing(routes.size());
+        for (size_t i = 0; i < mixing.size(); ++i) mixing[i] = i % selected ? 0.375F : 0.625F;
+        // Change both inputs and logical experts, exceed cache capacity, then
+        // revisit the initial bank to exercise reloads at each bucket boundary.
+        for (int repeat = 0; repeat < 4; ++repeat) {
+            for (size_t i = 0; i < input.size(); ++i)
+                input[i] = 0.5F * std::sin(static_cast<float>(i) * 0.17F + repeat);
+            const int32_t first = repeat == 3 ? 0 : repeat * 2;
+            for (size_t i = 0; i < routes.size(); ++i) routes[i] = first + static_cast<int32_t>(i % selected);
+            for (const int32_t expert : {first, first + 1})
+                require(std::count(routes.begin(), routes.end(), expert) == tokens, "bucket fixture lost concentrated assignment counts");
+            ggml_backend_tensor_set(x, input.data(), 0, input.size() * sizeof(float));
+            ggml_backend_tensor_set(ids, routes.data(), 0, routes.size() * sizeof(int32_t));
+            ggml_backend_tensor_set(mix, mixing.data(), 0, mixing.size() * sizeof(float));
+            const auto before = storage.statistics();
+            if (repeat == 3) {
+                const auto & resident = storage.cached_experts(group);
+                require(std::find(resident.begin(), resident.end(), 0) == resident.end() &&
+                    std::find(resident.begin(), resident.end(), 1) == resident.end(),
+                    "bucket revisit did not actually evict its original experts");
+            }
+            producer.compute();
+            require(program.run(layer) == static_cast<uint64_t>(((tokens + 31) / 32) * 32 * shape.cache_slots),
+                "bucket boundary executed an unexpected number of padded expert rows");
+            if (repeat == 3)
+                require(storage.statistics().expert_loads == before.expert_loads + 2,
+                    "bucket revisit did not reload both evicted expert banks");
+            finish.compute();
+            reference.compute();
+            const auto actual = core::read_tensor_f32(program.output());
+            const auto wanted = core::read_tensor_f32(expected);
+            require(actual.size() == wanted.size(), "bucket boundary output shape differs");
+            float signal = 0;
+            for (size_t i = 0; i < actual.size(); ++i) {
+                signal = std::max(signal, std::abs(wanted[i]));
+                require(std::isfinite(actual[i]) && std::abs(actual[i] - wanted[i]) <= 1e-6F * (1 + std::abs(wanted[i])),
+                    "bucket boundary differs from independent native expert graph");
+            }
+            require(signal > 1e-4F, "bucket reference is too small to detect missing expert output");
+            const auto reduced = core::read_tensor_f32(combined);
+            const auto wanted_sum = core::read_tensor_f32(expected_sum);
+            require(reduced.size() == wanted_sum.size(), "bucket reduction output shape differs");
+            for (size_t i = 0; i < reduced.size(); ++i)
+                require(std::isfinite(reduced[i]) && std::abs(reduced[i] - wanted_sum[i]) <= 1e-6F * (1 + std::abs(wanted_sum[i])),
+                    "bucket boundary changed weighted assignment reduction");
+        }
+        std::cout << "bucket assignments_per_expert=" << tokens << " native_type=" << ggml_type_name(native[0].tensor->type) << '\n';
+    }
 }
 
 void check_group_registration_failures(const std::filesystem::path & path,
@@ -224,7 +414,7 @@ void check_host_bank_failures(const std::filesystem::path & path, engine::core::
 // Fractional placement is inapplicable to a CPU bank, whether the primary
 // backend is CPU or this is a whole-layer CPU offload in a GPU session.
 void cpu_placement_precedence(core::ExecutionContext & execution, const assets::TensorSource & source,
-    const std::vector<core::TensorValue> & reference_weights) {
+    const std::vector<core::TensorValue> & reference_weights, bool native_single_token) {
     std::unique_ptr<core::ExecutionContext> auxiliary;
     auto * host = &execution;
     if (!core::is_host_backend(execution.backend())) {
@@ -241,6 +431,7 @@ void cpu_placement_precedence(core::ExecutionContext & execution, const assets::
     detail::ProgramShape shape;
     shape.identity = 23; shape.hidden_size = width; shape.input_size = width;
     shape.tokens = 1; shape.selected = selected; shape.experts = experts; shape.cache_slots = 4;
+    shape.native_single_token = native_single_token;
     shape.rows_per_expert = {1};
     detail::ExpertProgram program(execution, shape, workspace, host, policy);
     const detail::ExpertWeights bank{storage.tensor(group, 0).tensor, storage.tensor(group, 1).tensor, storage.tensor(group, 2).tensor};
@@ -265,12 +456,13 @@ void cpu_placement_precedence(core::ExecutionContext & execution, const assets::
     const std::vector<float> mixing(static_cast<size_t>(selected), 0.5F);
     ggml_backend_tensor_set(x, input.data(), 0, input.size() * sizeof(float));
     ggml_backend_tensor_set(mix, mixing.data(), 0, mixing.size() * sizeof(float));
-    // Fill four cache slots, then force misses at share=1. Old CPU-only
-    // placement throws here; old CPU-layer offload evaluates four padded rows.
+    // Fill four cache slots, then force misses at share=1. Whole-layer CPU
+    // placement must honor the requested native or bucketed execution layout.
     for (const std::vector<int32_t> & route : {std::vector<int32_t>{0, 1}, {2, 3}, {4, 5}, {0, 1}}) {
         ggml_backend_tensor_set(ids, route.data(), 0, route.size() * sizeof(int32_t));
         producer.compute();
-        require(program.run(layer) == static_cast<uint64_t>(selected), "CPU-selected single-token experts lost native top-k execution");
+        const auto expected_rows = native_single_token ? selected : shape.cache_slots;
+        require(program.run(layer) == static_cast<uint64_t>(expected_rows), "CPU-selected single-token experts changed the requested execution layout");
         reference.compute();
         const auto actual = core::read_tensor_f32(program.output()), oracle = core::read_tensor_f32(expected);
         for (size_t element = 0; element < actual.size(); ++element)
@@ -430,12 +622,20 @@ int main(int argc, char ** argv) {
         engine::io::write_safetensors_file(tensor_path, entries);
         for (auto type : {assets::TensorStorageType::F32, assets::TensorStorageType::Q4_K}) {
             const auto path = directory.path / "weights.gguf";
-            assets::convert_tensor_sources_to_gguf({{tensor_path, ""}}, path, type, true, false);
+            assets::GgufConversionOptions conversion;
+            conversion.type_overrides.push_back({"*", type});
+            assets::convert_tensor_sources_to_gguf({{tensor_path, ""}}, path, type, true, false,
+                {}, {}, std::nullopt, std::move(conversion));
             auto source = assets::open_tensor_source(path);
+            for (const auto & name : names)
+                require(assets::resolve_tensor_storage_type(*source, name, assets::TensorStorageType::Native) == type,
+                    "expert fixture conversion did not preserve its requested native precision");
             core::BackendWeightStore reference_store(execution.backend(), execution.backend_type(), "test.moe.storage.reference", 1024 * 1024);
             std::vector<core::TensorValue> reference;
             for (const auto & name : names)
                 reference.push_back(reference_store.load_tensor(*source, name, assets::TensorStorageType::Native, {experts, width, width}));
+            require(reference.front().tensor->type == assets::ggml_type_for_tensor_storage(type),
+                "expert reference bank is not using the requested native precision");
             reference_store.upload();
             for (bool pinned : {false, true}) {
                 if (pinned && !ggml_backend_dev_host_buffer_type(ggml_backend_get_device(execution.backend()))) continue;
@@ -450,9 +650,24 @@ int main(int argc, char ** argv) {
                 if (cpu_layer) mode.cpu_layers = {0};
                 compare(execution, *source, mode, 1, false);
                 compare(execution, *source, mode, 7, true);
-                if (staged) compare(execution, *source, mode, 7, false);
+                if (staged) {
+                    compare(execution, *source, mode, 7, false);
+                    compare(execution, *source, mode, 1, true);
+                }
             }
-            cpu_placement_precedence(execution, *source, reference);
+            bucket_boundaries(execution, *source, reference);
+            // Existing CUDA fused expert lowering is a separate graph contract,
+            // not a new placement policy. Keep the ordinary native-bank oracle.
+            if (execution.backend_type() == core::BackendType::Cuda) {
+                moe::EngineConfig fused;
+                compare(execution, *source, fused, 1, false, moe::ExpertLowering::FusedSwiGlu);
+                fused.residency = moe::Residency::Staged; fused.cache_slots = 4;
+                compare(execution, *source, fused, 1, false, moe::ExpertLowering::FusedSwiGlu);
+                compare(execution, *source, fused, 7, true, moe::ExpertLowering::FusedSwiGlu);
+                std::cout << "fused expert lowering native_type=" << ggml_type_name(reference.front().tensor->type) << '\n';
+            }
+            for (bool native_single_token : {false, true})
+                cpu_placement_precedence(execution, *source, reference, native_single_token);
             moe::EngineConfig cpu_share; cpu_share.residency = moe::Residency::Staged; cpu_share.cache_slots = 4;
             cpu_share.policies.placement = {"placement_cpu_share", {{"share", "1"}}};
             if (!core::is_host_backend(execution.backend())) cpu_share.cpu_layers = {0};

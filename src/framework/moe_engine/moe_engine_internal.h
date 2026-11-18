@@ -70,6 +70,7 @@ private:
 struct ProgramShape {
     uint64_t identity = 0;
     bool resident = false;
+    bool native_single_token = false;
     int64_t hidden_size = 0;
     int64_t tokens = 0;
     int64_t selected = 0;
