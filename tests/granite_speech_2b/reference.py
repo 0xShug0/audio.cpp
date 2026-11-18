@@ -248,10 +248,19 @@ def main() -> int:
             caps[name] = out.detach().to(torch.float32).cpu()
         return hook
 
+    def save_clone(name: str):
+        # Clone at hook time: the encoder applies the block-8 CTC feedback
+        # with an in-place += after layers[7] returns, which would otherwise
+        # mutate this hook's aliased (detach/cpu no-op on CPU FP32) storage
+        # before the dump and void the pre-feedback stage.
+        def hook(_mod, _inp, out):
+            caps[name] = out.detach().to(torch.float32).cpu().clone()
+        return hook
+
     handles = [
         model.encoder.input_linear.register_forward_hook(save("input_proj")),
         model.encoder.layers[0].register_forward_hook(save("encoder_block1")),
-        model.encoder.layers[7].register_forward_hook(save("encoder_layer8_pre_feedback")),
+        model.encoder.layers[7].register_forward_hook(save_clone("encoder_layer8_pre_feedback")),
         model.encoder.layers[8].register_forward_pre_hook(
             lambda _mod, inp: caps.__setitem__(
                 "encoder_layer8_post_feedback", inp[0].detach().to(torch.float32).cpu())),

@@ -638,6 +638,7 @@ GraniteSpeech2BEncoderOutputs GraniteSpeech2BEncoderRuntime::encode(
         auto h = modules::LinearModule({160, 1024, true}).build(ctx, in_tensor, impl_->weights_.input_linear);
         auto input_proj = h;
         core::TensorValue block1{nullptr, {}, GGML_TYPE_F32};
+        core::TensorValue layer8_pre{nullptr, {}, GGML_TYPE_F32};
         core::TensorValue layer8_post{nullptr, {}, GGML_TYPE_F32};
         for (int64_t layer = 0; layer < kGraniteSpeech2BEncoderLayers; ++layer) {
             h = build_conformer_block(
@@ -647,10 +648,10 @@ GraniteSpeech2BEncoderOutputs GraniteSpeech2BEncoderRuntime::encode(
                 block1 = h;
             }
             if (layer + 1 == kGraniteSpeech2BMidFeedbackAfter) {
-                // Block-8 feedback, applied per real frame, reusing the same
-                // out/out_mid projections (see the note at readback: the
-                // frozen reference files hold post-feedback values under
-                // both layer-8 stage names).
+                // True block-8 output, retained through the feedback below:
+                // the frozen reference now holds true pre under the pre
+                // stage name (reference.py clones at the hook).
+                layer8_pre = h;
                 auto mid = modules::LinearModule({1024, 348, true}).build(ctx, h, impl_->weights_.out);
                 auto prob = core::wrap_tensor(
                     ggml_soft_max(ctx.ggml, mid.tensor), mid.shape, GGML_TYPE_F32);
@@ -672,15 +673,18 @@ GraniteSpeech2BEncoderOutputs GraniteSpeech2BEncoderRuntime::encode(
         };
         auto out_input_proj = dup_stage(input_proj);
         auto out_block1 = dup_stage(block1);
+        auto out_layer8_pre = dup_stage(layer8_pre);
         auto out_layer8_post = dup_stage(layer8_post);
         auto out_last = dup_stage(h);
         ggml_build_forward_expand(graph, out_last.tensor);
         ggml_build_forward_expand(graph, out_input_proj.tensor);
         ggml_build_forward_expand(graph, out_block1.tensor);
+        ggml_build_forward_expand(graph, out_layer8_pre.tensor);
         ggml_build_forward_expand(graph, out_layer8_post.tensor);
         ggml_set_output(out_last.tensor);
         ggml_set_output(out_input_proj.tensor);
         ggml_set_output(out_block1.tensor);
+        ggml_set_output(out_layer8_pre.tensor);
         ggml_set_output(out_layer8_post.tensor);
 
         if (!ggml_gallocr_alloc_graph(galloc, graph)) {
@@ -713,14 +717,9 @@ GraniteSpeech2BEncoderOutputs GraniteSpeech2BEncoderRuntime::encode(
         const int64_t elements = steps * kGraniteSpeech2BEncoderHidden;
         outputs.input_proj = read_f32(out_input_proj.tensor, elements);
         outputs.block1 = read_f32(out_block1.tensor, elements);
-        // NOTE on the layer-8 pre/post pair: the frozen reference dumps are
-        // byte-identical (the reference pre-hook aliases the in-place +=
-        // feedback update via detach().cpu(), so its "pre" file holds
-        // post-feedback values). Parity therefore requires emitting the
-        // post-feedback tensor under both stage names; the true pre-feedback
-        // states are still computed exactly (verified: they match a torch
-        // recomputation of block-8 output to ~1e-7) and feed layer 8.
-        outputs.layer8_pre_feedback = read_f32(out_layer8_post.tensor, elements);
+        // True pre- and post-feedback block-8 states under their respective
+        // stage names (the frozen reference now holds true pre too).
+        outputs.layer8_pre_feedback = read_f32(out_layer8_pre.tensor, elements);
         outputs.layer8_post_feedback = read_f32(out_layer8_post.tensor, elements);
         outputs.last = read_f32(out_last.tensor, elements);
     } catch (...) {

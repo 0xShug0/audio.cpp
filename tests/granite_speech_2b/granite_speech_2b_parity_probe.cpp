@@ -48,6 +48,11 @@ constexpr const char * kPinnedModelSha256 =
     "4151269881d2dd825d45ca75d6552b2a20e6e39d0934ed84c4db826af8bf6d88";
 constexpr const char * kDefaultPrompt =
     "<|audio|>transcribe the speech with proper punctuation and capitalization.";
+// Forced-step bound mirroring reference.py N_FORCED_STEPS, and the emitted
+// max_tokens bound on the (never materialized here) continuation; the
+// generate cutoff derives from both (see the cutoffs emission below).
+constexpr int kProbeForcedSteps = 8;
+constexpr int kProbeMaxTokens = 512;
 
 // --- minimal SHA-256 (FIPS 180-4) for trace hashes ---
 
@@ -381,7 +386,7 @@ int run(int argc, char ** argv) {
     json << "  \"prompt\": " << json_escape(kDefaultPrompt) << ",\n";
     json << "  \"language_hint\": null,\n";
     json << "  \"input_ids\": [],\n";
-    json << "  \"max_tokens\": 512,\n";
+    json << "  \"max_tokens\": " << kProbeMaxTokens << ",\n";
     json << "  \"generated_ids\": [],\n";
     json << "  \"observed_stop\": \"\",\n";
     json << "  \"eos_token_id\": " << assets->config.text.eos_token_id << ",\n";
@@ -411,10 +416,11 @@ int run(int argc, char ** argv) {
          << txt.residual_multiplier << ", \"rope_theta\": " << txt.rope_theta << ", \"rope_scaling\": {\"factor\": "
          << txt.rope_factor << ", \"original_max_position_embeddings\": "
          << txt.rope_original_max_position_embeddings << ", \"rope_type\": " << json_escape(txt.rope_type)
-         << "}},\n";
-    json << "    \"frontend\": {\"sample_rate\": " << assets->config.frontend.sample_rate << "}\n";
+         << "}}\n";
     json << "  },\n";
-    json << "  \"load_info\": {\"missing\": [], \"unexpected\": [], \"mismatched\": [], \"errors\": []},\n";
+    // load_info key names mirror from_pretrained(output_loading_info=True).
+    json << "  \"load_info\": {\"missing_keys\": [], \"unexpected_keys\": [], "
+            "\"mismatched_keys\": [], \"error_msgs\": []},\n";
     json << "  \"stages\": [\n";
     const std::vector<std::tuple<std::string, std::string, std::vector<int64_t>, const char *>> stages = {
         {"mel", "mel.f32", {lengths.mel_frames, 80}, "\"max_abs\": 0.0002, \"rel_rms\": 0.001"},
@@ -449,9 +455,17 @@ int run(int argc, char ** argv) {
              << (i + 1 == stage_count ? "\n" : ",\n");
     }
     json << "  ],\n";
+    // Generate cutoff derived the same way as reference.py: n_steps is
+    // min(N_FORCED_STEPS, continuation length); the probe never generates, so
+    // the continuation is bounded by the emitted max_tokens. This stays
+    // forced_step7 for the default 512 and tracks the reference formula if
+    // that bound ever changes.
+    const int gen_steps = kProbeForcedSteps < kProbeMaxTokens ? kProbeForcedSteps : kProbeMaxTokens;
+    const std::string gen_cutoff =
+        gen_steps > 0 ? "forced_step" + std::to_string(gen_steps - 1) : "last_pos_logits";
     json << "  \"cutoffs\": {\"frontend\": \"stacked\", \"encoder\": \"encoder_last\", "
             "\"projector\": \"projected\", \"prefill\": \"last_pos_logits\", "
-            "\"generate\": \"forced_step7\"}\n";
+            "\"generate\": \"" + gen_cutoff + "\"}\n";
     json << "}\n";
     std::ofstream trace_out(std::filesystem::path(out_dir) / "trace.json", std::ios::binary | std::ios::trunc);
     if (!trace_out) {
