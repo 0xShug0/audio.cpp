@@ -4,6 +4,7 @@
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/sampling/torch_random.h"
 
 #include "ggml.h"
@@ -841,7 +842,7 @@ class F0Runner {
 public:
     F0Runner(const HiftVocoderWeights & weights, int64_t frames)
         : weights_(&weights), capacity_frames_(frames) {
-        ggml_init_params params{128ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{16ull * 1024ull * 1024ull, nullptr, true};
         ctx_ = ggml_init(params);
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize HiFT F0 graph context");
@@ -850,6 +851,7 @@ public:
         output_ = build_f0_graph(ctx_, weights, input_);
         graph_ = ggml_new_graph_custom(ctx_, 32768, false);
         ggml_build_forward_expand(graph_, output_);
+        debug::timing_log_context_reservation("framework.hift.f0.graph", ctx_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights.execution_context->backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
@@ -910,24 +912,7 @@ class BackendRunner {
 public:
     BackendRunner(const HiftVocoderWeights & weights, int64_t frames, int64_t stft_frames)
         : weights_(&weights), capacity_frames_(frames), capacity_stft_frames_(stft_frames) {
-        constexpr uint64_t kBaseBytes = 512ull * 1024ull * 1024ull;
-        constexpr uint64_t kPerFrameBytes = 4ull * 1024ull * 1024ull;
-        constexpr uint64_t kMaxSizeT = static_cast<uint64_t>(std::numeric_limits<size_t>::max());
-
-        const uint64_t clamped_frames = static_cast<uint64_t>(std::max<int64_t>(frames, 1));
-        if (kBaseBytes > kMaxSizeT || clamped_frames > (kMaxSizeT - kBaseBytes) / kPerFrameBytes) {
-            const uint64_t requested_mib = (kBaseBytes + clamped_frames * kPerFrameBytes) / (1024ull * 1024ull);
-            throw std::runtime_error(
-                "HiFT vocoder requested context size (" + std::to_string(requested_mib) +
-                " MiB for " + std::to_string(clamped_frames) +
-                " frames) exceeds size_t addressable memory limit");
-        }
-        const size_t context_size = static_cast<size_t>(kBaseBytes + clamped_frames * kPerFrameBytes);
-        ggml_init_params params{
-            context_size,
-            nullptr,
-            true,
-        };
+        ggml_init_params params{16ull * 1024ull * 1024ull, nullptr, true};
         ctx_ = ggml_init(params);
         if (ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize HiFT backend graph context");
@@ -942,6 +927,7 @@ public:
             weights.execution_context->uses_host_graph_plan());
         graph_ = ggml_new_graph_custom(ctx_, 65536, false);
         ggml_build_forward_expand(graph_, post_);
+        debug::timing_log_context_reservation("framework.hift.decoder.graph", ctx_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights.execution_context->backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
