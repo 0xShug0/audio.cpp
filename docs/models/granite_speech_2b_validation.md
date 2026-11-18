@@ -34,14 +34,30 @@ per the brief's upload-check rule. No flip commit was made.
 
 - `tests/granite_speech_2b/eval_metrics.py` — pinned NFKC normalization; WER
   for `en,fr,de,es,pt` (uppercase, hyphen→space, keep Unicode letters +
-  apostrophe + space); CER for `ja` (NFKC, strip whitespace, keep
+  ASCII apostrophe + space); CER for `ja` (NFKC, strip whitespace, keep
   punctuation/kana); separate punctuation/case pass (NFKC only, exact flag +
   raw char distance, never mixed into gate numbers); Levenshtein with
-  sub/del/ins breakdown + denominators. Self-tested (exact-fold 0 errors,
-  1-sub scoring, ja CER, fr-as-WER-lang, `xx` rejected).
-- `tests/granite_speech_2b/eval_manifest.jsonl` — 10 rows: 5 `ready` (4× en
-  LibriSpeech + 1× ja Common Voice, all with audio SHA-256, license, reference
-  path, request language), 1 `smoke-only` (IBM `multilingual_sample.wav`,
+  sub/del/ins breakdown + denominators. CLI parsing reads `text_output=`
+  until a line starting with a KNOWN key (`family/task/mode/text_output`);
+  unknown `key=`-looking lines are hypothesis continuations (fix round 1:
+  the old any-`=` rule truncated on `=` in the first token).
+  `--self-test` runs 11 parser/scoring regression checks (exit 0). Per-row
+  `request_options` (e.g. fixed-chunk mode) are forwarded as `--request-option`.
+- Pinned dropping rule (fix round 1, finding 6 — keeps future fr/de/es/pt rows
+  comparable): ASCII digits are dropped (`call 911 now` → `CALL NOW`); NFKC
+  does NOT fold curly quotes (U+2018 has no decomposition), so they are
+  dropped too (`\u2018tis` → `TIS`); only Unicode letters, the ASCII
+  apostrophe, and space survive into WER scoring. Straight quotes are kept
+  (`don't` → `DON'T`), which is why reference contractions score as sub+del
+  (see §4 notes).
+- `tests/granite_speech_2b/make_synth_fixture.py` (deterministic generator) +
+  `tests/granite_speech_2b/fixtures/e2_synth_60s_plus.{wav,txt}` (63.91 s,
+  188 words, wav sha256
+  `e96d5f96428715070f1cc2ada9aacf529d23b45a038159bb5010f138cc920716`).
+- `tests/granite_speech_2b/eval_manifest.jsonl` — 11 rows: 6 `ready` (4× en
+  LibriSpeech + 1× ja Common Voice + 1× synthetic 63.9 s multi-chunk, all with
+  audio SHA-256, license, reference path, request language/options), 1
+  `smoke-only` (IBM `multilingual_sample.wav`,
   no human reference ships with the checkpoint → cross-artifact agreement
   only), 4 `pending` (fr/de/es/pt: no in-tree fixtures; fetch recipe recorded
   per row).
@@ -96,10 +112,43 @@ no higher-precision fallback needed. IBM `multilingual_sample.wav`
 transcript (EN passage + FR passage) is byte-identical across all three
 local artifacts.
 
+### 4b. Synthetic >60 s chunk-requiring slice (fix round 1, finding 1)
+
+The 14.2 s single-chunk clip above does not exercise multi-chunk decode. No
+natural >60 s fixture exists in-tree, so per the plan (synthetic
+concatenations allowed for joins/limits):
+`tests/granite_speech_2b/fixtures/e2_synth_60s_plus.wav` — 63.91 s, 188
+reference words (4× 6930-75918-0001 + 2× 6930-75918-0000, sample-aligned
+concat; generator `make_synth_fixture.py`, deterministic, wav sha256
+`e96d5f96…716`, row `e2_synth_60s_plus` in the manifest with
+`audio_chunk_mode=fixed, audio_chunk_duration_sec=8` → 8 decode chunks).
+
+Commands: same CLI as §4 plus
+`--request-option audio_chunk_mode=fixed --request-option audio_chunk_duration_sec=8`;
+stdout in `/tmp/opencode/e2-synth-{native,orig,q8_0}.stdout`.
+
+| Artifact | WER vs concatenated ref (188 words) | vs orig |
+|---|---|---|
+| native | 1.06% (2/188, 0/0/2) | — |
+| orig | 1.06% (2/188, 0/0/2) | byte-identical to native |
+| q8_0 | 1.06% (2/188, 0/0/2) | byte-identical, Δ +0.00pp |
+
+Gate: native≡orig exact → PASS; q8_0 Δ +0.00pp, inside the +2pp slice bar →
+**PASS**. The 2 insertions are chunk-join wobble at span boundaries
+(`of which which`, `the 9th. next day`) — the D-report concern #7 artifact,
+identical in all three outputs, not a quantization effect. No empty/
+repetitive/truncated output.
+
+Scope adjustment (recorded with reason): natural (non-synthetic) >60 s audio
+remains uncovered — no in-tree fixture exists and none was fetched (fetch
+recipe stays `pending` in the manifest pattern). The synth slice covers
+multi-chunk decode + join determinism, not natural long-form prosody.
+
 Coverage limit (honest): measured en + ja only; fr/de/es/pt rows are
 `pending` (no in-tree fixtures, none fetched). The six-language claim is NOT
-validated — release notes must say en/ja measured. Long-audio >60 s and
-multi-chunk splitting are NOT covered (longest fixture 14.2 s runs whole).
+validated — release notes must say en/ja measured. Natural long-audio >60 s
+remains uncovered (see §4b scope adjustment); the synth slice covers
+multi-chunk splitting determinism.
 
 ## 5. IBM official Q8_0 pair (independent comparison, pinned llama.cpp)
 
@@ -142,6 +191,9 @@ comparison only, no import; the audio.cpp release layout is unchanged.)
 
 Script `/tmp/opencode/e2-integration.sh`, outputs `/tmp/opencode/e2-int/`.
 Binaries: `/tmp/opencode/granite-e1/bin/*` (E1 flags, rebuilt at E2 HEAD).
+`model_spec_system_test` run from the repo root (this dir):
+`model_spec_system_test passed`, exit 0, log
+`/tmp/opencode/e2-int/model-spec-system-root.log` (fix round 1, finding 5).
 
 - **CLI native EN** (`01-cli-native-en.log`): golden
   `Concord returned to its place amidst the tents,` exit 0.
@@ -241,7 +293,8 @@ Reading:
 |---|---|---|
 | native vs orig exact (stable-margin) | byte-identical transcripts | PASS (5/5 clips + IBM sample) |
 | Q8_0 vs orig aggregate | ≤ +1pp | PASS (+0.00pp WER, +0.00pp CER) |
-| Q8_0 vs orig per-language / long-audio | ≤ +2pp | PASS (max +0.00pp) |
+| Q8_0 vs orig per-language / long-audio | ≤ +2pp | PASS (max +0.00pp; synth 63.9 s slice +0.00pp) |
+| Synthetic >60 s fixed-8 s chunk slice (§4b) | native≡orig exact; q8 ≤ +2pp | PASS (3/3 byte-identical, WER 1.06% all) |
 | Empty/repetitive/truncated review | individual review | PASS (none observed) |
 | IBM official Q8_0 pair (independent impl) | 0.00pp WER/CER delta vs candidate | PASS (4/5 byte-identical, long-EN punct-only diff) |
 | Runtime integration | §6 all green | PASS (model_spec_system_test CWD caveat recorded, not a failure) |
@@ -250,6 +303,70 @@ Reading:
 | Upload + flip | credentials-gated | NO PATH → QUALIFIED, experimental kept (§9) |
 
 No threshold adjustment was needed; none is recorded.
+
+## 8b. FP32 intermediate parity + decoder/cache rows (fix round 1, finding 2)
+
+No new runs: all numbers below are quoted from the B2/C2/D evidence at their
+pinned commits (B2 base `34cfcf76a`, C2 base `db1ed9ad` + fix round to
+`1598bf4d`, D base `1598bf4d`, D units re-run green at E2 in §6).
+
+FP32 parity gates: frontend max_abs ≤ 2e-4; encoder/projector normalized RMS
+error ≤ 1e-3; logits max_abs ≤ 2e-2 + normalized RMS error ≤ 1e-3; nonfinite = fail.
+
+B2 acoustic parity (per-stage max_abs / rel_rms / worst-coord; gates above):
+
+| fixture (T/W/A) | stage | max_abs | rel_rms | worst |
+|---|---|---|---|---|
+| ja (157/11/33) | mel | 2.134e-5 | 1.184e-6 | (234,78) |
+| | stacked | 2.134e-5 | 1.184e-6 | (117,78) |
+| | input_proj | 8.561e-6 | 2.348e-6 | (98,36) |
+| | encoder_block1 | 2.015e-5 | 4.283e-6 | (119,686) |
+| | layer8 pre/post | 4.292e-6 | 6.334e-7 | (155,28) |
+| | encoder_last | 2.670e-5 | 7.181e-7 | (60,565) |
+| | projected | 8.106e-6 | 1.726e-6 | (0,717) |
+| librispeech (175/12/36) | mel/stacked | 1.663e-5 | 7.906e-7 | (148,39)/(74,39) |
+| | input_proj | 5.960e-6 | 1.480e-6 | (74,932) |
+| | block1 | 9.656e-6 | 2.028e-6 | (51,491) |
+| | layer8 pre/post | 3.099e-6 | 6.339e-7 | (15,33) |
+| | last | 1.526e-5 | 6.212e-7 | (163,109) |
+| | projected | 3.576e-7 | 6.505e-7 | (35,801) |
+| multilingual (1247/84/252) | mel/stacked | 2.563e-5 | 8.464e-7 | (65,2)/(32,82) |
+| | input_proj | 1.222e-5 | 1.700e-6 | (223,33) |
+| | block1 | 2.073e-5 | 2.438e-6 | (528,41) |
+| | layer8 pre/post | 2.587e-5 | 1.136e-6 | (1164,749) |
+| | last | 9.441e-5 | 7.866e-7 | (365,109) |
+| | projected | 7.153e-7 | 7.765e-7 | (195,1831) |
+
+Boundary encoder stages: rel_rms < 8e-6 everywhere; frontend ≤ 3.3e-5
+everywhere (inside the 2e-4 bar by ~10x). Decoder-input isolation run:
+projector-only rel_rms 6.4e-7. (B2 report; evidence `/tmp/opencode/c2-gate.log`
+lineage via `c2-full-gate.sh`.)
+
+C2 decoder parity (gates rel_rms 1e-3, max_abs 2e-2, top-1 margin rule
+2× tol = 4e-2):
+
+| fixture | merged rel_rms | scaled rel_rms | last max_abs / rel_rms | forced steps max_abs | top-1 margins | greedy / text |
+|---|---|---|---|---|---|---|
+| librispeech (en) | 5.5e-7 | 5.5e-7 | 1.4e-4 / 5.6e-7 | 1.1e-5..2.1e-5 | 4.2..12.4, all match | 10 IDs + text exact |
+| ja | 8.3e-7 | 8.3e-7 | 2.7e-4 / 6.2e-7 | 2.4e-5..3.4e-5 | 10.6..18.5, all match | 16 IDs + text exact |
+| text-only 4096 | — | — | 2.8e-4 / 1.8e-5 | chunk64-vs-512 bitwise 0 | margin 2.13, top-1 1128 match | decode finite |
+
+Decoder/cache case rows (all PASS):
+
+- 8 teacher-forced steps: forced_step0..7 max_abs ~1e-5 (see table); full
+  generate gate 19/19 stages PASS on multilingual (270-token prompt),
+  librispeech, and ja (`/tmp/opencode/c2-full-gate.sh`, `overall=0`,
+  `/tmp/opencode/c2-gate.log`).
+- Multi-block prefill: chunk64-vs-512 bitwise 0 on the text-only 4096 fixture
+  (C2 table); neutral-defaults direct-vs-block prefill bitwise identical.
+- 4096-position crossing: text-only 4096 row above (last max_abs 2.8e-4,
+  margin 2.13, finite decode).
+- Budget edge: exact cap fits (270+16114=16384), 16385 throws (D report
+  self-review; gated in `granite_speech_2b_d_units_test`, green at E2 §6).
+- A/B/A incl. failed-between: text-only A/B/A with interleaved over-budget
+  failure bitwise exact (C2); session A/B/A incl. over-budget failure between,
+  different-length isolation, cache reset — green at E2
+  (`/tmp/opencode/e2-int/07-ctest-dunits.log`, 72.81 s).
 
 ## 9. Release decision + operator steps
 
@@ -270,9 +387,17 @@ Operator publish + flip (exact steps, for the final review):
 hf upload audio-cpp/audio.cpp-gguf \
   build/granite-2b-handoff/dist/granite-speech-5.0-2b-q8_0.gguf \
   Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf
-# 2. Record the published revision + re-sha256 the remote file, then in
-#    model_specs/granite_speech_2b.json replace revision "main" with the
-#    published digest, and in ONE commit flip together: status experimental->community,
+# 2. From the same credentialed checkout, fetch the published bytes back and
+#    verify BEFORE flipping anything:
+hf download audio-cpp/audio.cpp-gguf \
+  Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf
+sha256sum Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf
+#    expected: 0a8aee12e172b391c5e4d0460b5e53daeaa685d3d6f378f93bd906965a636e
+#    (the E2-gated local digest, §2; any mismatch stops the release).
+# 3. Pin the verified revision: replace "revision": "main" with the published
+#    commit digest in model_specs/granite_speech_2b.json. This happens AFTER
+#    the upload verifies and BEFORE the flip commit — never before upload.
+#    Then in ONE flip commit together: status experimental->community,
 #    runtime backend tags (cpu only, as measured), model-doc wording (drop
 #    experimental notes), README/docs/asr.md rows, WebUI catalog entry.
 # 3. Re-run BOTH managers against empty roots + catalog sync + CLI from the
@@ -287,8 +412,9 @@ remote name `Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf`.
 ## 10. Self-review / concerns
 
 1. Coverage is the binding constraint on the release, not quality: en + ja
-   measured, fr/de/es/pt pending, no >60 s audio, no multi-chunk splitting.
-   The six-language catalog claim must wait for manifest rows to go `ready`.
+   measured plus the en synth long-form slice; fr/de/es/pt pending, natural
+   >60 s audio uncovered. The six-language catalog claim must wait for
+   manifest rows to go `ready`.
 2. `tools/asr_wer.py` reference style expands contractions while the model
    writes `I'm`/`Don't` — the only en errors (2/69 words) are this style gap
    plus reference punctuation, present identically in native/orig/q8_0/IBM.

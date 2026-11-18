@@ -46,6 +46,49 @@ def normalize_cer_chars(text):
     return [ch for ch in nfkc(text) if not ch.isspace()]
 
 
+# CLI stdout is `key=value` lines, but hypothesis text is multi-line and may
+# itself contain '=' (e.g. a transcript line starting with "a=b").
+# Terminate text_output ONLY at a line starting with a KNOWN key; any other
+# `key=`-looking line is a hypothesis continuation. Observed CLI keys
+# (order varies): family, task, mode, text_output.
+KNOWN_CLI_KEYS = frozenset({"family", "task", "mode", "text_output"})
+
+_KEY_RE = None
+
+
+def _key_re():
+    global _KEY_RE
+    if _KEY_RE is None:
+        import re
+        _KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+    return _KEY_RE
+
+
+def parse_cli_text_output(stdout):
+    """Extract the text_output value from CLI stdout.
+
+    Collects the remainder of the `text_output=` line plus following lines
+    until a line starting with a KNOWN key (family/task/mode/text_output).
+    Lines starting with unknown `key=` text are hypothesis continuations.
+    """
+    collecting = False
+    parts = []
+    for line in stdout.splitlines():
+        m = _key_re().match(line)
+        if m and m.group(1) in KNOWN_CLI_KEYS:
+            if m.group(1) == "text_output":
+                collecting = True
+                parts.append(m.group(2))
+            else:
+                if collecting and parts:
+                    break  # a known field after the transcript: value ended
+                collecting = False
+            continue
+        if collecting:
+            parts.append(line)
+    return " ".join(parts)
+
+
 def edit_ops(a, b):
     """Levenshtein backtrace: returns (distance, subs, dels, inss)."""
     n, m = len(a), len(b)
@@ -130,41 +173,89 @@ def aggregate(results):
 
 
 def run_cli_transcribe(cli, family, model, audio, backend, threads, language,
-                       timeout=1800):
+                       extra_options=(), timeout=1800):
     cmd = [cli, "--task", "asr", "--family", family, "--model", model,
            "--backend", backend, "--threads", str(threads), "--audio", audio]
     if language:
         cmd += ["--request-option", f"language={language}"]
+    for opt in extra_options:
+        cmd += ["--request-option", opt]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if proc.returncode != 0:
         raise RuntimeError(
             f"cli exit {proc.returncode}: {(proc.stderr.strip() or proc.stdout.strip())[-500:]}")
-    collecting = False
-    parts = []
-    for line in proc.stdout.splitlines():
-        if line.startswith("text_output="):
-            collecting = True
-            parts.append(line[len("text_output="):])
-        elif collecting:
-            if "=" in line.split(" ")[0] and not line.startswith(" "):
-                break
-            parts.append(line)
-    return " ".join(parts)
+    return parse_cli_text_output(proc.stdout)
+
+
+def self_test():
+    """Regression checks for the parser + scoring rules. Exit nonzero on failure."""
+    failures = []
+
+    def check(name, got, want):
+        if got != want:
+            failures.append(f"{name}: got {got!r}, want {want!r}")
+
+    # '=' inside the hypothesis must not truncate (finding 3).
+    check("eq-first-token",
+          parse_cli_text_output("family=g\ntask=asr\nmode=offline\n"
+                                "text_output=first line here\na=b then more\nlast line\n"),
+          "first line here a=b then more last line")
+    check("eq-key-order",
+          parse_cli_text_output("family=g\nmode=offline\ntask=asr\n"
+                                "text_output=Concord returned,\n"),
+          "Concord returned,")
+    check("unknown-key-continues",
+          parse_cli_text_output("text_output=line one\nnewfield=kept as text\n"),
+          "line one newfield=kept as text")
+    check("known-key-terminates",
+          parse_cli_text_output("text_output=hyp text\nmode=offline\n"),
+          "hyp text")
+    check("empty", parse_cli_text_output("family=g\ntask=asr\n"), "")
+    # scoring spot checks (pinned rules).
+    check("wer-exact", score_pair("A B C", "a b c!", "en")["errors"], 0)
+    check("wer-sub", score_pair("I AM HERE", "I am there", "en")["errors"], 1)
+    check("cer-exact", score_pair("日本語。", "日本語。", "ja")["errors"], 0)
+    check("digits-dropped",
+          normalize_wer_words("call 911 now"), ["CALL", "NOW"])
+    # Pinned dropping rule: digits and non-ASCII punctuation are dropped.
+    # NFKC does NOT fold curly quotes to ASCII (U+2018 has no decomposition),
+    # so '\u2018tis' loses the quote; only Unicode letters + ASCII ' survive.
+    check("curly-quote-dropped", normalize_wer_words("\u2018tis"), ["TIS"])
+    try:
+        score_pair("x", "y", "xx")
+        failures.append("xx-lang: no ValueError raised")
+    except ValueError:
+        pass
+    if failures:
+        print("SELF-TEST FAILURES:")
+        for f in failures:
+            print(f"  {f}")
+        return 1
+    print(f"self-test ok ({11 - len(failures)} checks)")
+    return 0
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--manifest", required=True,
-                        help="eval_manifest.jsonl path")
-    parser.add_argument("--cli", required=True)
+    parser.add_argument("--manifest", default="",
+                        help="eval_manifest.jsonl path (required unless --self-test)")
+    parser.add_argument("--cli", default="")
     parser.add_argument("--family", default="granite_speech_2b")
-    parser.add_argument("--model", required=True)
+    parser.add_argument("--model", default="",
+                        help="model path (required unless --self-test)")
     parser.add_argument("--backend", default="cpu")
     parser.add_argument("--threads", default="8")
     parser.add_argument("--label", default="")
     parser.add_argument("--out", default="",
                         help="optional path to write the JSON result rows")
+    parser.add_argument("--self-test", action="store_true",
+                        help="run parser/scoring regression checks, no CLI needed")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
+    for need in ("manifest", "cli", "model"):
+        if not getattr(args, need):
+            parser.error(f"--{need} is required unless --self-test is given")
 
     rows = []
     for line in pathlib.Path(args.manifest).read_text().splitlines():
@@ -180,7 +271,8 @@ def main():
         reference = ref_path.read_text(encoding="utf-8").strip()
         hypothesis = run_cli_transcribe(
             args.cli, args.family, args.model, row["audio_path"],
-            args.backend, args.threads, row.get("request_language", ""))
+            args.backend, args.threads, row.get("request_language", ""),
+            row.get("request_options", []))
         result = score_pair(reference, hypothesis, row["language"])
         result.update({"clip_id": row["clip_id"], "language": row["language"],
                        "hypothesis": hypothesis, "reference": reference})
