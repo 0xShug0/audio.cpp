@@ -121,9 +121,42 @@ The prompt can carry conditioning rows before the text:
 
 ### Long form
 
-Text longer than `text_chunk_size` code points (300 by default) is split with
-the framework chunker. Each chunk is generated with the same voice and
-conditioning and seed `seed + i`, and the chunks are concatenated.
+Text longer than `text_chunk_size` code points (150 by default) is split into
+chunks and generated as one continuous take, as ZONOS2's own long-form
+generation does (`tts/longform.py` in
+[Zyphra/ZONOS2](https://github.com/Zyphra/ZONOS2)):
+
+- Words are packed greedily into chunks of at most `text_chunk_size` code
+  points, so a chunk usually ends in the middle of a sentence. This is ZONOS2's
+  default splitting, and it matters: a chunk that continues a finished
+  sentence tends to start with a long silence.
+- The first chunk is generated normally.
+- Every later chunk is a continuation. Its prompt holds the text of the first
+  chunk, the previous chunk and the new chunk, followed by the audio codes
+  already generated for the first and the previous chunk. The model continues
+  those codes into the new text, so the voice, loudness and pacing carry over.
+  The first chunk stays in every prompt as the voice anchor; chunks in between
+  are left out.
+- A chunk that another chunk continues is generated without the
+  `trailing_silence_s` row and loses its last 3 frames, so it does not end like
+  the end of an utterance.
+- The chunks form one code stream, decoded once. Streaming emits it as it is
+  generated.
+
+The same voice and conditioning apply to every chunk, and chunk `i` uses seed
+`seed + i`. A request that fits in one chunk is unchanged.
+
+A continuation prompt has to leave room for `max_tokens` generated frames in
+the 6144-position context. If it does not, the first chunk is left out of that
+prompt; if it still does not fit, or the previous chunk stopped at `max_tokens`
+before its end of speech, the next chunk starts a new take with no audio
+context. With the defaults this needs a first chunk and a previous chunk
+longer than about 21 seconds each.
+
+Setting `text_chunk_mode` splits with the framework chunker instead, which cuts
+at sentence ends; continuation still applies, with longer pauses between
+chunks. `long_form_continuation=false` generates every chunk independently
+from framework chunks, as before this option existed.
 
 ## Model
 
@@ -141,7 +174,7 @@ conditioning and seed `seed + i`, and the chunks are concatenated.
 | Option | Type / values | Default | Description |
 |---|---|---|---|
 | `seed` | `int` 0..4294967295 | random | Sampler seed. Long-form chunk `i` uses `seed + i`. |
-| `max_tokens` | `int` >= 1 | `2000` | Generated frames per chunk (86.13 frames/s), including the 10-frame end-of-speech drain. |
+| `max_tokens` | `int` >= 1 | `2000` | Generated frames per chunk (86.13 frames/s), including the 10-frame end-of-speech drain. A continuation prompt keeps room for this many frames (see Long form). |
 | `temperature` | `float` >= 0 | `1.15` | Sampling temperature; `0` decodes greedily. |
 | `top_k` | `int` >= 1 | `106` | Top-k per codebook; ties at the threshold are kept. |
 | `top_p` | `float` 0..1 | `0.0` | Nucleus probability per codebook; `0` disables it. |
@@ -156,8 +189,9 @@ conditioning and seed `seed + i`, and the chunks are concatenated.
 | `speaking_rate_bucket` | `int` 0..7 | none | Adds a speaking-rate row. |
 | `quality_buckets` | `feature:bucket,...` or `none` | `trailing_silence_s:3` | Recording-quality rows; features and ranges under Conditioning. |
 | `fade_out_ms` | `float` 0..2000 | `0` | Cosine fade over the last N ms of the output. |
-| `text_chunk_size` | `int` >= 1 | `300` | Maximum code points per long-form chunk. |
-| `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | `word_budget` | Framework chunking policy. |
+| `text_chunk_size` | `int` >= 1 | `150` | Maximum code points per long-form chunk. |
+| `long_form_continuation` | `bool` | `true` | Generate each long-form chunk as a continuation of the first and the previous chunk's audio codes; off generates chunks independently. |
+| `text_chunk_mode` | `word_budget`, `tag_aware`, `japanese`, `endline` | unset | Framework chunking policy. Unset, continuation packs words as ZONOS2 does, and `long_form_continuation=false` uses `word_budget`. |
 
 ## Session Options (use with `--session-option`)
 
@@ -221,7 +255,7 @@ build is configured with
 
 | Test | Result (CPU) |
 |---|---|
-| `zonos2_prompt_test` | Prompt rows equal `zonos2-cli --build-prompt`, with and without a speaker |
+| `zonos2_prompt_test` | Prompt rows equal `zonos2-cli --build-prompt`, with and without a speaker; continuation prompts and word-packed chunks equal ZONOS2's `tts/longform.py` (`make_longform_oracle.py`, run with the ZONOS2 checkout's interpreter) |
 | `zonos2_parity_backbone` | Prefill + 100 teacher-forced steps: logits bit-identical to zonos2.cpp (max difference 0) |
 | `zonos2_parity_backbone_speaker` | The same with a cloned speaker: bit-identical |
 | `zonos2_parity_backbone_disk` | Expert cache bit-identical to resident experts |
@@ -265,18 +299,94 @@ A long-lived CPU server answered five requests (three plain, two with
 `voice_ref`, one streamed as SSE with 15 audio deltas) at a peak memory
 footprint of 10.1 GB.
 
+### Long form
+
+RTX 4090, Threadripper PRO 5955WX, Release build, Q8_0 package, default
+sampling, pre-change build `a6e32214`. Text A is 5 sentences (93 words, 515
+characters); the long text is 11 sentences (241 words, 1,244 characters).
+Voice consistency is the lowest cosine between the ECAPA embeddings of any two
+4-second windows of one take; WER is Qwen3-ASR-1.7B.
+
+| Text A, CUDA | Continuation off | Continuation on |
+|---|---:|---:|
+| Unreferenced, lowest window cosine (median of 12 seeds) | 0.906 | 0.981 |
+| Unreferenced, seeds below 0.95 | 12 of 12 | 1 of 12 |
+| Unreferenced, WER (mean of 12 seeds) | 0.54% | 1.26% |
+| Unreferenced, takes with every sentence | 12 of 12 | 11 of 12 |
+| Cloned, lowest window cosine (median of 6 seeds) | 0.982 | 0.978 |
+| Cloned, cosine to the reference clip (mean of 6 seeds) | 0.975 | 0.965 |
+| Cloned, WER (6 seeds) | 0.00% | 0.00% |
+
+The one unreferenced take below 0.95 with continuation is seed 11, whose first
+chunk ran on in silence to `max_tokens` (see Known limitations); it is also the
+take that lost part of a sentence. Without it the WER is 0.39%.
+
+| Lowest window cosine, off -> on | Seeds | Result |
+|---|---:|---|
+| Long text, CUDA | 3 | 0.903 -> 0.978, 0.861 -> 0.982, 0.907 -> 0.967 |
+| Text A, Vulkan | 4 | 0.907 -> 0.975, 0.924 -> 0.978, 0.880 -> 0.983, 0.888 -> 0.980 |
+| Text A, CPU | 2 | 0.896 -> 0.985, 0.899 -> 0.973 |
+
+On the long text, one take with continuation off dropped a sentence (9.54%
+WER); the three takes with continuation on were complete (0.83-1.66%). One
+Vulkan take with continuation on inserted four words (4.30% WER).
+
+| Backend | Text | Off: RTF | On: RTF | Off: peak VRAM | On: peak VRAM |
+|---|---|---:|---:|---:|---:|
+| CUDA | A, 12 seeds | 0.306 | 0.322 | 9,699 MiB | 10,345 MiB |
+| CUDA | A cloned, 6 seeds | 0.317 | 0.330 | 9,701 MiB | 10,219 MiB |
+| CUDA | Long, 3 seeds | 0.304 | 0.326 | 9,703 MiB | 10,303 MiB |
+| Vulkan | A, 4 seeds | 0.338 | 0.353 | - | - |
+| CPU, 16 threads | A, 2 seeds | 2.67 | 3.21 | - | - |
+
+Takes with continuation are longer: 34.0 s against 32.4 s on text A, 30.4 s
+against 27.1 s cloned, and 83.7 s against 73.6 s on the long text.
+
+- Unchanged paths are byte-identical to the pre-change build: a single chunk
+  with a fade (CUDA), and multi-chunk requests with
+  `long_form_continuation=false` (CUDA, cloned on CUDA, CPU).
+- Streaming and offline output with continuation have the same length and
+  differ by at most 8 LSB on CUDA and Vulkan, 12 LSB cloned with a fade, and
+  1 LSB in 11 samples on the CPU. The pre-change build differs by 9 LSB on
+  CUDA.
+- In one session, the first of three requests equals a fresh process and the
+  third equals the first. The expert cache equals resident experts on the CPU.
+- Fallbacks: with `max_tokens=4300` the first chunk is left out of the prompts
+  from the third chunk on and the long text is complete (lowest window cosine
+  0.971); with `max_tokens=5200` no continuation prompt fits and every chunk
+  is a new take; a chunk stopped by `max_tokens=300` is followed by a new
+  take.
+
 ## Known limitations
 
-- Not implemented: emotion directions, speaker blending, the upstream
-  long-form continuation (prefix-conditioned chunks), classifier-free guidance
-  and text normalization.
+- Not implemented: emotion directions, speaker blending, classifier-free
+  guidance (speaker, emotion and the long-form `prefix_cfg_scale`) and text
+  normalization.
+- Long-form continuation always uses the first chunk plus one previous chunk
+  as context. ZONOS2's `long_form_window_chunks` and `long_form_pin_anchor`
+  are not exposed, and of its two split modes only word packing is ported.
 - Sampling follows the upstream Python sampler (repetition penalty applied
   once per distinct code over generated frames only, ties kept at the top-k
   threshold), not zonos2.cpp's. Fixed seeds therefore do not reproduce
   zonos2.cpp's sampled audio; greedy decoding matches it.
-- Long-form text is generated as independent chunks, so the voice and pacing
-  can drift between chunks, and a chunk can occasionally drop or repeat a
-  sentence.
+- With `long_form_continuation=false`, long-form text is generated as
+  independent chunks: the voice and pacing can change between chunks, and
+  without a reference every chunk can pick a different voice.
+- A continuation prompt is prefilled again for every chunk, earlier audio
+  included, so prompts reach 2,000 to 2,800 rows with the defaults. An
+  artifact in the first chunk stays in every later prompt.
+- With continuation, a first chunk can run on in silence until `max_tokens`
+  (2 of 92 first chunks generated without the `trailing_silence_s` row, 0 of
+  92 with it; too few to attribute it to the row, which ZONOS2 drops too).
+  The next chunk then starts a new take, and the result reports
+  `reached_limit`.
+- Word packing can still end a chunk at a sentence end, and the next chunk can
+  then open with a pause of several seconds (4.4 s in 1 of 3 long-text takes,
+  whose first chunk ends with a sentence; no join pause over 2 s in 18 takes
+  of text A, whose joins are all mid-sentence).
+- With a voice reference, chunks were already consistent without
+  continuation; with it the similarity to the reference clip is slightly
+  lower (0.965 against 0.975) and pauses are longer.
 - The Q8_0 backbone needs about 9 GB. On a 16 GB machine that is already under
   memory pressure, generation slows down several times; `zonos2.disk_experts`
   lowers the footprint to about 5 GB at a large speed cost.

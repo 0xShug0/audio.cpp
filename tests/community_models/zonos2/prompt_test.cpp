@@ -1,10 +1,12 @@
 // ZONOS2 prompt rows, conditioning ids and quality_buckets parsing; with an oracle directory, equality with
-// zonos2-cli --build-prompt (make_oracle.sh).
+// zonos2-cli --build-prompt (make_oracle.sh) and with ZONOS2's long-form continuation prompts
+// (make_longform_oracle.py).
 #include "engine/community_models/zonos2/npy.h"
 #include "engine/community_models/zonos2/prompt.h"
 #include "engine/framework/runtime/errors.h"
 
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -125,6 +127,53 @@ int main(int argc, char ** argv) {
         expect_rejected([&] { (void) zonos2::build_zonos2_prompt(hp, hello, bad_rate); },
                         "zonos2 speaking_rate_bucket must be 0..7", "speaking rate range");
 
+        // Long-form continuation: conditioning rows, BOS, "context texts + chunk" joined by spaces, EOS, then the
+        // context rows as the audio prefix in place of the silence rows.
+        const std::vector<int32_t> first_rows = {1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19};
+        const std::vector<int32_t> previous_rows = {21, 22, 23, 24, 25, 26, 27, 28, 1024};
+        const std::vector<zonos2::Zonos2ContextChunk> context = {{"Hi.", first_rows.data(), 2}, {"Yo.", previous_rows.data(), 1}};
+        zonos2::Zonos2PromptOptions continued;
+        continued.trailing_silence = false;
+        const auto cont = zonos2::build_zonos2_continuation_prompt(hp, context, hello, continued);
+        const std::string joined = "Hi. Yo. Hello.";
+        expect(cont.n_rows == 19 && cont.speaker_row == -1, "continuation prompt: BOS, 14 bytes, EOS, 3 audio rows");
+        expect(text_at(cont, 0) == 2 && text_at(cont, 15) == 3, "a continued chunk has no trailing-silence row");
+        for (int i = 0; i < 14; ++i) {
+            expect(text_at(cont, 1 + i) == 192 + static_cast<unsigned char>(joined[static_cast<size_t>(i)]),
+                   "context and chunk text joined by single spaces");
+        }
+        for (int r = 16; r < 19; ++r) expect(text_at(cont, r) == 519, "audio prefix rows carry the text pad");
+        expect(audio_at(cont, 16, 0) == 1 && audio_at(cont, 17, 8) == 19 && audio_at(cont, 18, 0) == 21 &&
+                   audio_at(cont, 18, 8) == 1024,
+               "audio prefix is the context rows in order, unchanged");
+        const auto last = zonos2::build_zonos2_continuation_prompt(hp, context, hello, {});
+        expect(last.n_rows == 20 && text_at(last, 0) == 511 && text_at(last, 1) == 2,
+               "the last chunk keeps the trailing-silence row");
+        zonos2::Zonos2PromptOptions continued_clone = continued;
+        continued_clone.speaker = true;
+        continued_clone.quality_buckets = zonos2::parse_zonos2_quality_buckets(hp, "lufs:5,trailing_silence_s:3");
+        const auto cont_spk = zonos2::build_zonos2_continuation_prompt(hp, context, hello, continued_clone);
+        expect(cont_spk.speaker_row == 0 && cont_spk.n_rows == 23 && text_at(cont_spk, 0) == 519 &&
+                   text_at(cont_spk, 1) == 517 && text_at(cont_spk, 2) == 518 && text_at(cont_spk, 3) == 456 + 5 &&
+                   text_at(cont_spk, 4) == 2,
+               "continuation keeps the speaker rows and the other quality rows");
+        const auto open = zonos2::build_zonos2_prompt(hp, hello, continued);
+        expect(open.n_rows == 25 && text_at(open, 0) == 2 && audio_at(open, 8, 0) == 568,
+               "a continued first chunk drops the trailing-silence row and keeps the silence rows");
+
+        // Long-form word packing (ZONOS2 split_text_words): greedy, single spaces, never inside a word.
+        using Chunks = std::vector<std::string>;
+        expect(zonos2::split_zonos2_long_form_text("  one two\tthree \n four  ", 9) == Chunks({"one two", "three", "four"}),
+               "words pack up to the budget and whitespace collapses");
+        expect(zonos2::split_zonos2_long_form_text("one two three", 13) == Chunks({"one two three"}),
+               "text that fits is one chunk");
+        expect(zonos2::split_zonos2_long_form_text("a extraordinarily b", 5) == Chunks({"a", "extraordinarily", "b"}),
+               "a word longer than the budget is its own chunk");
+        expect(zonos2::split_zonos2_long_form_text("\xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9", 7) ==
+                   Chunks({"\xC3\xA9t\xC3\xA9 \xC3\xA9t\xC3\xA9", "\xC3\xA9t\xC3\xA9"}),
+               "the budget counts code points, not bytes");
+        expect(zonos2::split_zonos2_long_form_text(" \n ", 10).empty(), "blank text has no chunks");
+
         if (argc > 1) {
             const std::filesystem::path oracle = argv[1];
             expect_oracle(plain, oracle / "prompt_hello.npy");
@@ -132,6 +181,45 @@ int main(int argc, char ** argv) {
             noisy.speaker = true;
             expect_oracle(zonos2::build_zonos2_prompt(hp, hello, noisy), oracle / "prompt_hello_spk.npy");
             std::cout << "zonos2 prompt oracle: PASS\n";
+            if (std::filesystem::exists(oracle / "longform_texts.txt")) {
+                std::ifstream in(oracle / "longform_texts.txt");
+                std::vector<std::string> texts;
+                for (std::string line; std::getline(in, line);) texts.push_back(line);
+                expect(texts.size() == 3, "longform_texts.txt holds three chunks");
+                auto rows = [&](const char * name) {
+                    const auto npy = zonos2::read_f32_npy(oracle / name);
+                    expect(npy.shape.size() == 2 && npy.shape[1] == 9, std::string(name) + " must be [rows, 9]");
+                    return std::vector<int32_t>(npy.data.begin(), npy.data.end());
+                };
+                const auto anchor_rows = rows("longform_anchor_rows.npy");
+                const auto recent_rows = rows("longform_recent_rows.npy");
+                const zonos2::Zonos2ContextChunk anchor{texts[0], anchor_rows.data(), static_cast<int>(anchor_rows.size() / 9)};
+                const zonos2::Zonos2ContextChunk recent{texts[1], recent_rows.data(), static_cast<int>(recent_rows.size() / 9)};
+                expect_oracle(zonos2::build_zonos2_continuation_prompt(hp, {anchor, recent}, texts[2], {}),
+                              oracle / "longform_cont_anchor.npy");
+                zonos2::Zonos2PromptOptions open_chunk;
+                open_chunk.trailing_silence = false;
+                expect_oracle(zonos2::build_zonos2_continuation_prompt(hp, {recent}, texts[2], open_chunk),
+                              oracle / "longform_cont_recent.npy");
+                zonos2::Zonos2PromptOptions cloned;
+                cloned.speaker = true;
+                cloned.speaking_rate_bucket = 3;
+                expect_oracle(zonos2::build_zonos2_continuation_prompt(hp, {anchor, recent}, texts[2], cloned),
+                              oracle / "longform_cont_spk.npy");
+                std::cout << "zonos2 long-form prompt oracle: PASS\n";
+            }
+            if (std::filesystem::exists(oracle / "longform_split_input.txt")) {
+                auto slurp = [](const std::filesystem::path & path) {
+                    std::ifstream in(path, std::ios::binary);
+                    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+                };
+                std::ifstream in(oracle / "longform_split_chunks.txt");
+                std::vector<std::string> expected;
+                for (std::string line; std::getline(in, line);) expected.push_back(line);
+                expect(zonos2::split_zonos2_long_form_text(slurp(oracle / "longform_split_input.txt"), 150) == expected,
+                       "word packing differs from ZONOS2's split_text_words");
+                std::cout << "zonos2 long-form split oracle: PASS (" << expected.size() << " chunks)\n";
+            }
         }
         std::cout << "zonos2 prompt tests passed\n";
         return 0;

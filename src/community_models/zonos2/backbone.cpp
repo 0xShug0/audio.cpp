@@ -29,7 +29,9 @@
 namespace engine::models::zonos2 {
 namespace {
 
-constexpr int kMaxPrefillRows = 2048;
+// Prefill attention scores are [rows, block, n_head] per query block instead of [rows, rows, n_head]: a long-form
+// continuation prompt carries earlier chunks' audio rows and reaches thousands of rows.
+constexpr int kPrefillQueryBlock = 1024;
 constexpr int kGraphNodes = 8192;
 constexpr size_t kPrefillGraphCache = 2;
 
@@ -97,9 +99,6 @@ public:
         const int width = hp_.n_codebooks + 1;
         if (prompt.n_rows <= 0 || prompt.ids.size() != static_cast<size_t>(prompt.n_rows) * static_cast<size_t>(width)) {
             throw std::runtime_error("zonos2: malformed prompt");
-        }
-        if (prompt.n_rows > kMaxPrefillRows) {
-            throw runtime::InvalidRequestError("zonos2: text chunk too long; lower text_chunk_size");
         }
         if (prompt.n_rows > capacity_) throw std::runtime_error("zonos2: prompt does not fit the backbone capacity");
         if ((prompt.speaker_row >= 0) != (speaker != nullptr) || prompt.speaker_row >= prompt.n_rows) {
@@ -396,12 +395,23 @@ private:
         if (prefill) {
             ggml_build_forward_expand(graph, kset);
             ggml_build_forward_expand(graph, vset);
-            auto * qp = ggml_cont(g, ggml_permute(g, q, 0, 2, 1, 3));  // [hd, N, nh]
-            auto * kq = ggml_mul_mat(g, kp, qp);                        // [N, N, nh]
-            kq = ggml_soft_max_ext(g, kq, in.mask, scale, 0.0f);
+            // One block for a prompt of at most kPrefillQueryBlock rows.
             auto * vt = ggml_cont(g, ggml_permute(g, v, 1, 2, 0, 3));  // [N, hd, nkv]
-            out = ggml_mul_mat(g, vt, kq);                              // [hd, N, nh]
-            out = ggml_cont(g, ggml_permute(g, out, 0, 2, 1, 3));      // [hd, nh, N]
+            for (int a = 0; a < N; a += kPrefillQueryBlock) {
+                const int n = std::min(kPrefillQueryBlock, N - a);
+                auto * qb = q;
+                auto * mask = in.mask;
+                if (n < N) {
+                    qb = ggml_view_3d(g, q, hd, nh, n, q->nb[1], q->nb[2], static_cast<size_t>(a) * q->nb[2]);
+                    mask = ggml_cont(g, ggml_view_2d(g, in.mask, N, n, in.mask->nb[1], static_cast<size_t>(a) * in.mask->nb[1]));
+                }
+                auto * qp = ggml_cont(g, ggml_permute(g, qb, 0, 2, 1, 3));  // [hd, n, nh]
+                auto * kq = ggml_mul_mat(g, kp, qp);                         // [N, n, nh]
+                kq = ggml_soft_max_ext(g, kq, mask, scale, 0.0f);
+                auto * block = ggml_mul_mat(g, vt, kq);                      // [hd, n, nh]
+                out = out ? ggml_concat(g, out, block, 1) : block;
+            }
+            out = ggml_cont(g, ggml_permute(g, out, 0, 2, 1, 3));  // [hd, nh, N]
         } else {
             // The attention views hang off the set_rows results, so ggml orders the reads after the writes.
             auto * k4 = ggml_view_4d(g, kset, hd, capacity_, nkv, 1, kc->nb[1], kc->nb[2], kc->nb[3], 0);

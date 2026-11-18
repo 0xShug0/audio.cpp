@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,7 @@ constexpr int kSilence[kSilenceRows][9] = {
 
 constexpr std::array<const char *, 6> kQualityFeatures = {
     "lufs", "estimated_snr", "max_pause", "estimated_bandlimit_hz", "leading_silence_s", "trailing_silence_s"};
+constexpr size_t kTrailingSilenceFeature = 5;
 
 int quality_total(const Zonos2Hparams & hp) {
     int total = 0;
@@ -56,11 +58,9 @@ std::string trim(const std::string & s) {
     return s.substr(first, s.find_last_not_of(" \t") - first + 1);
 }
 
-}  // namespace
-
-Zonos2Prompt build_zonos2_prompt(const Zonos2Hparams & hp, const std::string & utf8, const Zonos2PromptOptions & options) {
+// Conditioning rows, BOS, the text bytes and EOS (ZONOS2 TTSPromptBuilder.build_text_prompt).
+Zonos2Prompt text_rows(const Zonos2Hparams & hp, const std::string & utf8, const Zonos2PromptOptions & options) {
     const int ncb = hp.n_codebooks;
-    const size_t width = static_cast<size_t>(ncb) + 1;
     if (options.speaking_rate_bucket < -1 || options.speaking_rate_bucket >= hp.speaking_rate_buckets) {
         throw runtime::InvalidRequestError("zonos2 speaking_rate_bucket must be 0.." +
                                            std::to_string(hp.speaking_rate_buckets - 1));
@@ -80,6 +80,7 @@ Zonos2Prompt build_zonos2_prompt(const Zonos2Hparams & hp, const std::string & u
                                                " bucket must be 0.." + std::to_string(hp.quality_bucket_counts[f] - 1));
         }
     }
+    if (!options.trailing_silence) quality[kTrailingSilenceFeature] = -1;
 
     const int base = conditioning_base(hp);
     const int quality_base = base + hp.speaking_rate_buckets;
@@ -106,12 +107,79 @@ Zonos2Prompt build_zonos2_prompt(const Zonos2Hparams & hp, const std::string & u
     pad_row(kBos);
     for (const unsigned char byte : utf8) pad_row(kByteOffset + static_cast<int>(byte));
     pad_row(kEos);
+    return out;
+}
+
+}  // namespace
+
+Zonos2Prompt build_zonos2_prompt(const Zonos2Hparams & hp, const std::string & utf8, const Zonos2PromptOptions & options) {
+    const int ncb = hp.n_codebooks;
+    auto out = text_rows(hp, utf8, options);
     for (int t = 0; t < kSilenceRows; ++t) {
         for (int c = 0; c < ncb; ++c) out.ids.push_back(t >= c ? kSilence[t - c][c] : hp.audio_pad_id);
         out.ids.push_back(hp.text_vocab);
     }
-    out.n_rows = static_cast<int>(out.ids.size() / width);
+    out.n_rows = static_cast<int>(out.ids.size() / (static_cast<size_t>(ncb) + 1));
     return out;
+}
+
+Zonos2Prompt build_zonos2_continuation_prompt(const Zonos2Hparams & hp, const std::vector<Zonos2ContextChunk> & context,
+                                              const std::string & utf8, const Zonos2PromptOptions & options) {
+    if (context.empty()) throw std::runtime_error("zonos2: a continuation prompt needs context chunks");
+    const int ncb = hp.n_codebooks;
+    std::string text;
+    for (const auto & chunk : context) {
+        text.append(chunk.text);
+        text.push_back(' ');
+    }
+    text += utf8;
+    auto out = text_rows(hp, text, options);
+    for (const auto & chunk : context) {
+        if (chunk.n_rows <= 0 || !chunk.rows) throw std::runtime_error("zonos2: a context chunk has no rows");
+        for (int t = 0; t < chunk.n_rows; ++t) {
+            const int32_t * row = chunk.rows + static_cast<size_t>(t) * static_cast<size_t>(ncb);
+            for (int c = 0; c < ncb; ++c) {
+                if (row[c] < 0 || row[c] >= hp.audio_vocab) throw std::runtime_error("zonos2: context code out of range");
+            }
+            out.ids.insert(out.ids.end(), row, row + ncb);
+            out.ids.push_back(hp.text_vocab);
+        }
+    }
+    out.n_rows = static_cast<int>(out.ids.size() / (static_cast<size_t>(ncb) + 1));
+    return out;
+}
+
+std::vector<std::string> split_zonos2_long_form_text(std::string_view utf8, int max_codepoints) {
+    if (max_codepoints <= 0) throw std::runtime_error("zonos2: the chunk budget must be positive");
+    auto codepoints = [](std::string_view s) {
+        size_t count = 0;
+        for (const unsigned char byte : s) count += (byte & 0xC0) != 0x80;
+        return count;
+    };
+    const std::string_view spaces = " \t\n\r\f\v";
+    std::vector<std::string> chunks;
+    std::string current;
+    size_t current_points = 0;
+    for (size_t at = utf8.find_first_not_of(spaces); at != std::string_view::npos;) {
+        const size_t end = std::min(utf8.find_first_of(spaces, at), utf8.size());
+        const auto word = utf8.substr(at, end - at);
+        const size_t points = codepoints(word);
+        if (current.empty()) {
+            current = word;
+            current_points = points;
+        } else if (current_points + 1 + points <= static_cast<size_t>(max_codepoints)) {
+            current.push_back(' ');
+            current.append(word);
+            current_points += 1 + points;
+        } else {
+            chunks.push_back(std::move(current));
+            current = word;
+            current_points = points;
+        }
+        at = utf8.find_first_not_of(spaces, end);
+    }
+    if (!current.empty()) chunks.push_back(std::move(current));
+    return chunks;
 }
 
 std::vector<int> parse_zonos2_quality_buckets(const Zonos2Hparams & hp, const std::string & spec) {

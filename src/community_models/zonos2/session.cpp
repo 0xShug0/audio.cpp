@@ -35,6 +35,9 @@ constexpr float kPi = 3.14159265358979323846f;
 // pass, and the decoder scratch stays bounded (about 1.8 MB per window frame on the CPU; one pass over 2000 frames
 // would need about 3.6 GB).
 constexpr int kOfflineDecodeFrames = 128;
+// Rows dropped from the end of a chunk that another chunk continues: the conditioned tail before its end of speech
+// (ZONOS2 long-form boundary_trim_frames).
+constexpr int kBoundaryTrimRows = 3;
 
 // Parser exceptions are client errors.
 template <typename Fn>
@@ -212,7 +215,8 @@ runtime::TaskResult Zonos2Session::synthesize(const runtime::TaskRequest & reque
     const int max_tokens = int_option(options, "max_tokens", 2000, 1);
     const bool encode_only = bool_option(options, "encode_reference_only", false);
     const float fade_ms = float_option(options, "fade_out_ms", 0.0f, 0.0f, 2000.0f);
-    const int chunk_size = int_option(options, "text_chunk_size", 300, 1);
+    const int chunk_size = int_option(options, "text_chunk_size", 150, 1);
+    const bool continuation = bool_option(options, "long_form_continuation", true);
     Zonos2PromptOptions prompt_options;
     prompt_options.clean_speaker_background = bool_option(options, "clean_speaker_background", false);
     prompt_options.accurate_mode = bool_option(options, "accurate_mode", true);
@@ -259,92 +263,173 @@ runtime::TaskResult Zonos2Session::synthesize(const runtime::TaskRequest & reque
     if (!effective.text_input || effective.text_input->text.empty()) {
         throw runtime::InvalidRequestError("zonos2 requires input text");
     }
-    const auto mode = engine::text::parse_text_chunk_mode_override(options).value_or(engine::text::TextChunkMode::Default);
-    const auto chunks = runtime::chunk_text_request(effective, chunk_size, mode);
-    size_t last_chunk = chunks.size();
-    for (size_t index = 0; index < chunks.size(); ++index) {
-        if (!chunks[index].text_input->text.empty()) last_chunk = index;
+    // Chunks to generate, none empty. Continuation packs words as ZONOS2 does: a chunk that ends mid-sentence is
+    // continued without a pause, while one that follows a sentence end tends to open with silence. An explicit
+    // text_chunk_mode, or continuation off, keeps the framework chunker.
+    const auto chunk_mode = engine::text::parse_text_chunk_mode_override(options);
+    std::vector<std::string> chunks;
+    if (continuation && !chunk_mode) {
+        chunks = split_zonos2_long_form_text(effective.text_input->text, chunk_size);
+    } else {
+        const auto mode = chunk_mode.value_or(engine::text::TextChunkMode::Default);
+        for (auto & request : runtime::chunk_text_request(effective, chunk_size, mode)) {
+            if (!request.text_input->text.empty()) chunks.push_back(std::move(request.text_input->text));
+        }
     }
+    if (chunks.empty()) throw runtime::InvalidRequestError("zonos2 requires input text");
 
+    // A segment is a run of chunks decoded as one delayed stream. With continuation, a chunk that another chunk
+    // continues is trimmed to its content and teacher-forced into the next prompt, which continues its rows (ZONOS2
+    // tts/longform.py), so a request is normally one segment. Without it every chunk is its own segment.
+    struct KeptChunk {
+        size_t chunk;
+        int first_row;
+        int rows;
+    };
     const size_t fade_samples = static_cast<size_t>(std::lround(fade_ms * kSampleRate / 1000.0));
     runtime::AudioBuffer merged{kSampleRate, 1, {}};
+    std::vector<int32_t> stream;             // the segment's delayed rows [rows][9]
+    std::vector<KeptChunk> kept;             // its finished chunks
+    std::optional<Zonos2Prompt> continued;   // the next chunk's prompt when it continues the segment
+    std::vector<float> held;                 // streaming: the faded tail, published at the end
+    runtime::StreamingAudioController<int32_t> controller;
+    bool segment_open = false;
+    bool fade = false;
+    size_t holdback = 0;
+    int emitted = 0;  // streaming: undelayed frames of the segment pushed so far
     int total_frames = 0;
     int produced_chunks = 0;
     bool reached_limit = false;
     for (size_t index = 0; index < chunks.size(); ++index) {
-        const auto & text = chunks[index].text_input->text;
-        if (text.empty()) continue;
-        const auto prompt = build_zonos2_prompt(hp, text, prompt_options);
-        if (prompt.n_rows + max_tokens > hp.n_ctx_train) {
-            throw runtime::InvalidRequestError("zonos2: prompt (" + std::to_string(prompt.n_rows) + " rows) and " +
-                                               std::to_string(max_tokens) + " generated frames exceed the " +
-                                               std::to_string(hp.n_ctx_train) + "-position context");
+        const auto & text = chunks[index];
+        const bool last = index + 1 == chunks.size();
+        const bool may_continue = continuation && !last;
+        Zonos2Prompt prompt;
+        if (continued) {
+            prompt = std::move(*continued);
+            continued.reset();
+        } else {
+            auto chunk_options = prompt_options;
+            chunk_options.trailing_silence = !may_continue;
+            prompt = build_zonos2_prompt(hp, text, chunk_options);
+            if (prompt.n_rows + max_tokens > hp.n_ctx_train) {
+                throw runtime::InvalidRequestError("zonos2: prompt (" + std::to_string(prompt.n_rows) + " rows) and " +
+                                                   std::to_string(max_tokens) + " generated frames exceed the " +
+                                                   std::to_string(hp.n_ctx_train) + "-position context");
+            }
         }
         auto chunk_sampling = sampling;
         chunk_sampling.seed += static_cast<uint32_t>(index);
-        const size_t holdback = index == last_chunk ? fade_samples : 0;
 
-        // Raw delayed rows; undelayed frame f is final once row f + 8 exists and before the end of speech.
-        std::vector<int32_t> rows;
-        int emitted = 0;
-        std::vector<float> held;  // streaming: the faded tail, published at the end
-        runtime::StreamingAudioController<int32_t> controller;
-        if (streaming) {
-            controller.begin({runtime::StreamingAudioChunkPolicy::Grow, static_cast<size_t>(stream_chunk_frames_),
-                              static_cast<size_t>(kCodebooks), static_cast<size_t>(stream_context_frames_),
-                              static_cast<size_t>(stream_context_frames_)},
-                             [&](const runtime::StreamingAudioWindow<int32_t> & window) {
-                                 auto pcm = decoder_->decode(window.data, static_cast<int>(window.frames()),
-                                                             static_cast<int>(window.left_frames),
-                                                             static_cast<int>(window.right_frames));
-                                 if (holdback == 0) return runtime::AudioBuffer{kSampleRate, 1, std::move(pcm)};
-                                 held.insert(held.end(), pcm.begin(), pcm.end());
-                                 const size_t ready = held.size() > holdback ? held.size() - holdback : 0;
-                                 std::vector<float> out(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(ready));
-                                 held.erase(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(ready));
-                                 return runtime::AudioBuffer{kSampleRate, 1, std::move(out)};
-                             },
-                             stream_event_sink(), {}, {},
-                             [&] {
-                                 apply_fade(held, holdback);
-                                 return runtime::AudioBuffer{kSampleRate, 1, std::move(held)};
-                             });
+        if (!segment_open) {
+            segment_open = true;
+            emitted = 0;
+            holdback = continuation || last ? fade_samples : 0;
+            if (streaming) {
+                controller.begin({runtime::StreamingAudioChunkPolicy::Grow, static_cast<size_t>(stream_chunk_frames_),
+                                  static_cast<size_t>(kCodebooks), static_cast<size_t>(stream_context_frames_),
+                                  static_cast<size_t>(stream_context_frames_)},
+                                 [&](const runtime::StreamingAudioWindow<int32_t> & window) {
+                                     auto pcm = decoder_->decode(window.data, static_cast<int>(window.frames()),
+                                                                 static_cast<int>(window.left_frames),
+                                                                 static_cast<int>(window.right_frames));
+                                     if (holdback == 0) return runtime::AudioBuffer{kSampleRate, 1, std::move(pcm)};
+                                     held.insert(held.end(), pcm.begin(), pcm.end());
+                                     const size_t ready = held.size() > holdback ? held.size() - holdback : 0;
+                                     std::vector<float> out(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(ready));
+                                     held.erase(held.begin(), held.begin() + static_cast<std::ptrdiff_t>(ready));
+                                     return runtime::AudioBuffer{kSampleRate, 1, std::move(out)};
+                                 },
+                                 stream_event_sink(), {}, {},
+                                 [&] {
+                                     if (fade) apply_fade(held, holdback);
+                                     return runtime::AudioBuffer{kSampleRate, 1, std::move(held)};
+                                 });
+            }
         }
+        // Undelayed frame f of the segment reads rows f .. f + 8.
         auto emit = [&](int end) {
             if (!streaming || end <= emitted) return;
-            const int count = static_cast<int>(rows.size() / kCodebooks);
-            controller.push(zonos2_undelay(rows.data(), count, emitted, end));
+            controller.push(zonos2_undelay(stream.data(), static_cast<int>(stream.size() / kCodebooks), emitted, end));
             emitted = end;
         };
+        const int base = static_cast<int>(stream.size() / kCodebooks);
         const auto generate_started = std::chrono::steady_clock::now();
         const auto codes = generate_zonos2_codes(hp, *backbone_, prompt, speaker.empty() ? nullptr : speaker.data(),
             max_tokens, chunk_sampling, [&](const int32_t * row, int eos_frame) {
-                rows.insert(rows.end(), row, row + kCodebooks);
-                int ready = static_cast<int>(rows.size() / kCodebooks) - (kCodebooks - 1);
-                if (eos_frame >= 0) ready = std::min(ready, eos_frame);
-                emit(std::max(ready, 0));
+                stream.insert(stream.end(), row, row + kCodebooks);
+                const int count = static_cast<int>(stream.size() / kCodebooks) - base;
+                // Rows certain to stay in the stream. A chunk that ends its segment keeps the rows past its end of
+                // speech for the delayed codebooks. A chunk that may be continued is cut kBoundaryTrimRows before
+                // its end of speech, which an EOA in the next row would place at count - 8.
+                int sure = eos_frame >= 0 ? std::min(count, eos_frame + kCodebooks - 1) : count;
+                if (may_continue) {
+                    sure = (eos_frame >= 0 ? std::min(eos_frame, count) : count - (kCodebooks - 1)) - kBoundaryTrimRows;
+                }
+                emit(base + sure - (kCodebooks - 1));
             });
-        const int frames = codes.eos_frame >= 0 ? std::min(codes.eos_frame, codes.count) : codes.count;
+        const int speech = codes.eos_frame >= 0 ? std::min(codes.eos_frame, codes.count) : codes.count;
+        engine::debug::timing_log_scalar("zonos2.prompt_rows", prompt.n_rows);
         engine::debug::timing_log_scalar("zonos2.generate_ms", std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - generate_started).count());
         engine::debug::timing_log_scalar("zonos2.generated_frames", codes.count);
         reached_limit = reached_limit || codes.reached_limit;
-        runtime::AudioBuffer chunk_audio{kSampleRate, 1, {}};
+
+        // The next chunk continues this one unless this one hit the frame limit (its audio would not cover its text)
+        // or no continuation prompt leaves room for max_tokens frames. The first chunk stays pinned as the voice
+        // anchor; when the prompt does not fit with it, only the chunk being continued is kept.
+        const int rows = std::max(0, speech - kBoundaryTrimRows);
+        if (may_continue && !codes.reached_limit && rows > 0) {
+            const size_t next = index + 1;
+            auto next_options = prompt_options;
+            next_options.trailing_silence = next + 1 == chunks.size();
+            auto context_chunk = [&](const KeptChunk & k) {
+                return Zonos2ContextChunk{chunks[k.chunk],
+                                          stream.data() + static_cast<size_t>(k.first_row) * kCodebooks, k.rows};
+            };
+            const KeptChunk current{index, base, rows};
+            for (const bool anchor : {true, false}) {
+                if (anchor && kept.empty()) continue;
+                std::vector<Zonos2ContextChunk> context;
+                if (anchor) context.push_back(context_chunk(kept.front()));
+                context.push_back(context_chunk(current));
+                auto candidate = build_zonos2_continuation_prompt(hp, context, chunks[next], next_options);
+                if (candidate.n_rows + max_tokens + kZonos2CapacitySlack > hp.n_ctx_train) continue;
+                engine::debug::timing_log_scalar("zonos2.context_chunks", static_cast<double>(context.size()));
+                continued = std::move(candidate);
+                break;
+            }
+            if (continued) {
+                stream.resize(static_cast<size_t>(base + rows) * kCodebooks);
+                kept.push_back(current);
+                ++produced_chunks;
+                emit(base + rows - (kCodebooks - 1));
+                continue;
+            }
+        }
+
+        const int frames = base + speech;
+        fade = last;
+        runtime::AudioBuffer segment_audio{kSampleRate, 1, {}};
         if (streaming) {
             emit(frames);
-            chunk_audio = controller.finish();
+            segment_audio = controller.finish();
         } else if (frames > 0) {
             const auto decode_started = std::chrono::steady_clock::now();
-            const auto undelayed = zonos2_undelay(codes.rows.data(), codes.count, 0, frames);
-            chunk_audio.samples = decoder_->decode_tiled(undelayed.data(), frames, kOfflineDecodeFrames, stream_context_frames_);
+            const auto undelayed = zonos2_undelay(stream.data(), static_cast<int>(stream.size() / kCodebooks), 0, frames);
+            segment_audio.samples = decoder_->decode_tiled(undelayed.data(), frames, kOfflineDecodeFrames, stream_context_frames_);
             engine::debug::timing_log_scalar("zonos2.decode_ms", std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - decode_started).count());
-            apply_fade(chunk_audio.samples, holdback);
+            if (fade) apply_fade(segment_audio.samples, fade_samples);
         }
-        if (frames <= 0 || chunk_audio.samples.empty()) continue;
+        stream.clear();
+        kept.clear();
+        held.clear();
+        segment_open = false;
+        if (frames <= 0 || segment_audio.samples.empty()) continue;
         total_frames += frames;
-        ++produced_chunks;
-        runtime::append_audio_buffer(merged, chunk_audio);
+        if (speech > 0) ++produced_chunks;
+        runtime::append_audio_buffer(merged, segment_audio);
     }
     if (produced_chunks == 0) throw std::runtime_error("zonos2 produced no audio");
     runtime::TaskResult result;
