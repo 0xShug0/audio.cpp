@@ -4317,6 +4317,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_link_libraries(granite_speech_2b_b2_units_test PRIVATE engine_runtime ggml)
         target_include_directories(granite_speech_2b_b2_units_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME granite_speech_2b_b2_units_test COMMAND granite_speech_2b_b2_units_test)
+        # granite_speech_2b C1: prompt tokenizer/builder + Injection contract.
+        # Same explicit pattern as B1/B2 (no audiocpp_add_model yet).
+        add_executable(granite_speech_2b_c1_units_test
+            tests/granite_speech_2b/test_granite_speech_2b_c1_units.cpp
+            src/community_models/granite_speech_2b/prompt.cpp)
+        target_link_libraries(granite_speech_2b_c1_units_test PRIVATE engine_runtime ggml)
+        target_include_directories(granite_speech_2b_c1_units_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+        target_compile_definitions(granite_speech_2b_c1_units_test
+            PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        add_test(NAME granite_speech_2b_c1_units_test COMMAND granite_speech_2b_c1_units_test)
         add_executable(granite_speech_2b_parity_probe
             tests/granite_speech_2b/granite_speech_2b_parity_probe.cpp
             src/community_models/granite_speech_2b/assets.cpp

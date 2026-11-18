@@ -1,0 +1,41 @@
+{
+ "description": "hand-made splice/injection math vectors; no checkpoint needed",
+ "one_marker_ids": [
+  7,
+  21,
+  100352,
+  9,
+  5
+ ],
+ "audio_token_id": 100352,
+ "audio_tokens": 3,
+ "expanded_ids": [
+  7,
+  21,
+  100352,
+  100352,
+  100352,
+  9,
+  5
+ ],
+ "audio_positions": [
+  2,
+  3,
+  4
+ ],
+ "hidden_size": 4,
+ "projected_values": [
+  0.0,
+  0.25,
+  0.5,
+  0.75,
+  1.0,
+  1.25,
+  1.5,
+  1.75,
+  2.0,
+  2.25,
+  2.5,
+  2.75
+ ]
+}
