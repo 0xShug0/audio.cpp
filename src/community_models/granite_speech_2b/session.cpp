@@ -48,9 +48,9 @@ std::shared_ptr<const GraniteSpeech2BAssets> require_assets(
 
 assets::TensorStorageType parse_load_weight_storage(
     const std::unordered_map<std::string, std::string> & options) {
-    // Load-scoped precision (spec options.load): native checkpoint storage by
-    // default, F32 upcast for BF16-snapshot parity. GGUF mixed types are
-    // reserved for Task E and rejected here.
+    // Load-scoped precision (spec options.load): native storage keeps the
+    // checkpoint format as stored (GGUF mixed types included), F32 upcasts
+    // for BF16-snapshot parity.
     return runtime::parse_tensor_storage_option(
         options,
         "granite_speech_2b.weight_type",
@@ -244,9 +244,10 @@ std::vector<runtime::TimeSpan> granite_speech_2b_merge_tiny_tails(
         spans.erase(spans.begin() + static_cast<ptrdiff_t>(i));
     }
     // Rebalance a last span left over the cap by its merged tail: split the
-    // last two spans' combined region into near-equal in-bound parts. The
-    // combined region exceeds the cap by at most one tiny tail, so each half
-    // stays in-bounds on both ends (far above the tiny threshold).
+    // last two spans' combined region into near-equal parts. The combined
+    // region exceeds the cap by at most one tiny tail (<=256 samples), so
+    // each half overshoots the cap by at most ~128 samples; both halves stay
+    // far above the tiny threshold.
     if (spans.size() >= 2) {
         const size_t last = spans.size() - 1;
         const int64_t last_length = spans[last].end_sample - spans[last].start_sample;
@@ -623,6 +624,11 @@ public:
             return true;
         }
         // Installed package directory: a single GGUF, no native checkpoint.
+        // Native weight files on disk disqualify the directory even when a
+        // stray GGUF sits beside them (foreign native checkpoint case).
+        if (granite_speech_2b_directory_has_native_weights(request.model_path)) {
+            return false;
+        }
         try {
             if (!engine::assets::find_directory_gguf(request.model_path).has_value()) {
                 return false;

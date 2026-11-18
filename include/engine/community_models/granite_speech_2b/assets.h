@@ -120,6 +120,13 @@ struct GraniteSpeech2BAssets {
 // Metadata-only probe: inspects config.json sidecar text, never tensor data.
 bool granite_speech_2b_can_load(const std::filesystem::path & model_path);
 
+// True when a directory holds native weight files (top-level *.safetensors /
+// *.bin). GGUF package directories never do: their weights live inside the
+// single package GGUF. Used to keep the installed-package fallback from
+// claiming a foreign native checkpoint directory that merely sits next to a
+// stray GGUF.
+bool granite_speech_2b_directory_has_native_weights(const std::filesystem::path & dir);
+
 // Full typed load: native checkpoint directories build the manual resource
 // bundle (native `model:.` roots, tensor entry `weights` ->
 // model:model.safetensors), exactly as in Task D. GGUF packages (a standalone

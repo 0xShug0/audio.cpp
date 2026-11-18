@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -357,7 +358,7 @@ void test_loader_contract() {
     test::require(!loader->can_load(request), "wrong hint does not load");
     request.family_hint = "granite_speech_2b";
     request.model_path = "/nonexistent/checkpoint.gguf";
-    test::require(!loader->can_load(request), "gguf never claimed");
+    test::require(!loader->can_load(request), "missing gguf does not load");
 
     // Load fails closed: bad family hint, GGUF path, bad storage, bad dir.
     request.family_hint = "granite5asr";
@@ -377,7 +378,7 @@ void test_loader_contract() {
     } catch (const std::runtime_error &) {
         threw = true;
     }
-    test::require(threw, "load rejects gguf until E");
+    test::require(threw, "load rejects missing gguf");
     request.model_path = "/nonexistent/checkpoint";
     request.options = {{"granite_speech_2b.weight_type", "q8_0"}};
     threw = false;
@@ -419,6 +420,61 @@ void test_loader_contract() {
         threw = true;
     }
     test::require(threw, "streaming rejected");
+}
+
+void test_native_weight_guard() {
+    const auto loader = g2b::make_granite_speech_2b_loader();
+    const std::filesystem::path tmp =
+        std::filesystem::temp_directory_path() / "g2b_native_weight_guard_test";
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+    std::filesystem::create_directories(tmp, ec);
+    test::require(!ec, "fixture dir created");
+    test::require(
+        !g2b::granite_speech_2b_directory_has_native_weights(tmp), "empty dir has no native weights");
+    test::require(
+        !g2b::granite_speech_2b_directory_has_native_weights(tmp / "missing"),
+        "missing dir has no native weights");
+    {
+        std::ofstream stub(tmp / "model.safetensors", std::ios::binary);
+        test::require(static_cast<bool>(stub), "weight stub created");
+    }
+    test::require(
+        g2b::granite_speech_2b_directory_has_native_weights(tmp), "safetensors stub detected");
+
+    // A foreign native checkpoint directory holding a stray GGUF must not be
+    // claimed, even though the GGUF embeds a valid g2b spec. The GGUF is
+    // linked (not copied) from the E1 dist artifact; skip loudly when the
+    // gated dist file is absent.
+    const std::filesystem::path foreign = tmp / "foreign_native";
+    std::filesystem::create_directories(foreign, ec);
+    test::require(!ec, "foreign dir created");
+    {
+        std::ofstream config(foreign / "config.json", std::ios::binary);
+        config << R"({"model_type": "granite_speech5_ctc"})";
+    }
+    {
+        std::ofstream stub(foreign / "model.safetensors", std::ios::binary);
+        test::require(static_cast<bool>(stub), "foreign weight stub created");
+    }
+    runtime::ModelLoadRequest foreign_request;
+    foreign_request.model_path = foreign;
+    test::require(!loader->can_load(foreign_request), "foreign native dir without gguf not claimed");
+
+    const std::filesystem::path dist_gguf = source_dir() / "build" / "granite-2b-handoff" / "dist" /
+        "granite-speech-5.0-2b-q8_0.gguf";
+    if (!std::filesystem::is_regular_file(dist_gguf)) {
+        std::cout << "NOTE: E1 dist GGUF missing; skipping stray-GGUF claim check\n";
+    } else {
+        std::filesystem::create_symlink(dist_gguf, foreign / "stray.gguf", ec);
+        test::require(!ec, "stray gguf linked");
+        test::require(
+            g2b::granite_speech_2b_directory_has_native_weights(foreign),
+            "foreign weights detected with stray gguf present");
+        test::require(
+            !loader->can_load(foreign_request), "foreign native dir with stray gguf not claimed");
+    }
+    std::filesystem::remove_all(tmp, ec);
 }
 
 // --- checkpoint-gated helpers ---
@@ -601,6 +657,7 @@ int main() {
         test_join_rules();
         test_budget_edges();
         test_loader_contract();
+        test_native_weight_guard();
         if (const auto model_dir = find_model_dir()) {
             // Spec discovery and the default VAD path resolve against the
             // working directory in dev builds; run gated flows from the repo

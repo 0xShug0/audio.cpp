@@ -291,7 +291,7 @@ Reading:
 
 | Gate | Bar | Result |
 |---|---|---|
-| native vs orig exact (stable-margin) | byte-identical transcripts | PASS (5/5 clips + IBM sample) |
+| native vs orig exact (stable-margin) | byte-identical transcripts | PASS (original 5 clips + IBM sample; synth in next row) |
 | Q8_0 vs orig aggregate | ≤ +1pp | PASS (+0.00pp WER, +0.00pp CER) |
 | Q8_0 vs orig per-language / long-audio | ≤ +2pp | PASS (max +0.00pp; synth 63.9 s slice +0.00pp) |
 | Synthetic >60 s fixed-8 s chunk slice (§4b) | native≡orig exact; q8 ≤ +2pp | PASS (3/3 byte-identical, WER 1.06% all) |
@@ -299,7 +299,7 @@ Reading:
 | IBM official Q8_0 pair (independent impl) | 0.00pp WER/CER delta vs candidate | PASS (4/5 byte-identical, long-EN punct-only diff) |
 | Runtime integration | §6 all green | PASS (model_spec_system_test CWD caveat recorded, not a failure) |
 | Perf/memory CPU | measured, no claimed-backend gap | PASS (RTF ~0.45–0.65, VmHWM 4.30 GiB, min_vram 8 confirmed) |
-| fr/de/es/pt + >60 s + multilingual IBM refs | honest pending, not claimed | PENDING (documented, blocks six-language claim only) |
+| fr/de/es/pt + natural >60 s + multilingual IBM refs | honest pending, not claimed | PENDING (documented, blocks six-language claim only) |
 | Upload + flip | credentials-gated | NO PATH → QUALIFIED, experimental kept (§9) |
 
 No threshold adjustment was needed; none is recorded.
@@ -400,7 +400,7 @@ sha256sum Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf
 #    Then in ONE flip commit together: status experimental->community,
 #    runtime backend tags (cpu only, as measured), model-doc wording (drop
 #    experimental notes), README/docs/asr.md rows, WebUI catalog entry.
-# 3. Re-run BOTH managers against empty roots + catalog sync + CLI from the
+# 4. Re-run BOTH managers against empty roots + catalog sync + CLI from the
 #    installed artifact (E1 §"Managers" commands), update this report's §2
 #    with the pinned revision, and confirm min_vram_gb: 8 against §7 RSS.
 ```

@@ -32,7 +32,7 @@ void require_shape(
             }
             message += std::to_string(metadata.shape[i]);
         }
-        message += "]";
+        message += "] in " + source.source_path().string();
         throw std::runtime_error(message);
     }
 }
@@ -319,6 +319,11 @@ bool is_gguf_package_path(const std::filesystem::path & model_path) {
     if (granite_speech_2b_can_load(model_path)) {
         return false;
     }
+    // A foreign native checkpoint directory (its own weights on disk) is not
+    // an installed package, even with a stray GGUF beside it.
+    if (granite_speech_2b_directory_has_native_weights(model_path)) {
+        return false;
+    }
     return engine::assets::find_directory_gguf(model_path).has_value();
 }
 
@@ -333,6 +338,29 @@ assets::ResourceBundle load_granite_speech_2b_resources(const std::filesystem::p
 }
 
 }  // namespace
+
+bool granite_speech_2b_directory_has_native_weights(const std::filesystem::path & dir) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) {
+        return false;
+    }
+    for (const auto & entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (ec) {
+            return false;
+        }
+        if (!entry.is_regular_file(ec) || ec) {
+            continue;
+        }
+        std::string extension = entry.path().extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char value) {
+            return static_cast<char>(std::tolower(value));
+        });
+        if (extension == ".safetensors" || extension == ".bin") {
+            return true;
+        }
+    }
+    return false;
+}
 
 bool granite_speech_2b_can_load(const std::filesystem::path & model_path) {
     try {

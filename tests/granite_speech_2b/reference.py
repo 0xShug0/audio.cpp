@@ -114,8 +114,12 @@ def dump_model_config(model) -> dict:
     gen = need(model, "generation_config", "model")
     rope = need(txt, "rope_scaling", "text_config")
     if isinstance(rope, dict):
-        rope_map = {k: rope[k] for k in
-                    ("factor", "original_max_position_embeddings", "rope_type")}
+        rope_keys = ("factor", "original_max_position_embeddings", "rope_type")
+        missing = [k for k in rope_keys if k not in rope or rope[k] is None]
+        if missing:
+            raise RuntimeError(f"FAIL: model config text_config.rope_scaling missing {missing}; "
+                               f"refusing to emit trace with guessed constants")
+        rope_map = {k: rope[k] for k in rope_keys}
     else:
         rope_map = {k: need(rope, k, "text_config.rope_scaling") for k in
                     ("factor", "original_max_position_embeddings", "rope_type")}
