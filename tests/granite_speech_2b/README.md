@@ -116,7 +116,9 @@ granite_speech_2b_parity_probe --model DIR --audio WAV \
   transcription prompt is used.
 - `--force-ids`: optional JSON list of token IDs used as the teacher-forced
   continuation for `generate` (default: this run's greedy output, mirroring
-  `reference.py --force-ids`).
+  `reference.py --force-ids`). Without it, the probe runs the greedy
+  continuation first, then re-prefills and teacher-forces that output, so
+  `generate` always emits `forced_step0..7` plus the greedy IDs/text.
 - `--through`: pipeline cutoff; the probe must emit every trace entry
   through that stage and declare it as `"through"` in its `trace.json`:
   - `frontend`: `mel.f32`, `stacked.f32`

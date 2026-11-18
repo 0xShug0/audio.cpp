@@ -461,21 +461,33 @@ int run(int argc, char ** argv) {
             // last-position distribution; step k>=1 feeds continuation[k-1]
             // (exactly what generate() does per step). Mirrors
             // reference.py N_FORCED_STEPS.
-            const size_t n_steps =
-                std::min<size_t>(kProbeForcedSteps, forced_continuation.size());
-            forced_steps.reserve(n_steps);
-            if (n_steps > 0) {
-                forced_steps.push_back(decoder_prefill.last_logits);
-                for (size_t k = 1; k < n_steps; ++k) {
-                    forced_steps.push_back(decoder.decode_token(forced_continuation[k - 1]));
+            auto build_forced_steps = [&](const std::vector<float> & first_logits) {
+                forced_steps.clear();
+                const size_t n_steps =
+                    std::min<size_t>(kProbeForcedSteps, forced_continuation.size());
+                forced_steps.reserve(n_steps);
+                if (n_steps > 0) {
+                    forced_steps.push_back(first_logits);
+                    for (size_t k = 1; k < n_steps; ++k) {
+                        forced_steps.push_back(decoder.decode_token(forced_continuation[k - 1]));
+                    }
                 }
+            };
+            if (!forced_continuation.empty()) {
+                // --force-ids path: teacher-force the given continuation on
+                // the prefill cache above.
+                build_forced_steps(decoder_prefill.last_logits);
             }
-            // Fresh full prefill inside; the forced decode above does not
-            // leak into the greedy continuation.
+            // Fresh full prefill inside; no forced decode above leaks into
+            // the greedy continuation.
             greedy_ids = decoder.generate_greedy(prompt, kProbeMaxTokens);
             if (force_ids.empty()) {
+                // Default path: the continuation is this run's greedy output,
+                // so it only exists now. Re-prefill (generate_greedy consumed
+                // its own cache) and teacher-force it, which must reproduce
+                // the greedy path exactly.
                 forced_continuation = greedy_ids;
-                // Teacher-forcing the greedy path must reproduce it exactly.
+                build_forced_steps(decoder.prefill(prompt, kProbeMaxTokens).last_logits);
                 for (size_t k = 0; k < forced_steps.size(); ++k) {
                     int32_t top = 0;
                     for (size_t i = 1; i < forced_steps[k].size(); ++i) {

@@ -153,7 +153,24 @@ std::vector<double> parse_number_list(const std::string & text) {
     return out;
 }
 
-// Extract a top-level JSON array of numbers by key: `"key": [...]`.
+// Extract a top-level JSON scalar number by key: `"key": 1.5`.
+double json_scalar(const std::string & text, const std::string & key) {
+    const std::string needle = "\"" + key + "\"";
+    const size_t at = text.find(needle);
+    if (at == std::string::npos) {
+        throw std::runtime_error("C2 test json has no key: " + key);
+    }
+    const size_t colon = text.find(':', at + needle.size());
+    if (colon == std::string::npos) {
+        throw std::runtime_error("C2 test json key has no value: " + key);
+    }
+    size_t begin = text.find_first_not_of(" \t\n\r", colon + 1);
+    if (begin == std::string::npos) {
+        throw std::runtime_error("C2 test json truncated value: " + key);
+    }
+    const size_t end = text.find_first_not_of("-+.eE0123456789", begin);
+    return std::stod(text.substr(begin, end - begin));
+}
 std::vector<double> json_numbers(const std::string & text, const std::string & key) {
     const std::string needle = "\"" + key + "\"";
     const size_t at = text.find(needle);
@@ -647,7 +664,11 @@ void test_rope_yarn_positions() {
         read_text_file(fixtures_dir() / "rope_yarn_inv_freq.json");
     const auto inv_list = parse_number_list(fixture.substr(fixture.find('[')));
     test::require_eq(inv_list.size(), size_t{64}, "64 inverse freqs");
-    const double magnitude = 1.138629436111989;
+    // Magnitude comes from the fixture (HF attention_scaling buffer value),
+    // asserted equal to the get_mscale formula 0.1*ln(4)+1, never hardcoded.
+    const double magnitude = json_scalar(fixture, "attention_scaling");
+    test::require(
+        std::fabs(magnitude - (0.1 * std::log(4.0) + 1.0)) < 1e-12, "yarn magnitude formula");
     test::require(std::fabs(inv_list[0] - 1.0) < 1e-12, "inv[0] == 1");
 
     core::ExecutionContext execution(core::BackendConfig{core::BackendType::Cpu, 0, 8});
