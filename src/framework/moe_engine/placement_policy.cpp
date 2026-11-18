@@ -16,29 +16,42 @@ void validate_parameters(const PolicyParameters & parameters, std::initializer_l
 class CpuShare final : public PlacementPolicy {
 public:
     explicit CpuShare(double share) : share_(share) {}
+    void prepare_program(uint64_t program) override { carries_.emplace(program, Carry{}); }
     void select(const PlacementInput & input, PlacementDecision & out) override {
-        if (epoch_ != input.cache_epoch) { epoch_ = input.cache_epoch; carry_ = 0; }
+        auto & state = carries_.at(input.program);
+        if (state.epoch != input.cache_epoch) state = {input.cache_epoch, 0};
+        ordered_.assign(input.experts.begin(), input.experts.end());
+        // Legacy placement ranks work by assignment count, with logical IDs
+        // breaking ties, independently of the routing tensor's occurrence order.
+        std::sort(ordered_.begin(), ordered_.end(), [&](int32_t a, int32_t b) {
+            const auto x = input.assignment_counts.at(static_cast<size_t>(a));
+            const auto y = input.assignment_counts.at(static_cast<size_t>(b));
+            return x != y ? x > y : a < b;
+        });
         out.cpu.clear(); out.gpu.clear(); misses_.clear();
         size_t vacant = static_cast<size_t>(std::count(input.resident.begin(), input.resident.end(), -1));
-        for (auto id : input.experts) {
+        for (auto id : ordered_) {
             if (std::find(input.resident.begin(), input.resident.end(), id) != input.resident.end()) out.gpu.push_back(id);
             else if (vacant) { --vacant; misses_.push_back(id); }
             else {
-                carry_ += share_;
-                if (carry_ >= 1) { carry_ -= 1; out.cpu.push_back(id); }
+                state.fraction += share_;
+                if (state.fraction >= 1) { state.fraction -= 1; out.cpu.push_back(id); }
                 else misses_.push_back(id);
             }
         }
         out.gpu.insert(out.gpu.end(), misses_.begin(), misses_.end());
     }
     void event(const PolicyNotification & notification) override {
-        if (notification.event == PolicyEvent::CacheInvalidated) { epoch_ = notification.cache_epoch; carry_ = 0; }
+        if (notification.event == PolicyEvent::ProgramRetired) carries_.erase(notification.program);
+        else if (notification.event == PolicyEvent::CacheInvalidated)
+            for (auto & item : carries_) item.second = {notification.cache_epoch, 0};
     }
-    void reserve(size_t count) { misses_.reserve(count); }
+    void reserve(size_t count) { misses_.reserve(count); ordered_.reserve(count); }
 private:
-    double share_, carry_ = 0;
-    uint64_t epoch_ = 0;
-    std::vector<int32_t> misses_;
+    struct Carry { uint64_t epoch = 0; double fraction = 0; };
+    double share_;
+    std::unordered_map<uint64_t, Carry> carries_;
+    std::vector<int32_t> misses_, ordered_;
 };
 class CostAware final : public PlacementPolicy {
 public:

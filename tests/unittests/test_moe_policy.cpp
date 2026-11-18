@@ -21,6 +21,7 @@ void selection_contracts(bool existing_only) {
     const auto prepared = moe::prepare_policy(config);
     require(prepared.requirements.cpu_execution && !prepared.requirements.phase_times, "CPU-share requirements changed");
     auto placement = prepared.placement(12);
+    placement->prepare_program(1);
     const std::vector<size_t> counts(12, 1);
     std::vector<int32_t> experts{0, 1, 2, 3, 4};
     const std::vector<int32_t> empty{-1, -1};
@@ -30,19 +31,23 @@ void selection_contracts(bool existing_only) {
     experts = {3, 1, 4, 0, 2};
     const std::vector<int32_t> resident{0, 1};
     placement->select({experts, counts, resident, 0, 4096, 1}, decision);
-    require(decision.gpu == std::vector<int32_t>({1, 0}) && decision.cpu == std::vector<int32_t>({3, 4, 2}), "CPU-share moved a fixed GPU hit or changed miss order");
+    require(decision.gpu == std::vector<int32_t>({0, 1}) && decision.cpu == std::vector<int32_t>({2, 3, 4}), "CPU-share did not retain legacy count/ID order and fixed GPU hits");
     config.placement.parameters["share"] = "0.5";
     placement = moe::prepare_policy(config).placement(12);
+    placement->prepare_program(1); placement->prepare_program(2);
     experts = {2, 3, 4};
     placement->select({experts, counts, resident, 0, 4096, 1}, decision);
     require(decision.gpu == std::vector<int32_t>({2, 4}) && decision.cpu == std::vector<int32_t>({3}), "CPU-share fractional carry differs from scalar expectation");
     experts = {5}; placement->select({experts, counts, resident, 0, 4096, 2}, decision);
-    require(decision.cpu == experts, "CPU-share carry was lost across prepared programs");
+    require(decision.gpu == experts && decision.cpu.empty(), "CPU-share leaked prefill carry into a different program");
+    placement->select({experts, counts, resident, 0, 4096, 1}, decision);
+    require(decision.cpu == experts, "CPU-share lost carry when returning to the original program");
     placement->event({moe::PolicyEvent::CacheInvalidated, 0, 1});
     placement->select({experts, counts, resident, 1, 4096, 2}, decision);
     require(decision.gpu == experts && decision.cpu.empty(), "cache invalidation did not reset CPU-share carry");
 
     placement = moe::prepare_policy(config).placement(12);
+    placement->prepare_program(3);
     experts = {0, 2, 3, 4};
     const std::vector<int32_t> partly_resident{0, -1};
     placement->select({experts, counts, partly_resident, 0, 4096, 3}, decision);
@@ -67,6 +72,50 @@ void selection_contracts(bool existing_only) {
     policy->select({experts, counts, resident, 0, 4096, 8}, decision);
     require(decision.cpu == std::vector<int32_t>({2}), "cost program retirement lost configured priors");
 }
+void cpu_share_ranking_and_lifecycle() {
+    moe::PolicyConfig config;
+    config.placement = {"placement_cpu_share", {{"share", "0.5"}}};
+    const auto prepared = moe::prepare_policy(config);
+    auto policy = prepared.placement(10);
+    const std::vector<size_t> counts{1, 65, 1, 33, 1, 17, 1, 9, 0, 0};
+    const std::vector<int32_t> resident{8, 9};
+    const std::vector<std::vector<int32_t>> orders{{0, 1, 2, 3, 4, 5, 6, 7}, {7, 4, 2, 6, 3, 0, 5, 1}};
+    moe::PlacementDecision decision;
+    decision.cpu.reserve(10); decision.gpu.reserve(10);
+    for (size_t i = 0; i < orders.size(); ++i) {
+        policy->prepare_program(i);
+        policy->select({orders[i], counts, resident, 0, 4096, i}, decision);
+        require(decision.cpu == std::vector<int32_t>({3, 7, 2, 6}) &&
+            decision.gpu == std::vector<int32_t>({1, 5, 0, 4}),
+            "CPU-share depends on route occurrence instead of legacy assignment-count ranking");
+        size_t rows = 0; for (auto expert : decision.cpu) rows += counts[expert];
+        require(rows == 44, "skewed placement selected the heavy 124-row CPU workload");
+    }
+    const std::vector<int32_t> miss{5};
+    const std::vector<size_t> single_counts(10, 1);
+    policy->prepare_program(10); policy->prepare_program(11);
+    policy->select({miss, single_counts, resident, 0, 4096, 10}, decision);
+    require(decision.cpu.empty(), "first miss should remain on GPU");
+    policy->select({miss, single_counts, resident, 0, 4096, 11}, decision);
+    require(decision.cpu.empty(), "independent program inherited fractional carry");
+    policy->select({miss, single_counts, resident, 0, 4096, 10}, decision);
+    require(decision.cpu == miss, "returning program did not retain its own carry");
+    policy->event({moe::PolicyEvent::ProgramRetired, 11});
+    policy->prepare_program(11);
+    policy->select({miss, single_counts, resident, 0, 4096, 11}, decision);
+    require(decision.cpu.empty(), "retired program retained fractional carry after reprepare");
+    policy->event({moe::PolicyEvent::CacheInvalidated, 0, 1});
+    policy->select({miss, single_counts, resident, 1, 4096, 11}, decision);
+    require(decision.cpu.empty(), "cache invalidation retained carry");
+    policy->select({miss, single_counts, resident, 2, 4096, 11}, decision);
+    require(decision.cpu.empty(), "new cache epoch retained carry without a notification");
+    policy->event({moe::PolicyEvent::ProgramRetired, 11});
+    bool rejected = false;
+    try { policy->select({miss, single_counts, resident, 2, 4096, 11}, decision); }
+    catch (const std::out_of_range &) { rejected = true; }
+    require(rejected, "retired program silently recreated execution state");
+}
+
 void option_contracts() {
     using engine::runtime::resolve_moe_options;
     for (const auto & family : {"fish_drama3", "ming3_audio", "nemotron_transcribe", "zonos2", "zonos3"}) {
@@ -113,7 +162,7 @@ int main(int argc, char ** argv) {
     try {
         engine::debug::configure_logging({true, std::nullopt});
         const bool existing_only = argc > 1 && std::string(argv[1]) == "--existing-policies-only";
-        selection_contracts(existing_only); option_contracts();
+        cpu_share_ranking_and_lifecycle(); selection_contracts(existing_only); option_contracts();
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
         std::cout << "moe_policy: PASS\n"; return 0;
     } catch (const std::exception & error) { std::cerr << error.what() << '\n'; return 1; }

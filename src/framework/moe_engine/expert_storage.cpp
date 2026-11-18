@@ -13,6 +13,7 @@
 #include <map>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #if defined(__APPLE__) && !defined(_OPENMP)
@@ -127,9 +128,11 @@ public:
         auto & misses = group.misses; misses.clear();
         auto & planned_ids = group.planned_ids;
         std::copy(group.expert_ids.begin(), group.expert_ids.end(), planned_ids.begin());
-        for (size_t logical = 0; logical < required.size(); ++logical) {
-            if (!required[logical]) continue;
-            const auto id = static_cast<int32_t>(logical);
+        // Preserve the established cache-slot assignment order. Slot indices
+        // participate in indexed expert execution, so changing their assignment
+        // can change floating-point results even with identical logical routes.
+        const std::unordered_set<int32_t> requested(ids.begin(), ids.end());
+        for (const auto id : requested) {
             const auto found = std::find(planned_ids.begin(), planned_ids.end(), id);
             size_t slot;
             if (found != planned_ids.end()) {

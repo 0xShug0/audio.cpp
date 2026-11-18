@@ -328,7 +328,7 @@ expert-cache misses on CPU. It is a common model session option, equivalent to
 `"moe_cpu_share": 0.5` inside the selected model's `session_options` object.
 It is not a top-level server setting or a backend option.
 
-Enable `moe_disk_experts=true` first. The session-owned MoE engine handles routing, expert staging and CPU/GPU execution; models retain their architecture-specific shared branches and state. Resident expert banks keep direct graph execution. The cache fills first, hits execute on GPU before new uploads, and the fractional carry is retained per logical layer until cache invalidation.
+Enable `moe_disk_experts=true` first. The session-owned MoE engine handles routing, expert staging and CPU/GPU execution; models retain their architecture-specific shared branches and state. Resident expert banks keep direct graph execution. The cache fills first, hits execute on GPU before new uploads, and CPU-share selection ranks experts by assignment count. Fractional carry is tracked separately for each layer's prepared execution program and resets on cache invalidation.
 Native host weights are borrowed without expanding the complete bank to F32;
 CPU threads follow `--threads` or the server's `threads` setting.
 

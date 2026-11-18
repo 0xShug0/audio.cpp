@@ -17,6 +17,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <tuple>
+#include <unordered_set>
 
 namespace {
 namespace core = engine::core;
@@ -217,6 +218,24 @@ void compare(core::ExecutionContext & execution, const assets::TensorSource & so
     }
     queued_ids.reset(); reference.release(); owner.reset(); engine.release_execution();
     require(engine.statistics().buffer_bytes == baseline_bytes, "execution release discarded expert weight registration");
+}
+
+// Cache-slot assignment is part of the legacy native indexed-matmul path.
+// Use the standard container's iteration contract as the independent oracle;
+// hardcoding its order would make the fixture standard-library dependent.
+void cache_assignment_order(core::ExecutionContext & execution, const assets::TensorSource & source) {
+    detail::ExpertStorage storage(source.source_path(), false, 1, execution.backend(), moe::prepare_policy({}).eviction);
+    const auto group = storage.add_group(names, execution.backend(), 4);
+    for (const std::vector<int32_t> & ids : {std::vector<int32_t>{2, 0, 2, 1}, {9, 1, 4, 7}, {11, 3}}) {
+        storage.invalidate_cache();
+        const std::unordered_set<int32_t> unique(ids.begin(), ids.end());
+        const std::vector<int32_t> slot_contents(unique.begin(), unique.end());
+        std::vector<int32_t> expected;
+        for (auto id : ids)
+            expected.push_back(static_cast<int32_t>(std::find(slot_contents.begin(), slot_contents.end(), id) - slot_contents.begin()));
+        require(storage.stage(group, ids) == expected, "default staging changed legacy cache-slot assignment order");
+        require(storage.stage(group, ids) == expected, "cache hits changed legacy cache-slot assignment order");
+    }
 }
 
 // Each token routes to the same two experts, so these are actual per-expert
@@ -642,6 +661,7 @@ int main(int argc, char ** argv) {
                 check_group_registration_failures(path, execution, names, pinned);
                 check_host_bank_failures(path, execution, names, reference, pinned);
             }
+            cache_assignment_order(execution, *source);
             if (type == assets::TensorStorageType::F32) policy_observations(execution, *source);
             for (bool staged : {false, true}) for (bool cpu_layer : {false, true}) {
                 moe::EngineConfig mode;
