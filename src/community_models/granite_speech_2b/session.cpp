@@ -144,6 +144,21 @@ GraniteSpeech2BRequestOptions granite_speech_2b_resolve_request_options(
         raw_language = request.text_input->language;
     }
     resolved.language = granite_speech_2b_normalize_language_code(raw_language);
+    // Translation target: options-only key (never from text_input — the
+    // transcript text/languages there describe the SOURCE side). Blank or
+    // absent means ASR.
+    std::string raw_target;
+    const auto target_hint = request.options.find("target_language");
+    if (target_hint != request.options.end()) {
+        raw_target = target_hint->second;
+    }
+    resolved.target_language = granite_speech_2b_normalize_target_language_code(raw_target);
+    // Keyword biasing terms: the whole text_input.text channel,
+    // comma-separated (CLI --text, JSON text, multipart prompt|text).
+    if (request.text_input.has_value()) {
+        resolved.keywords =
+            granite_speech_2b_parse_keyword_terms(request.text_input->text);
+    }
 
     if (const auto max_tokens = runtime::parse_int_option(request.options, {"max_tokens"})) {
         if (*max_tokens < kGraniteSpeech2BMinMaxTokens || *max_tokens > kGraniteSpeech2BMaxMaxTokens) {
@@ -366,7 +381,12 @@ std::string GraniteSpeech2BSession::transcribe_span(
         projector_.project(encoder_output.last, encoder_output.steps).projected;
 
     const GraniteSpeech2BPromptIds prompt_ids =
-        prompt_builder_.build_prompt_ids(options.language, features.lengths.audio_placeholders, reserved_markers_);
+        (options.target_language.empty() && options.keywords.empty())
+            ? prompt_builder_.build_prompt_ids(
+                  options.language, features.lengths.audio_placeholders, reserved_markers_)
+            : prompt_builder_.build_prompt_ids_with_context(
+                  options.language, options.target_language, options.keywords,
+                  features.lengths.audio_placeholders, reserved_markers_);
     const GraniteSpeech2BPromptBudget budget = granite_speech_2b_prompt_budget(prompt_ids);
     granite_speech_2b_require_prompt_fits(budget);
     granite_speech_2b_require_generation_budget(
@@ -411,7 +431,12 @@ runtime::TaskResult GraniteSpeech2BSession::run(const runtime::TaskRequest & req
         throw std::runtime_error("Granite Speech 2B interleaved samples do not match the channel count");
     }
     runtime::TaskResult empty;
-    empty.text_output = runtime::Transcript{"", options.language};
+    // Translation labels the TARGET language; ASR labels the source hint
+    // ("" when auto). Keywords alone never change the label.
+    const std::string output_language = options.target_language.empty()
+        ? options.language
+        : options.target_language;
+    empty.text_output = runtime::Transcript{"", output_language};
     if (input.samples.empty()) {
         return empty;
     }
@@ -485,6 +510,10 @@ runtime::TaskResult GraniteSpeech2BSession::run(const runtime::TaskRequest & req
         return empty;
     }
 
+    for (const auto & term : options.keywords) {
+        granite_speech_2b_require_no_reserved_markers(term, reserved_markers_);
+    }
+
     std::string merged;
     for (const auto & span : spans) {
         const runtime::AudioBuffer clip = engine::audio::slice_audio_buffer(canonical, span);
@@ -492,7 +521,7 @@ runtime::TaskResult GraniteSpeech2BSession::run(const runtime::TaskRequest & req
     }
     runtime::TaskResult result;
     result.text_output =
-        runtime::Transcript{engine::io::trim_ascii_whitespace(std::move(merged)), options.language};
+        runtime::Transcript{engine::io::trim_ascii_whitespace(std::move(merged)), output_language};
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
@@ -623,6 +652,18 @@ public:
              "512",
              "1",
              "16383"},
+            {"target_language",
+             "code",
+             "Translation target: en, fr, de, es, pt, ja, it, or zh (case-insensitive ASCII; "
+             "Italian and Mandarin render as Italian and Mandarin in the prompt). "
+             "Blank (or omitted) means ASR transcription; setting a target selects speech "
+             "translation into that language. Source speech is described by language; "
+             "keyword biasing terms travel in text_input.text (CLI --text, JSON text, "
+             "multipart prompt|text) and combine with either mode.",
+             false,
+             std::nullopt,
+             std::nullopt,
+             std::nullopt},
             {"audio_chunk_mode",
              "auto|fixed|vad|none",
              "Offline audio chunking mode: auto (short inputs whole, long inputs VAD when a VAD model is "

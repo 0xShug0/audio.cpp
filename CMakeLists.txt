@@ -4389,6 +4389,24 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
                 PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
             add_test(NAME granite_speech_2b_d_units_test COMMAND granite_speech_2b_d_units_test)
         endif()
+        # granite_speech_2b F: keyword biasing + translation units. Same
+        # explicit pattern, guarded by family-in-linked-models.
+        if (granite_speech_2b IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(granite_speech_2b_f_units_test
+                tests/granite_speech_2b/test_granite_speech_2b_f_units.cpp
+                src/community_models/granite_speech_2b/assets.cpp
+                src/community_models/granite_speech_2b/frontend.cpp
+                src/community_models/granite_speech_2b/encoder.cpp
+                src/community_models/granite_speech_2b/projector.cpp
+                src/community_models/granite_speech_2b/prompt.cpp
+                src/community_models/granite_speech_2b/decoder.cpp
+                src/community_models/granite_speech_2b/session.cpp)
+            target_link_libraries(granite_speech_2b_f_units_test PRIVATE engine_runtime ggml)
+            target_include_directories(granite_speech_2b_f_units_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            target_compile_definitions(granite_speech_2b_f_units_test
+                PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+            add_test(NAME granite_speech_2b_f_units_test COMMAND granite_speech_2b_f_units_test)
+        endif()
     endif()
 
     if (sense_asr IN_LIST AUDIOCPP_LINKED_MODELS)

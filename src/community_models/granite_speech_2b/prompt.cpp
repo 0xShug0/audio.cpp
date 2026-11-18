@@ -94,6 +94,150 @@ std::string granite_speech_2b_build_user_content(std::string_view normalized_cod
     return content;
 }
 
+namespace {
+
+std::string trim_ascii_copy(std::string_view text) {
+    size_t begin = 0;
+    while (begin < text.size() &&
+           (text[begin] == ' ' || text[begin] == '\t' || text[begin] == '\n' ||
+            text[begin] == '\r')) {
+        ++begin;
+    }
+    size_t end = text.size();
+    while (end > begin &&
+           (text[end - 1] == ' ' || text[end - 1] == '\t' || text[end - 1] == '\n' ||
+            text[end - 1] == '\r')) {
+        --end;
+    }
+    return std::string(text.substr(begin, end - begin));
+}
+
+}  // namespace
+
+std::string granite_speech_2b_normalize_target_language_code(std::string_view language) {
+    const std::string code = trim_ascii_copy(language);
+    std::string lowered;
+    lowered.reserve(code.size());
+    for (const char ch : code) {
+        const unsigned char uch = static_cast<unsigned char>(ch);
+        if (uch > 127) {
+            throw std::runtime_error("granite_speech_2b target language must be ASCII");
+        }
+        lowered.push_back(static_cast<char>(std::tolower(uch)));
+    }
+    if (lowered.empty()) {
+        return lowered;  // blank: ASR, no translation target
+    }
+    (void) granite_speech_2b_target_language_name(lowered);  // rejects unsupported codes
+    return lowered;
+}
+
+std::string_view granite_speech_2b_target_language_name(std::string_view normalized_code) {
+    if (normalized_code == "en") {
+        return "English";
+    }
+    if (normalized_code == "fr") {
+        return "French";
+    }
+    if (normalized_code == "de") {
+        return "German";
+    }
+    if (normalized_code == "es") {
+        return "Spanish";
+    }
+    if (normalized_code == "pt") {
+        return "Portuguese";
+    }
+    if (normalized_code == "ja") {
+        return "Japanese";
+    }
+    if (normalized_code == "it") {
+        return "Italian";
+    }
+    if (normalized_code == "zh") {
+        return "Mandarin";
+    }
+    throw std::runtime_error(
+        "granite_speech_2b unsupported target language: '" + std::string(normalized_code) + "'");
+}
+
+std::vector<std::string> granite_speech_2b_parse_keyword_terms(
+    std::string_view keywords_text) {
+    std::vector<std::string> terms;
+    size_t start = 0;
+    while (start <= keywords_text.size()) {
+        size_t comma = keywords_text.find(',', start);
+        if (comma == std::string_view::npos) {
+            comma = keywords_text.size();
+        }
+        std::string term = trim_ascii_copy(keywords_text.substr(start, comma - start));
+        if (!term.empty()) {
+            terms.push_back(std::move(term));
+        }
+        start = comma + 1;
+    }
+    return terms;
+}
+
+std::string granite_speech_2b_join_keyword_terms(
+    const std::vector<std::string> & terms) {
+    std::string joined;
+    for (size_t i = 0; i < terms.size(); ++i) {
+        if (i > 0) {
+            joined += ", ";
+        }
+        joined += terms[i];
+    }
+    return joined;
+}
+
+std::string granite_speech_2b_build_keyword_user_content(
+    std::string_view normalized_source_code,
+    const std::vector<std::string> & keyword_terms) {
+    if (keyword_terms.empty()) {
+        throw std::runtime_error("granite_speech_2b keyword list is empty");
+    }
+    // Reuse the C1 hint validation (rejects unsupported source codes).
+    std::string content;
+    if (!normalized_source_code.empty()) {
+        const std::string_view name = granite_speech_2b_language_name(normalized_source_code);
+        content += kGraniteSpeech2BHintPrefix;
+        content += name;
+        content += kGraniteSpeech2BHintSuffix;
+    }
+    content += kGraniteSpeech2BAudioMarker;
+    content += kGraniteSpeech2BKeywordInstruction;
+    content += granite_speech_2b_join_keyword_terms(keyword_terms);
+    return content;
+}
+
+std::string granite_speech_2b_build_translation_user_content(
+    std::string_view normalized_source_code,
+    std::string_view normalized_target_code,
+    const std::vector<std::string> & keyword_terms) {
+    const std::string_view target_name =
+        granite_speech_2b_target_language_name(normalized_target_code);
+    std::string content;
+    if (!normalized_source_code.empty()) {
+        // Bare source prefix: the C1 do-not-translate clause would contradict
+        // the translation instruction, so only the language name is stated.
+        const std::string_view source_name =
+            granite_speech_2b_language_name(normalized_source_code);
+        content += kGraniteSpeech2BHintPrefix;
+        content += source_name;
+        content += kGraniteSpeech2BTranslationHintSuffix;
+    }
+    content += kGraniteSpeech2BAudioMarker;
+    content += kGraniteSpeech2BTranslationInstructionPrefix;
+    content += target_name;
+    content += kGraniteSpeech2BTranslationInstructionSuffix;
+    if (!keyword_terms.empty()) {
+        content += kGraniteSpeech2BTranslationKeywordsPrefix;
+        content += granite_speech_2b_join_keyword_terms(keyword_terms);
+    }
+    return content;
+}
+
 std::vector<std::string> granite_speech_2b_reserved_markers_from_tokenizer_json(
     const std::filesystem::path & tokenizer_json_path) {
     const auto tokenizer_json = json::parse_file(tokenizer_json_path);
@@ -432,6 +576,31 @@ GraniteSpeech2BPromptIds GraniteSpeech2BPromptBuilder::build_prompt_ids(
     GraniteSpeech2BPromptIds single = granite_speech_2b_encode_single_marker_prompt(
         *tokenizer_, granite_speech_2b_build_user_content(normalized_language_code),
         audio_token_id_, reserved_markers);
+    GraniteSpeech2BPromptIds expanded =
+        granite_speech_2b_expand_audio_markers(single.input_ids, audio_token_id_, audio_tokens);
+    expanded.prompt_text = single.prompt_text;
+    return expanded;
+}
+
+GraniteSpeech2BPromptIds GraniteSpeech2BPromptBuilder::build_prompt_ids_with_context(
+    std::string_view normalized_source_code,
+    std::string_view normalized_target_code,
+    const std::vector<std::string> & keyword_terms,
+    int64_t audio_tokens,
+    const std::vector<std::string> & reserved_markers) const {
+    if (normalized_target_code.empty() && keyword_terms.empty()) {
+        return build_prompt_ids(normalized_source_code, audio_tokens, reserved_markers);
+    }
+    std::string user_content;
+    if (normalized_target_code.empty()) {
+        user_content = granite_speech_2b_build_keyword_user_content(
+            normalized_source_code, keyword_terms);
+    } else {
+        user_content = granite_speech_2b_build_translation_user_content(
+            normalized_source_code, normalized_target_code, keyword_terms);
+    }
+    GraniteSpeech2BPromptIds single = granite_speech_2b_encode_single_marker_prompt(
+        *tokenizer_, user_content, audio_token_id_, reserved_markers);
     GraniteSpeech2BPromptIds expanded =
         granite_speech_2b_expand_audio_markers(single.input_ids, audio_token_id_, audio_tokens);
     expanded.prompt_text = single.prompt_text;

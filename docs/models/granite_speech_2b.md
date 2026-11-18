@@ -117,9 +117,118 @@ checkpoint or session setting, or leaves the optional value unset as described.
 | Option | Type / values | Default | Description |
 |---|---|---|---|
 | `language` | `string` | auto (blank) | Source language hint: en, fr, de, es, pt, or ja (case-insensitive ASCII). The explicit request option wins over text_input.language. Blank (or omitted) means automatic recognition: no hint text and no language label. |
+| `target_language` | `string` | auto (blank = ASR) | Translation target: en, fr, de, es, pt, ja, it, or zh (case-insensitive ASCII; Italian renders `Italian`, Mandarin renders `Mandarin` in the prompt). Blank (or omitted) means ASR transcription; setting a target selects speech translation into that language and the output is labeled with the normalized target. The source side is described by `language` (blank = auto). Unsupported codes reject loudly. |
 | `max_tokens` | `int` | `512` | Maximum generated tokens per audio chunk. The processor-derived context bound prompt_len + max_tokens <= 16384 (from actual token IDs and resampled audio) is enforced per chunk; hitting the budget returns the generated prefix. Declared range: 1..16383. |
 | `audio_chunk_mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline chunk mode: auto (short inputs whole, long inputs VAD when a VAD model is configured, else fixed), fixed, vad (requires granite_speech_2b.vad_model_path), or none. |
 | `audio_chunk_duration_sec` | `float` | `120` | Positive maximum audio chunk duration in seconds, in (0, 120]. Ignored in none mode. |
+
+## Keyword Biasing & Speech Translation (Task F)
+
+Both prompting features use the model card's preferred-prompt table verbatim;
+the C++ prompts are verified token-for-token against the pinned processor
+before any quality comparison (see `tests/granite_speech_2b/test_granite_speech_2b_f_units.cpp`
+prompt-ID parity, 20 fixtures).
+
+### Keyword biasing
+
+Biasing terms travel in the transcript-text channel on every transport:
+
+```bash
+# CLI: terms are the --text value, comma-separated
+audiocpp_cli --task asr --family granite_speech_2b --model path/to/checkpoint \
+  --audio sample.wav --request-option language=en \
+  --text "Concord, tents, Tlalnepantla"
+
+# JSON: the same terms in the "text" field
+{"model": "...", "audio": "sample.wav", "language": "en",
+ "text": "Concord, tents, Tlalnepantla"}
+# Multipart: the "prompt" (or "text") part carries the terms
+```
+
+Rules: split on `,`, trim ASCII whitespace per term, drop empties,
+preserve UTF-8 and multiword terms verbatim (no case folding, no dedup).
+Whitespace-only text means no biasing (plain ASR path). The same term list
+is applied to every audio chunk. Caller terms are checked against the 85
+reserved control markers up front (a smuggled marker rejects loudly); the
+per-chunk encode re-checks. IBM cites up to 2000 keywords: a 2000-term list
+on a short clip expands to prompt_len 7067 (text 7031), comfortably inside
+the runtime budget (7067 + 512 << 16384); a 20000-term list overflows and is
+rejected naming the 16384 limit.
+
+Measured (paired C++-native-CLI vs pinned-Python runs on identical audio;
+short-form keyword prompts byte-identical everywhere):
+
+- Rare-name recall (espeak-synthesized `f_kw_rare.wav`, ref exact by
+  construction): baseline mangles all three names; with keywords the model
+  recovers `quetzal` and `tlalnepantla` (case-insensitive) in every variant,
+  and the full `Xochitl Quetzal` in the hinted run. `Zbigniew Brzezinski`
+  never recovers (espeak renders it poorly — paired with/without delta on
+  identical audio, not absolute quality).
+- No-insertion probes (Librispeech 0000): absent terms
+  (`xylophone, quantum`; accented `café, têntes, 日本語`) produce zero
+  insertions — WER 0.00% vs the plain-ASR reference in all four rows, and
+  the whitespace-only run is byte-identical to the golden transcript.
+- Present terms (`Concord, tents`; multiwords; repeats) keep the transcript
+  at WER 0.00% (recall 1.0 on in-vocabulary names).
+- Aggregate over the 8 keyword manifest rows: precision 100.0%, recall
+  75.0%, F1 85.7% (tp=9, fp=0, fn=3; fn are the unrecovered `Brzezinski`
+  in two runs plus hintless `Xochitl`). Scored by
+  `tests/granite_speech_2b/eval_metrics.py` keyword stats with transcript
+  WER alongside.
+- Parity note: on matched 16 kHz inputs the hinted rare run is byte-identical
+  C++ vs Python; the hintless/baseline variants differ in filler words only
+  while recovering the same keywords — chaotic greedy decode on robotic
+  audio with flat posteriors, not a code defect (the committed 22050 Hz
+  clip through the app resampler vs sox-16k wobbles the same way;
+  clean-audio clips never do).
+
+### Speech translation
+
+```bash
+audiocpp_cli --task asr --family granite_speech_2b --model path/to/checkpoint \
+  --audio sample.wav --request-option language=en --request-option target_language=fr
+```
+
+`target_language` travels in request options (CLI `--request-option`,
+JSON `options`); the single-file multipart transcription shape has no
+options channel, so multipart carries keywords only — translation over HTTP
+is JSON-only by design (the batch multipart `options` object is accepted by
+the parser but this family has no native batching, so it cannot run there
+either). `target_language` absent/blank = plain ASR (unchanged behavior);
+unsupported targets reject loudly. With keywords set, translation combines
+with biasing (`translate ... Keywords: ...`); source hint adds a bare
+`The speech is in .... ` prefix (the ASR do-not-translate clause is never
+used for translation). The output language label is the normalized target.
+
+Tested directions (short + long-form fixtures, implementer-authored refs;
+C++ output vs pinned Python output per direction, chrF/BLEU vs refs reported
+for both — corpus over the 12 manifest rows: chrF 66.04, BLEU 47.73):
+
+| Direction | Short (chrF / BLEU) | Long (chrF / BLEU) | Notes |
+|---|---|---|---|
+| en→fr | 82.41 / 58.77 | 71.08 / 59.58 (63.9 s) | C++ == Python both |
+| en→de | 55.49 / 31.24 | 71.63 / 59.60 | C++ == Python both |
+| en→es | 79.87 / 80.71 | 64.75 / 45.13 | Long: one late word-order flip vs Python (chrF 64.75 vs 65.01, BLEU identical) — greedy cascade, see parity note |
+| en→pt | 59.10 / 20.90 | 60.23 / 33.64 | Long: mid-text paraphrase flip vs Python (BLEU 33.64 vs 37.52) — greedy cascade, see parity note |
+| en→it | 54.85 / 20.56 | 60.57 / 34.74 | Prompt-table target; eval-claims row covers en→it. C++ == Python both |
+| ja→en | 83.80 / 61.05 | 65.48 / 49.95 (12.6 s synth) | Source hint ja exercised. C++ == Python both |
+| en→ja, en→zh, fr/de/es/pt→en | smoke only | — | Implemented + prompt-parity covered; no qualified ref author (ja/zh) or no in-tree audio (fr/de/es/pt sources) — NOT advertised |
+
+Parity note: 10 of 12 manifest directions are byte-identical C++ vs Python
+(all shorts, fr/de/it longs, both ja→en). The en→es / en→pt longs diverge
+late in the 235–242-token decode (same prefix, one paraphrase flip each) —
+the fr/de/it longs match over the same length, so this is per-prompt greedy
+cascade from sub-logit implementation noise (E2-gated math), not a defect;
+scores are reported for both implementations. Combined keywords+translation
+(`Concord, tents` + en→fr) is byte-identical with chrF 74.71 / BLEU 53.48.
+The en→zh smoke run diverges at the first token (C++ `协议返回…` vs Python
+`康科德回到…`) and is excluded from every claim — zh stays unadvertised.
+
+Unmeasured directions stay unadvertised. The fr/de/es/pt→en directions have no
+in-tree source audio (espeak French was tried: fluent-but-unfaithful output,
+so synthetic speech is not a valid fixture source and is not used).
+Plain ASR with no target set is unchanged (golden en/ja transcripts
+identical).
 
 ## Session Options (use with `--session-option`)
 

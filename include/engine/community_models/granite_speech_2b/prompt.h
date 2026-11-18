@@ -67,6 +67,62 @@ std::string granite_speech_2b_normalize_language_code(std::string_view language)
 std::string_view granite_speech_2b_language_name(std::string_view normalized_code);
 std::string granite_speech_2b_build_user_content(std::string_view normalized_code);
 
+// Task F: keyword biasing + speech translation (model-card preferred-prompt
+// table, verified by prompt-ID parity against the pinned processor).
+//
+// IBM instruction text (verbatim from the model card):
+// - keyword ASR: "transcribe the speech to text. Keywords: <kw1>, <kw2>, ..."
+// - translation: "translate the speech to <language> with proper punctuation
+//   and capitalization." (the card's punctuated AST row; the raw row without
+//   the punctuation clause is not implemented — see the F report for the
+//   measured comparison that selected this variant).
+// - translation + keywords: the translation instruction + " Keywords: ..."
+//   (the card's keyword-biasing AST row, same punctuation-clause choice).
+//
+// Composition follows the C1 pattern: an optional source-language hint, then
+// the model-owned <|audio|> marker, then the task instruction. The C1 hint
+// prefix ("The speech is in ... Transcribe it exactly; do not translate. ")
+// is reused for keyword ASR; translation uses a bare source prefix ("The
+// speech is in .... ") because the do-not-translate clause would contradict
+// the translation instruction. Target names are the card's English names
+// (English, French, German, Spanish, Portuguese, Japanese, Italian,
+// Mandarin); "Portuguese" covers the pt target the prompt table omits but the
+// eval-claims row ("to and from English for the same languages") includes.
+inline constexpr const char * kGraniteSpeech2BKeywordInstruction =
+    "transcribe the speech to text. Keywords: ";
+inline constexpr const char * kGraniteSpeech2BTranslationInstructionPrefix =
+    "translate the speech to ";
+inline constexpr const char * kGraniteSpeech2BTranslationInstructionSuffix =
+    " with proper punctuation and capitalization.";
+inline constexpr const char * kGraniteSpeech2BTranslationKeywordsPrefix = " Keywords: ";
+inline constexpr const char * kGraniteSpeech2BTranslationHintSuffix = ". ";
+
+// Supported translation target codes. Normalized form is lowercase ASCII;
+// "" is not a target (absent target_language means ASR, never translation).
+std::string granite_speech_2b_normalize_target_language_code(std::string_view language);
+std::string_view granite_speech_2b_target_language_name(std::string_view normalized_code);
+
+// Keyword parsing: split text_input.text on ',', trim ASCII whitespace per
+// term, drop empties, preserve UTF-8 and multiword terms verbatim (no case
+// folding, no dedup — the joined list round-trips the caller's text).
+// Whitespace-only input yields no terms (plain path). Reserved control
+// markers are NOT stripped here: the per-chunk encode rejects them loudly.
+std::vector<std::string> granite_speech_2b_parse_keyword_terms(
+    std::string_view keywords_text);
+std::string granite_speech_2b_join_keyword_terms(
+    const std::vector<std::string> & terms);
+
+// User-content composers. keyword_terms must be non-empty (the session routes
+// empty lists to the plain ASR path); both throw on empty terms. Reserved
+// markers inside terms are rejected by the encode step, not here.
+std::string granite_speech_2b_build_keyword_user_content(
+    std::string_view normalized_source_code,
+    const std::vector<std::string> & keyword_terms);
+std::string granite_speech_2b_build_translation_user_content(
+    std::string_view normalized_source_code,
+    std::string_view normalized_target_code,
+    const std::vector<std::string> & keyword_terms);
+
 // Reserved-marker rejection primitive (Task F reuses this for text
 // controls): throws std::runtime_error naming the offending marker when any
 // entry of reserved_markers occurs in text. The default list is every
@@ -158,6 +214,15 @@ public:
 
     GraniteSpeech2BPromptIds build_prompt_ids(
         std::string_view normalized_language_code,
+        int64_t audio_tokens,
+        const std::vector<std::string> & reserved_markers = {}) const;
+    // Task F entry: source hint ("", auto) + target ("" = ASR, else a
+    // normalized target code) + keyword terms. Empty target + empty terms
+    // reproduces build_prompt_ids exactly (the plain-ASR path is unchanged).
+    GraniteSpeech2BPromptIds build_prompt_ids_with_context(
+        std::string_view normalized_source_code,
+        std::string_view normalized_target_code,
+        const std::vector<std::string> & keyword_terms,
         int64_t audio_tokens,
         const std::vector<std::string> & reserved_markers = {}) const;
     runtime::GreedyCausalDecoderRuntime::Prompt build_decoder_prompt(

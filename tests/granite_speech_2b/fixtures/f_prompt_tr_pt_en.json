@@ -1,0 +1,31 @@
+{
+ "name": "f_prompt_tr_pt_en",
+ "user_content": "<|audio|>translate the speech to English with proper punctuation and capitalization.",
+ "prompt": "USER: <|audio|>translate the speech to English with proper punctuation and capitalization.\n ASSISTANT:",
+ "one_marker_ids": [
+  6584,
+  25,
+  220,
+  100352,
+  14372,
+  279,
+  8982,
+  311,
+  6498,
+  449,
+  6300,
+  62603,
+  323,
+  6864,
+  2065,
+  627,
+  36660,
+  3931,
+  2891,
+  25
+ ],
+ "audio_run": 1,
+ "source": "",
+ "target": "en",
+ "terms": []
+}

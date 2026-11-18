@@ -5,11 +5,14 @@
 // decoder into a runnable offline ASR family.
 //
 // Option contract (spec v1, model_specs/granite_speech_2b.json):
-//   request: language (optional hint en/fr/de/es/pt/ja, blank = auto),
-//     max_tokens (default 512, 1..16383, enforced per chunk against the
-//     16384 processor context bound), audio_chunk_mode (auto/fixed/vad/none),
-//     audio_chunk_duration_sec (positive finite <= 120, default 120, ignored
-//     in none).
+//   request: language (optional source hint en/fr/de/es/pt/ja, blank = auto),
+//     target_language (optional translation target en/fr/de/es/pt/ja/it/zh;
+//     blank/absent = ASR; unsupported rejects), keywords via text_input.text
+//     (optional comma-separated biasing terms; same list applied to every
+//     chunk; blank = none), max_tokens (default 512, 1..16383, enforced per
+//     chunk against the 16384 processor context bound), audio_chunk_mode
+//     (auto/fixed/vad/none), audio_chunk_duration_sec (positive finite <= 120,
+//     default 120, ignored in none).
 //   session: granite_speech_2b.{encoder,projector,prefill,decode}_graph_arena_mb
 //     (positive MiB, default 1024), granite_speech_2b.vad_model_path (optional
 //     existing VAD weights file; auto falls back to fixed without one,
@@ -59,9 +62,22 @@ inline constexpr int64_t kGraniteSpeech2BMaxMaxTokens = 16383;
 inline constexpr float kGraniteSpeech2BDefaultChunkSeconds = 120.0F;
 inline constexpr float kGraniteSpeech2BMaxChunkSeconds = 120.0F;
 
-// Resolved per-request options: language is the normalized hint ("" = auto).
+// Resolved per-request options: language is the source hint ("" = auto);
+// target_language is the translation target ("" = ASR; a normalized target
+// code selects translation). keywords are the parsed text_input.text terms
+// (comma-separated; empty = no biasing). Keywords travel ONLY in
+// text_input.text on every transport (CLI --text, JSON text, multipart
+// prompt|text): no separate keywords option or option_arrays channel exists,
+// so there is no precedence to resolve — a single comma-separated channel
+// keeps one parsing/validation path and matches the OpenAI-compat prompt
+// convention on multipart. target_language travels ONLY in request
+// options["target_language"] (CLI --request-option, JSON options): the
+// single-file multipart shape has no options channel, so multipart carries
+// keywords only; translation over multipart is JSON/CLI-only by design.
 struct GraniteSpeech2BRequestOptions {
     std::string language;
+    std::string target_language;
+    std::vector<std::string> keywords;
     int64_t max_tokens = kGraniteSpeech2BDefaultMaxTokens;
     audio::AudioChunkMode chunk_mode = audio::AudioChunkMode::Auto;
     float chunk_duration_sec = kGraniteSpeech2BDefaultChunkSeconds;
@@ -69,8 +85,12 @@ struct GraniteSpeech2BRequestOptions {
 
 // Validates the request options: language (explicit request option wins over
 // text_input.language; trim + lowercase ASCII; blank = auto; unsupported
-// rejects), max_tokens (1..16383), chunk mode (auto/fixed/vad/none only),
-// chunk duration (positive finite <= 120, ignored in none).
+// rejects), target_language (options-only request key; blank/absent = ASR,
+// else a normalized target code, unsupported rejects; never read from
+// text_input), keywords (parsed from text_input.text: comma-separated,
+// trimmed, empties dropped; whitespace-only = none), max_tokens (1..16383),
+// chunk mode (auto/fixed/vad/none only), chunk duration (positive finite <=
+// 120, ignored in none).
 GraniteSpeech2BRequestOptions granite_speech_2b_resolve_request_options(
     const runtime::TaskRequest & request);
 

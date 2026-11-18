@@ -39,6 +39,12 @@
         "required": false
       },
       {
+        "name": "target_language",
+        "type": "string",
+        "description": "Translation target: en, fr, de, es, pt, ja, it, or zh (case-insensitive ASCII; Italian and Mandarin render as Italian and Mandarin in the prompt). Blank (or omitted) means ASR transcription; setting a target selects speech translation. Source speech is described by language; keyword biasing terms travel in text_input.text (CLI --text, JSON text, multipart prompt|text) and combine with either mode.",
+        "required": false
+      },
+      {
         "name": "max_tokens",
         "type": "int",
         "description": "Maximum generated tokens per audio chunk. The processor-derived context bound prompt_len + max_tokens <= 16384 (from actual token IDs and resampled audio) is enforced per chunk; hitting the budget returns the generated prefix.",
