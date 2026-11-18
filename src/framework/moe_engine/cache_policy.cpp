@@ -8,18 +8,19 @@ namespace engine::moe {
 namespace {
 class Lru final : public EvictionPolicy {
 public:
-    size_t select(const std::vector<EvictionCandidate> & candidates) const override {
+    size_t select(const EvictionInput & input) const override {
+        const auto & candidates = input.candidates;
         if (candidates.empty()) throw std::logic_error("MoE cache has no eligible victim");
         return std::min_element(candidates.begin(), candidates.end(), [](const auto & a, const auto & b) {
             return a.last_used < b.last_used;
         })->slot;
     }
-    void accessed(int32_t, size_t) override {}
 };
 class Frequency final : public EvictionPolicy {
 public:
     Frequency(size_t experts, uint64_t decay) : counts_(experts), decay_(decay) {}
-    size_t select(const std::vector<EvictionCandidate> & candidates) const override {
+    size_t select(const EvictionInput & input) const override {
+        const auto & candidates = input.candidates;
         if (candidates.empty()) throw std::logic_error("MoE cache has no eligible victim");
         const auto score = [&](const auto & candidate) { return candidate.expert < 0 ? uint64_t{0} : counts_.at(static_cast<size_t>(candidate.expert)); };
         return std::min_element(candidates.begin(), candidates.end(), [&](const auto & a, const auto & b) {
@@ -27,8 +28,8 @@ public:
             return x != y ? x < y : a.last_used < b.last_used;
         })->slot;
     }
-    void accessed(int32_t expert, size_t assignments) override {
-        counts_.at(static_cast<size_t>(expert)) += assignments;
+    void accessed(const CacheAccess & access, const CacheContext &) override {
+        counts_.at(static_cast<size_t>(access.expert)) += access.assignments;
         if (++steps_ == decay_) { for (auto & count : counts_) count /= 2; steps_ = 0; }
     }
 private:

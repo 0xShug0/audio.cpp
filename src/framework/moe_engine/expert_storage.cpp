@@ -140,7 +140,7 @@ public:
                 for (size_t candidate = 0; candidate < planned_ids.size(); ++candidate)
                     if (planned_ids[candidate] < 0 || !required[static_cast<size_t>(planned_ids[candidate])])
                         group.candidates.push_back({candidate, planned_ids[candidate], group.last_used[candidate]});
-                slot = group.eviction->select(group.candidates);
+                slot = group.eviction->select({group.candidates, {index, cache_epoch, group.expert_ids}});
                 if (std::none_of(group.candidates.begin(), group.candidates.end(),
                     [slot](const auto & candidate) { return candidate.slot == slot; }))
                     throw std::logic_error("MoE eviction selected a protected or invalid cache slot");
@@ -421,6 +421,7 @@ void ExpertStorage::invalidate_cache() {
         std::fill(group->last_used.begin(), group->last_used.end(), 0);
     }
     impl_->clock = 0;
+    event({PolicyEvent::CacheInvalidated, 0, impl_->cache_epoch});
 }
 
 ExpertStorage::Statistics ExpertStorage::statistics() const noexcept { return impl_->stats; }
@@ -431,6 +432,14 @@ size_t ExpertStorage::expert_bytes(size_t group) const {
     return bytes;
 }
 void ExpertStorage::accessed(size_t group, int32_t expert, size_t assignments) {
-    impl_->groups.at(group)->eviction->accessed(expert, assignments);
+    auto & entry = *impl_->groups.at(group);
+    entry.eviction->accessed({expert, assignments}, {group, impl_->cache_epoch, entry.expert_ids});
+}
+void ExpertStorage::event(size_t group, const PolicyNotification & notification) {
+    auto & entry = *impl_->groups.at(group);
+    entry.eviction->event(notification, {group, impl_->cache_epoch, entry.expert_ids});
+}
+void ExpertStorage::event(const PolicyNotification & notification) {
+    for (size_t group = 0; group < impl_->groups.size(); ++group) event(group, notification);
 }
 } // namespace engine::moe::detail

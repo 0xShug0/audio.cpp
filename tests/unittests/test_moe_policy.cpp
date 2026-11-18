@@ -43,9 +43,9 @@ void selection_contracts() {
     require(decision.gpu == experts && decision.cpu.empty(), "cache invalidation did not reset CPU-share carry");
 
     auto eviction = prepared.eviction(12);
-    eviction->accessed(2, 10); eviction->accessed(3, 1);
-    require(eviction->select({{0, 2, 1}, {1, 3, 2}}) == 1, "frequency eviction ignored observed assignment demand");
-    require(eviction->select({{0, 2, 1}}) == 0, "frequency eviction selected a protected/non-candidate slot");
+    eviction->accessed({2, 10}, {0, 0, resident}); eviction->accessed({3, 1}, {0, 0, resident});
+    require(eviction->select({{{0, 2, 1}, {1, 3, 2}}, {0, 0, resident}}) == 1, "frequency eviction ignored observed assignment demand");
+    require(eviction->select({{{0, 2, 1}}, {0, 0, resident}}) == 0, "frequency eviction selected a protected/non-candidate slot");
     config.placement = {"placement_cost_aware", {{"cpu_ms_per_row", "0.01"}, {"gpu_ms_per_row", "0.001"}, {"upload_bytes_per_ms", "1000"}}};
     const auto cost = moe::prepare_policy(config);
     require(cost.requirements.cpu_execution && cost.requirements.phase_times && bool(cost.eviction), "independent policy preparation lost combined requirements");

@@ -197,6 +197,8 @@ void MoePreparedGraph::allocate_shared(const std::vector<MoePreparedGraph *> & o
     auto workspace = owners.front()->workspace_;
     for (auto * owner : owners) {
         owner->require_idle();
+        if (owner->requirements_.evaluation)
+            throw std::invalid_argument("graph evaluation callback requires an explicit scheduler");
         if (owner->allocated_ || owner->workspace_ != workspace || owner->requirements_.scheduler ||
             std::any_of(owner->requirements_.backends.begin(), owner->requirements_.backends.end(),
                 [&](auto * backend) { return backend != owner->execution().backend(); }))

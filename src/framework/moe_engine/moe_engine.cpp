@@ -180,11 +180,15 @@ ExpertStatistics MoeEngine::statistics() const noexcept {
 void MoeEngine::begin_generation(bool invalidate_weights) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->idle();
-    if (invalidate_weights && impl_->storage) impl_->storage->invalidate_cache();
-    const auto epoch = impl_->storage ? impl_->storage->cache_epoch() : uint64_t{0};
-    for (auto & layer : impl_->layers) if (layer.placement) {
-        layer.placement->event({PolicyEvent::GenerationBegin, 0, epoch});
-        if (invalidate_weights) layer.placement->event({PolicyEvent::CacheInvalidated, 0, epoch});
+    const auto before = impl_->storage ? impl_->storage->cache_epoch() : uint64_t{0};
+    for (auto & layer : impl_->layers) if (layer.placement)
+        layer.placement->event({PolicyEvent::GenerationBegin, 0, before});
+    if (impl_->storage) impl_->storage->event({PolicyEvent::GenerationBegin, 0, before});
+    if (invalidate_weights && impl_->storage) {
+        impl_->storage->invalidate_cache();
+        const auto epoch = impl_->storage->cache_epoch();
+        for (auto & layer : impl_->layers) if (layer.placement)
+            layer.placement->event({PolicyEvent::CacheInvalidated, 0, epoch});
     }
 }
 
@@ -330,5 +334,6 @@ void MoeEngine::release_execution() {
     const auto epoch = impl_->storage ? impl_->storage->cache_epoch() : uint64_t{0};
     for (auto & layer : impl_->layers) if (layer.placement)
         layer.placement->event({PolicyEvent::ExecutionReleased, 0, epoch});
+    if (impl_->storage) impl_->storage->event({PolicyEvent::ExecutionReleased, 0, epoch});
 }
 } // namespace engine::moe

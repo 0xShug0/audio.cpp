@@ -25,6 +25,7 @@ PreparedPolicy prepare_policy(const PolicyConfig & config) {
     prepared.requirements.cpu_execution |= cache.requirements.cpu_execution;
     prepared.requirements.phase_times |= cache.requirements.phase_times;
     prepared.requirements.cache_accesses |= cache.requirements.cache_accesses;
+    prepared.requirements.completed_work |= cache.requirements.completed_work || prepared.requirements.phase_times;
     prepared.eviction = std::move(cache.eviction);
     return prepared;
 }

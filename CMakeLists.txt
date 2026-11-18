@@ -4651,6 +4651,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(moe_engine_test tests/unittests/test_moe_engine.cpp)
         target_sources(moe_engine_test PRIVATE tests/unittests/test_allocation_failure.cpp)
         add_test(NAME moe_engine_test COMMAND moe_engine_test --log)
+        add_engine_unittest(moe_prepared_graph_test tests/unittests/test_moe_prepared_graph.cpp)
+        target_include_directories(moe_prepared_graph_test PRIVATE external/ggml/src)
+        add_test(NAME moe_prepared_graph_test COMMAND moe_prepared_graph_test --log)
         add_engine_unittest(moe_policy_test tests/unittests/test_moe_policy.cpp)
         add_test(NAME moe_policy_test COMMAND moe_policy_test --log)
 

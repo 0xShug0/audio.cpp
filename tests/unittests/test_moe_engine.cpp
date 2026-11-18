@@ -221,6 +221,133 @@ void check_host_bank_failures(const std::filesystem::path & path, engine::core::
 }
 
 
+struct ObservationState {
+    std::vector<moe::ExecutionObservation> completed;
+    std::vector<moe::PolicyNotification> placement_events, cache_events;
+    size_t accesses = 0, selections = 0;
+    uint64_t epoch = 0;
+    bool context_valid = true, invalidation_empty = true;
+};
+class CountPlacement final : public moe::PlacementPolicy {
+public:
+    explicit CountPlacement(ObservationState & state) : state_(state) {}
+    void select(const moe::PlacementInput & input, moe::PlacementDecision & decision) override {
+        decision.cpu.clear(); decision.gpu.clear();
+        // Preserve fixed hits before misses, without consulting the production policy.
+        for (bool hits : {true, false}) for (auto expert : input.experts)
+            if ((std::find(input.resident.begin(), input.resident.end(), expert) != input.resident.end()) == hits)
+                decision.gpu.push_back(expert);
+    }
+    void observe(const moe::ExecutionObservation & observation) override { state_.completed.push_back(observation); }
+    void event(const moe::PolicyNotification & event) override { state_.placement_events.push_back(event); }
+private:
+    ObservationState & state_;
+};
+class ContextEviction final : public moe::EvictionPolicy {
+public:
+    explicit ContextEviction(ObservationState & state) : state_(state) {}
+    size_t select(const moe::EvictionInput & input) const override {
+        state_.context_valid = state_.context_valid && input.cache.group == 0 && input.cache.epoch == state_.epoch &&
+            input.cache.resident.size() == 4 && !input.candidates.empty();
+        ++state_.selections;
+        return std::min_element(input.candidates.begin(), input.candidates.end(), [](const auto & a, const auto & b) {
+            return a.last_used < b.last_used;
+        })->slot;
+    }
+    void accessed(const moe::CacheAccess & access, const moe::CacheContext & cache) override {
+        state_.context_valid = state_.context_valid && cache.group == 0 && cache.epoch == state_.epoch &&
+            access.expert >= 0 && access.expert < experts;
+        state_.accesses += access.assignments;
+    }
+    void event(const moe::PolicyNotification & notification, const moe::CacheContext & cache) override {
+        state_.cache_events.push_back(notification);
+        state_.context_valid = state_.context_valid && notification.cache_epoch == cache.epoch && cache.group == 0;
+        if (notification.event == moe::PolicyEvent::CacheInvalidated) {
+            state_.epoch = cache.epoch;
+            state_.invalidation_empty = state_.invalidation_empty &&
+                std::all_of(cache.resident.begin(), cache.resident.end(), [](int32_t expert) { return expert == -1; });
+        }
+    }
+private:
+    ObservationState & state_;
+};
+
+// A counts-only policy needs neither CPU placement nor phase clocks. The
+// executor must deliver completed rows even though phase_times is false.
+void policy_observations(core::ExecutionContext & execution, const assets::TensorSource & source) {
+    ObservationState state;
+    state.completed.reserve(4); state.placement_events.reserve(8); state.cache_events.reserve(8);
+    moe::PreparedPolicy policy;
+    policy.requirements.completed_work = true;
+    policy.requirements.cache_accesses = true;
+    policy.eviction = [&](size_t) { return std::make_unique<ContextEviction>(state); };
+    detail::ExpertStorage storage(source.source_path(), false, 1, execution.backend(), policy.eviction);
+    const auto group = storage.add_group(names, execution.backend(), 4);
+    storage.event({moe::PolicyEvent::GenerationBegin, 0, storage.cache_epoch()});
+    {
+        auto workspace = std::make_shared<core::GraphWorkspace>(execution.backend());
+        CountPlacement placement(state);
+        detail::ProgramShape shape;
+        shape.identity = 17; shape.hidden_size = width; shape.input_size = width;
+        shape.tokens = 7; shape.selected = selected; shape.experts = experts; shape.cache_slots = 4;
+        shape.rows_per_expert = {1, 2, 4, 8};
+        detail::ExpertProgram program(execution, shape, workspace, nullptr, policy);
+        const detail::ExpertWeights bank{storage.tensor(group, 0).tensor, storage.tensor(group, 1).tensor, storage.tensor(group, 2).tensor};
+        const auto layer = program.add_layer({}, bank, &storage, group, execution.backend(), &placement);
+        core::PreparedGraph producer(execution, {"test.moe.observations", 1024 * 1024, 256, 32 * ggml_tensor_overhead()});
+        auto * persistent = producer.persistent_build_context().ggml;
+        auto * x = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, width, shape.tokens);
+        auto * ids = ggml_new_tensor_2d(persistent, GGML_TYPE_I32, selected, shape.tokens);
+        auto * mix = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, selected, shape.tokens);
+        for (auto * t : {x, ids, mix}) ggml_set_input(t);
+        producer.allocate_persistent();
+        program.build_inputs(producer.build_context(), producer.graph(), x, {ids, mix});
+        workspace->add(producer); workspace->prepare(); program.prepare();
+        std::vector<float> input(static_cast<size_t>(width * shape.tokens), 0.01F);
+        std::vector<float> weights(static_cast<size_t>(selected * shape.tokens), 0.5F);
+        std::vector<int32_t> routes(weights.size());
+        for (size_t i = 0; i < routes.size(); ++i) routes[i] = static_cast<int32_t>(i % static_cast<size_t>(experts));
+        ggml_backend_tensor_set(x, input.data(), 0, input.size() * sizeof(float));
+        ggml_backend_tensor_set(ids, routes.data(), 0, routes.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(mix, weights.data(), 0, weights.size() * sizeof(float));
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            producer.compute(); program.run(layer);
+            if (repeat == 0) storage.invalidate_cache();
+        }
+        require(state.completed.size() == 2, "counts-only policy did not receive successful observations");
+        for (size_t request = 0; request < state.completed.size(); ++request) {
+            const auto & observation = state.completed[request];
+            require(observation.cache_epoch == request, "completed observation lost its cache epoch");
+            require(observation.cpu_rows + observation.gpu_rows == routes.size() && observation.program == shape.identity,
+                "completed-work counts/program identity differ from the controlled assignments");
+            require((core::is_host_backend(execution.backend()) ? observation.cpu_rows : observation.gpu_rows) == routes.size(),
+                "observation attributed completed rows to the wrong backend");
+            require(!observation.has_phase_times && observation.cpu_ms == 0 && observation.gpu_ms == 0 && observation.upload_ms == 0,
+                "counts-only observations implicitly enabled phase timing");
+            require(observation.uploaded_bytes > 0, "counts-only observations omitted actual transfer accounting");
+        }
+        const auto completed_accesses = state.accesses;
+        auto invalid = routes; invalid.front() = static_cast<int32_t>(experts);
+        bool rejected = false;
+        try { program.run(layer, invalid); } catch (const std::out_of_range &) { rejected = true; }
+        require(rejected && state.completed.size() == 2 && state.accesses == completed_accesses,
+            "failed work became a completed observation/cache access");
+        require(state.placement_events.size() == 1 && state.placement_events.back().event == moe::PolicyEvent::ExecutionFailed &&
+            state.placement_events.back().program == shape.identity && state.placement_events.back().cache_epoch == storage.cache_epoch(),
+            "placement failure lost program/cache identity");
+        workspace->reset(); producer.release();
+    }
+    storage.event({moe::PolicyEvent::ExecutionReleased, 0, storage.cache_epoch()});
+    const std::vector<moe::PolicyEvent> expected{moe::PolicyEvent::GenerationBegin, moe::PolicyEvent::CacheInvalidated,
+        moe::PolicyEvent::ExecutionFailed, moe::PolicyEvent::ProgramRetired, moe::PolicyEvent::ExecutionReleased};
+    require(state.cache_events.size() == expected.size(), "cache policy missed lifecycle notifications");
+    require(state.cache_events[2].program == 17 && state.cache_events[2].cpu_rows == 0 && state.cache_events[2].gpu_rows == 0,
+        "cache failure notification lost identity or counted unexecuted assignments");
+    for (size_t i = 0; i < expected.size(); ++i) require(state.cache_events[i].event == expected[i], "cache lifecycle event ordering changed");
+    require(state.context_valid && state.invalidation_empty && state.epoch == 1 && state.selections > 0 && state.accesses == 28,
+        "cache policy did not receive current residency, epoch or completed accesses");
+}
+
 }
 
 int main(int argc, char ** argv) {
@@ -256,6 +383,7 @@ int main(int argc, char ** argv) {
                 check_group_registration_failures(path, execution, names, pinned);
                 check_host_bank_failures(path, execution, names, reference, pinned);
             }
+            if (type == assets::TensorStorageType::F32) policy_observations(execution, *source);
             for (bool staged : {false, true}) for (bool cpu_layer : {false, true}) {
                 moe::EngineConfig mode;
                 mode.residency = staged ? moe::Residency::Staged : moe::Residency::Resident;

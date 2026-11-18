@@ -101,7 +101,9 @@ PreparedPolicy prepare_cost_aware(const PolicyParameters & parameters) {
     const double upload = runtime::parse_finite_float_option(parameters, {"upload_bytes_per_ms"}).value_or(10000000.F);
     if (cpu <= 0 || gpu <= 0 || upload <= 0) throw std::invalid_argument("MoE cost estimates must be positive");
     PreparedPolicy prepared;
-    prepared.requirements = {true, true};
+    prepared.requirements.cpu_execution = true;
+    prepared.requirements.phase_times = true;
+    prepared.requirements.completed_work = true;
     prepared.active_placement = true;
     prepared.placement = [cpu, gpu, upload](size_t) { return std::make_unique<CostAware>(cpu, gpu, upload); };
     return prepared;

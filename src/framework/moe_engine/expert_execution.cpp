@@ -43,10 +43,11 @@ public:
         size_t bucket = 0;
         std::exception_ptr error;
         double compute_ms = 0;
+        bool measure_times;
 
-        Hybrid(core::ExecutionContext & cpu_execution, const ProgramShape & config)
+        Hybrid(core::ExecutionContext & cpu_execution, const ProgramShape & config, bool timing)
             : execution(cpu_execution),
-              graphs(execution, {"framework.moe.cpu", 16 * 1024 * 1024, 128, 64 * ggml_tensor_overhead()}) {
+              graphs(execution, {"framework.moe.cpu", 16 * 1024 * 1024, 128, 64 * ggml_tensor_overhead()}), measure_times(timing) {
             const auto rows = config.tokens * config.selected;
             for (int64_t count = 1; count < rows; count *= 2) buckets.push_back(count);
             buckets.push_back(rows);
@@ -76,10 +77,10 @@ public:
                     ready.wait(lock, [this] { return pending || stopping; });
                     if (stopping && !pending) return;
                     lock.unlock();
-                    const auto started = std::chrono::steady_clock::now();
+                    const auto started = measure_times ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
                     try { graphs.compute(layer->cpu_graphs[bucket]); }
                     catch (...) { error = std::current_exception(); }
-                    compute_ms = debug::elapsed_ms(started);
+                    compute_ms = measure_times ? debug::elapsed_ms(started) : 0;
                     lock.lock();
                     pending = false;
                     finished.notify_one();
@@ -250,9 +251,14 @@ public:
         if (has_cpu_execution) {
             debug::timing_log_scalar("framework.moe.cpu_assignments", stats.cpu_assignments);
             debug::timing_log_scalar("framework.moe.gpu_assignments", stats.gpu_assignments);
-            debug::timing_log_scalar("framework.moe.cpu_ms", stats.cpu_ms);
+            if (requirements.phase_times) debug::timing_log_scalar("framework.moe.cpu_ms", stats.cpu_ms);
         }
-        for (auto & layer : layers) if (layer.placement) layer.placement->event({PolicyEvent::ProgramRetired, config.identity});
+        for (auto & layer : layers) {
+            const PolicyNotification retired{PolicyEvent::ProgramRetired, config.identity,
+                layer.store ? layer.store->cache_epoch() : uint64_t{0}};
+            if (layer.placement) layer.placement->event(retired);
+            if (layer.store) layer.store->event(layer.group, retired);
+        }
         for (auto & layer : layers)
             for (auto * graph : layer.graphs) core::release_backend_graph_resources(execution.backend(), graph, true);
     }
@@ -276,7 +282,7 @@ size_t ExpertProgram::add_layer(const ExpertMath & math, const ExpertWeights & w
     // A single token fits in one cache batch. Preserve native top-k matmul
     // dimensions instead of evaluating every cache slot and scattering padding.
     layer.direct = s.config.resident || (s.config.tokens == 1 && s.config.rows_per_expert.front() == 1 &&
-        s.config.selected <= s.config.cache_slots && (!s.hybrid_enabled || layer.cpu_staged));
+        s.config.selected <= s.config.cache_slots && !placement);
     if (layer.cpu_staged) {
         if (!s.cpu_execution || s.cpu_execution->backend() != backend)
             throw std::invalid_argument("staged CPU MoE requires the cache's borrowed host execution context");
@@ -324,7 +330,7 @@ size_t ExpertProgram::add_layer(const ExpertMath & math, const ExpertWeights & w
     if (backend != s.execution.backend())
         throw std::invalid_argument("staged MoE cache backend does not match execution");
     if (s.hybrid_enabled && !s.hybrid) {
-        s.hybrid = std::make_unique<Impl::Hybrid>(*s.cpu_execution, s.config);
+        s.hybrid = std::make_unique<Impl::Hybrid>(*s.cpu_execution, s.config, s.requirements.phase_times);
         for (auto count : s.hybrid->buckets) {
             auto * graph = ggml_new_graph_custom(s.context.get(), 128, false);
             auto * values = ggml_view_2d(s.context.get(), s.cpu_output, s.config.hidden_size, count, s.cpu_output->nb[1], 0);
@@ -334,9 +340,10 @@ size_t ExpertProgram::add_layer(const ExpertMath & math, const ExpertWeights & w
             s.workspace->add(graph);
         }
     }
-    if (s.hybrid) {
+    if (placement) {
         layer.placement = placement;
         layer.placement->prepare_program(s.config.identity);
+        s.placement_destinations.resize(static_cast<size_t>(s.config.experts));
         layer.decision.gpu.reserve(static_cast<size_t>(s.config.experts));
         layer.decision.cpu.reserve(static_cast<size_t>(s.config.experts));
     }
@@ -451,78 +458,88 @@ uint64_t ExpertProgram::run(size_t layer, const std::vector<int32_t> & ids) {
 
 uint64_t ExpertProgram::Impl::run(Layer & binding) {
     auto & s = *this;
-    if (binding.direct) return s.run_direct(binding);
     if (s.requirements.cache_accesses) std::fill(s.completed.begin(), s.completed.end(), uint8_t{0});
-    std::fill(s.assignment_counts.begin(), s.assignment_counts.end(), size_t{0});
-    s.policy_experts.clear();
-    for (auto id : s.logical_ids) {
-        auto & count = s.assignment_counts.at(static_cast<size_t>(id));
-        if (count++ == 0) s.policy_experts.push_back(id);
-    }
-    s.assignment_offsets[0] = 0;
-    for (size_t expert = 0; expert < s.assignment_counts.size(); ++expert) {
-        s.assignment_cursor[expert] = s.assignment_offsets[expert];
-        s.assignment_offsets[expert + 1] = s.assignment_offsets[expert] + s.assignment_counts[expert];
-    }
-    for (size_t pair = 0; pair < s.logical_ids.size(); ++pair)
-        s.assignment_positions[s.assignment_cursor[static_cast<size_t>(s.logical_ids[pair])]++] = static_cast<int32_t>(pair);
-    auto & experts = s.experts;
-    experts.clear();
-    for (size_t expert = 0; expert < s.assignment_counts.size(); ++expert)
-        if (s.assignment_counts[expert]) experts.push_back(static_cast<int32_t>(expert));
-    const auto & resident = binding.store->cached_experts(binding.group);
-    std::sort(experts.begin(), experts.end(), [&](int32_t a, int32_t b) {
-        const bool a_hit = std::find(resident.begin(), resident.end(), a) != resident.end();
-        const bool b_hit = std::find(resident.begin(), resident.end(), b) != resident.end();
-        if (a_hit != b_hit) return a_hit;
-        const auto x = s.assignment_counts[static_cast<size_t>(a)], y = s.assignment_counts[static_cast<size_t>(b)];
-        return x != y ? x > y : a < b;
-    });
     const auto cpu_before = s.stats.cpu_assignments;
     const auto gpu_before = s.stats.gpu_assignments;
     const auto cpu_ms_before = s.stats.cpu_ms;
     const auto gpu_ms_before = s.stats.gpu_ms;
-    const auto storage_before = binding.store->statistics();
+    const auto storage_before = binding.store && s.requirements.completed_work
+        ? binding.store->statistics() : ExpertStorage::Statistics{};
     uint64_t rows;
     try {
-        if (binding.cpu_staged) rows = s.run_cpu_staged(binding, experts);
-        else if (s.hybrid) {
-            binding.placement->select({s.policy_experts, s.assignment_counts, binding.store->cached_experts(binding.group),
-                binding.store->cache_epoch(), binding.store->expert_bytes(binding.group), s.config.identity}, binding.decision);
-            std::fill(s.placement_destinations.begin(), s.placement_destinations.end(), uint8_t{0});
-            size_t decisions = 0;
-            for (const auto * destination : {&binding.decision.gpu, &binding.decision.cpu}) {
-                for (auto expert : *destination) {
-                    if (expert < 0 || static_cast<size_t>(expert) >= s.assignment_counts.size() ||
-                        !s.assignment_counts[static_cast<size_t>(expert)] || s.placement_destinations[static_cast<size_t>(expert)]++)
-                        throw std::logic_error("MoE placement must partition the routed logical experts");
-                    if (destination == &binding.decision.cpu && std::find(resident.begin(), resident.end(), expert) != resident.end())
-                        throw std::logic_error("MoE placement cannot move fixed GPU cache hits to CPU");
-                    ++decisions;
-                }
+        if (binding.direct) rows = s.run_direct(binding);
+        else {
+            std::fill(s.assignment_counts.begin(), s.assignment_counts.end(), size_t{0});
+            s.policy_experts.clear();
+            for (auto id : s.logical_ids) {
+                auto & count = s.assignment_counts.at(static_cast<size_t>(id));
+                if (count++ == 0) s.policy_experts.push_back(id);
             }
-            if (decisions != s.policy_experts.size()) throw std::logic_error("MoE placement omitted routed experts");
-            rows = s.run_hybrid(binding, binding.decision);
-        } else rows = s.run_gpu(binding, experts);
+            s.assignment_offsets[0] = 0;
+            for (size_t expert = 0; expert < s.assignment_counts.size(); ++expert) {
+                s.assignment_cursor[expert] = s.assignment_offsets[expert];
+                s.assignment_offsets[expert + 1] = s.assignment_offsets[expert] + s.assignment_counts[expert];
+            }
+            for (size_t pair = 0; pair < s.logical_ids.size(); ++pair)
+                s.assignment_positions[s.assignment_cursor[static_cast<size_t>(s.logical_ids[pair])]++] = static_cast<int32_t>(pair);
+            auto & experts = s.experts;
+            experts.clear();
+            for (size_t expert = 0; expert < s.assignment_counts.size(); ++expert)
+                if (s.assignment_counts[expert]) experts.push_back(static_cast<int32_t>(expert));
+            const auto & resident = binding.store->cached_experts(binding.group);
+            std::sort(experts.begin(), experts.end(), [&](int32_t a, int32_t b) {
+                const bool a_hit = std::find(resident.begin(), resident.end(), a) != resident.end();
+                const bool b_hit = std::find(resident.begin(), resident.end(), b) != resident.end();
+                if (a_hit != b_hit) return a_hit;
+                const auto x = s.assignment_counts[static_cast<size_t>(a)], y = s.assignment_counts[static_cast<size_t>(b)];
+                return x != y ? x > y : a < b;
+            });
+            if (binding.cpu_staged) rows = s.run_cpu_staged(binding, experts);
+            else if (binding.placement) {
+                binding.placement->select({s.policy_experts, s.assignment_counts, binding.store->cached_experts(binding.group),
+                    binding.store->cache_epoch(), binding.store->expert_bytes(binding.group), s.config.identity}, binding.decision);
+                std::fill(s.placement_destinations.begin(), s.placement_destinations.end(), uint8_t{0});
+                size_t decisions = 0;
+                for (const auto * destination : {&binding.decision.gpu, &binding.decision.cpu}) {
+                    for (auto expert : *destination) {
+                        if (expert < 0 || static_cast<size_t>(expert) >= s.assignment_counts.size() ||
+                            !s.assignment_counts[static_cast<size_t>(expert)] || s.placement_destinations[static_cast<size_t>(expert)]++)
+                            throw std::logic_error("MoE placement must partition the routed logical experts");
+                        if (destination == &binding.decision.cpu && !s.hybrid)
+                            throw std::logic_error("MoE placement selected CPU work without declaring CPU resources");
+                        if (destination == &binding.decision.cpu && std::find(resident.begin(), resident.end(), expert) != resident.end())
+                            throw std::logic_error("MoE placement cannot move fixed GPU cache hits to CPU");
+                        ++decisions;
+                    }
+                }
+                if (decisions != s.policy_experts.size()) throw std::logic_error("MoE placement omitted routed experts");
+                rows = s.hybrid ? s.run_hybrid(binding, binding.decision) : s.run_gpu(binding, binding.decision.gpu);
+            } else rows = s.run_gpu(binding, experts);
+        }
     } catch (...) {
         ggml_backend_synchronize(s.execution.backend());
         if (s.cpu_execution) ggml_backend_synchronize(s.cpu_execution->backend());
         if (s.requirements.cache_accesses)
             for (size_t i = 0; i < s.logical_ids.size(); ++i)
                 if (s.completed[i]) binding.store->accessed(binding.group, s.logical_ids[i], 1);
-        if (binding.placement) binding.placement->event({PolicyEvent::ExecutionFailed, s.config.identity,
-            binding.store->cache_epoch(), static_cast<size_t>(s.stats.cpu_assignments - cpu_before),
-            static_cast<size_t>(s.stats.gpu_assignments - gpu_before)});
+        const PolicyNotification failed{PolicyEvent::ExecutionFailed, s.config.identity,
+            binding.store ? binding.store->cache_epoch() : uint64_t{0},
+            static_cast<size_t>(s.stats.cpu_assignments - cpu_before),
+            static_cast<size_t>(s.stats.gpu_assignments - gpu_before)};
+        if (binding.placement) binding.placement->event(failed);
+        if (binding.store) binding.store->event(binding.group, failed);
         throw;
     }
-    if (binding.placement && s.requirements.phase_times) {
-        const auto storage_after = binding.store->statistics();
-        const auto cpu_ms = s.stats.cpu_ms - cpu_ms_before;
+    if (binding.placement && s.requirements.completed_work) {
+        const auto storage_after = binding.store ? binding.store->statistics() : ExpertStorage::Statistics{};
         binding.placement->observe({static_cast<size_t>(s.stats.cpu_assignments - cpu_before),
             static_cast<size_t>(s.stats.gpu_assignments - gpu_before),
-            static_cast<size_t>(storage_after.expert_loads - storage_before.expert_loads) * binding.store->expert_bytes(binding.group), cpu_ms,
-            s.stats.gpu_ms - gpu_ms_before,
-            storage_after.upload_ms - storage_before.upload_ms, s.config.identity});
+            binding.store ? static_cast<size_t>(storage_after.expert_loads - storage_before.expert_loads) * binding.store->expert_bytes(binding.group) : size_t{0},
+            s.requirements.phase_times ? s.stats.cpu_ms - cpu_ms_before : 0,
+            s.requirements.phase_times ? s.stats.gpu_ms - gpu_ms_before : 0,
+            s.requirements.phase_times ? storage_after.upload_ms - storage_before.upload_ms : 0,
+            s.config.identity, s.requirements.phase_times,
+            binding.store ? binding.store->cache_epoch() : uint64_t{0}});
     }
     if (s.requirements.cache_accesses)
         for (auto expert : s.logical_ids) binding.store->accessed(binding.group, expert, 1);
@@ -544,10 +561,10 @@ uint64_t ExpertProgram::Impl::run_direct(Layer & binding) {
         ggml_backend_tensor_set(ids, mapped.data(), 0, mapped.size() * sizeof(int32_t));
         if (core::compute_graph(execution, binding.graphs.front(), *binding.plans.front(), "framework.moe.staged") != GGML_STATUS_SUCCESS)
             throw std::runtime_error("staged MoE expert execution failed");
-        stats.gpu_assignments += logical_ids.size();
+        if (core::is_host_backend(execution.backend())) stats.cpu_assignments += logical_ids.size();
+        else stats.gpu_assignments += logical_ids.size();
     }
-    if (requirements.cache_accesses)
-        for (auto expert : logical_ids) binding.store->accessed(binding.group, expert, 1);
+    if (requirements.cache_accesses) std::fill(completed.begin(), completed.end(), uint8_t{1});
     return logical_ids.size();
 }
 
@@ -585,9 +602,9 @@ uint64_t ExpertProgram::Impl::run_cpu_staged(Layer & binding, const std::vector<
                 ggml_backend_tensor_set(host.source, s.source_rows.data(), 0, rows * sizeof(int32_t));
             }, s.target_rows);
             const auto index = static_cast<size_t>(bucket - s.config.rows_per_expert.begin());
-            const auto started = std::chrono::steady_clock::now();
+            const auto started = s.requirements.phase_times ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             host.graphs.compute(binding.cpu_graphs[index]);
-            s.stats.cpu_ms += debug::elapsed_ms(started);
+            if (s.requirements.phase_times) s.stats.cpu_ms += debug::elapsed_ms(started);
             ggml_backend_tensor_get(binding.cpu_outputs[index], host.batch_output.data(), 0,
                 rows * static_cast<size_t>(s.config.hidden_size) * sizeof(float));
             std::visit([&](const auto & targets) {
@@ -646,12 +663,17 @@ uint64_t ExpertProgram::Impl::run_gpu(Layer & binding, const std::vector<int32_t
             const auto started = s.requirements.phase_times ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
             if (core::compute_graph(s.execution, graph, *binding.plans[index], "framework.moe.staged") != GGML_STATUS_SUCCESS)
                 throw std::runtime_error("staged MoE expert execution failed");
-            if (s.requirements.phase_times) s.stats.gpu_ms += debug::elapsed_ms(started);
+            const bool host_backend = core::is_host_backend(s.execution.backend());
+            if (s.requirements.phase_times) {
+                if (host_backend) s.stats.cpu_ms += debug::elapsed_ms(started);
+                else s.stats.gpu_ms += debug::elapsed_ms(started);
+            }
             for (auto id : group) {
                 const auto expert = static_cast<size_t>(id);
                 const auto end = std::min(s.assignment_counts[expert], begin + static_cast<size_t>(count));
                 if (end <= begin) continue;
-                s.stats.gpu_assignments += end - begin;
+                if (host_backend) s.stats.cpu_assignments += end - begin;
+                else s.stats.gpu_assignments += end - begin;
                 if (s.requirements.cache_accesses)
                     for (size_t row = begin; row < end; ++row)
                         s.completed[static_cast<size_t>(s.assignment_positions[s.assignment_offsets[expert] + row])] = 1;

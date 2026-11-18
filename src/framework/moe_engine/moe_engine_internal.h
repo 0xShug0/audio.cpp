@@ -55,6 +55,8 @@ public:
     const std::vector<int32_t> & stage(size_t group, const std::vector<int32_t> & expert_ids);
     size_t expert_bytes(size_t group) const;
     void accessed(size_t group, int32_t expert, size_t assignments);
+    void event(size_t group, const PolicyNotification &);
+    void event(const PolicyNotification &);
     // Invalidate placement at an independent request boundary, retaining all allocations and statistics.
     void invalidate_cache();
     Statistics statistics() const noexcept;
