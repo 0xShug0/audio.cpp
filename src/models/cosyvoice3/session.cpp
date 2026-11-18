@@ -180,6 +180,12 @@ CosyVoice3Session::CosyVoice3Session(
       assets_(require_assets(std::move(assets), options)),
       contract_(require_contract(std::move(contract))),
       tokenizer_(std::make_unique<CosyVoice3TextTokenizer>(assets_)) {
+    // Released GGUFs predate this request option.
+    if (!contract_->request_option_keys.count("speed")) {
+        auto extended = std::make_shared<model_spec::ModelContract>(*contract_);
+        extended->request_option_keys.insert("speed");
+        contract_ = std::move(extended);
+    }
     auto validation_options = options;
     // This previously advertised option never selected convolution storage.
     validation_options.options.erase("cosyvoice3.conv_weight_type");
@@ -205,11 +211,11 @@ CosyVoice3Session::CosyVoice3Session(
     const auto graph_arena_bytes = runtime::parse_size_mb_option(
         options.options,
         {"cosyvoice3.graph_arena_mb"},
-        1024ull * 1024ull * 1024ull);
+        64ull * 1024ull * 1024ull);
     const auto weight_context_bytes = runtime::parse_size_mb_option(
         options.options,
         {"cosyvoice3.weight_context_mb"},
-        2048ull * 1024ull * 1024ull);
+        4ull * 1024ull * 1024ull);
     if (const auto mem_saver = runtime::find_option(options.options, {"cosyvoice3.mem_saver"})) {
         mem_saver_ = runtime::parse_bool_option(*mem_saver, "cosyvoice3.mem_saver");
     }
@@ -295,6 +301,7 @@ runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request)
     (void)runtime::find_option(request.options, {"instruct", "instruction"});
     runtime::validate_spec_backed_request_options(validation_options, *contract_, kModelName);
     require_prepared("CosyVoice3 run");
+    const float speed = runtime::parse_positive_finite_float_option(request.options, {"speed"}).value_or(1.0F);
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("CosyVoice3 requires text input");
     }
@@ -358,7 +365,7 @@ runtime::TaskResult CosyVoice3Session::run(const runtime::TaskRequest & request)
         }
         runtime::append_audio_buffer(
             merged_audio,
-            hift_->synthesize(flow_output.mel, flow_output.frames, flow_request.seed));
+            hift_->synthesize(flow_output.mel, flow_output.frames, flow_request.seed, speed));
         if (mem_saver_) {
             hift_->release_graphs();
         }

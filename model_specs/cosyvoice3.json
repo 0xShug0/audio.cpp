@@ -54,6 +54,13 @@
         "default": "zero_shot"
       },
       {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier applied to mel frames before HiFT decoding; finite and positive, default 1.0. Values above 1 are faster.",
+        "required": false,
+        "default": 1.0
+      },
+      {
         "name": "reference_text",
         "type": "string",
         "description": "Transcript for the prompt audio.",
@@ -160,18 +167,18 @@
       {
         "name": "graph_arena_mb",
         "type": "int",
-        "description": "Reusable runtime graph arena size in MiB; default 1024.",
+        "description": "AR/flow graph metadata arena size in MiB; default 64. Separate from backend activation buffers.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 64
       },
       {
         "name": "weight_context_mb",
         "type": "int",
-        "description": "Weight loading context size in MiB; default 2048.",
+        "description": "AR/flow weight metadata context size in MiB; default 4. Separate from tensor weight storage.",
         "required": false,
         "min": 1,
-        "default": 2048
+        "default": 4
       },
       {
         "name": "reference_cache_slots",
