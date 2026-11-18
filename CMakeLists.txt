@@ -2519,6 +2519,25 @@ audiocpp_add_model(citrinet_asr
         engine::models::citrinet_asr::make_citrinet_asr_loader
 )
 
+# granite_speech_2b must precede granite5asr: granite5asr's can_load also
+# matches model_type "granite_speech", so registration order decides native
+# auto-detect between the TurboCTC checkpoint and this conditional-generation
+# checkpoint (this loader's triple check rejects TurboCTC snapshots).
+audiocpp_add_model(granite_speech_2b
+    SOURCES
+        src/community_models/granite_speech_2b/assets.cpp
+        src/community_models/granite_speech_2b/frontend.cpp
+        src/community_models/granite_speech_2b/encoder.cpp
+        src/community_models/granite_speech_2b/projector.cpp
+        src/community_models/granite_speech_2b/decoder.cpp
+        src/community_models/granite_speech_2b/prompt.cpp
+        src/community_models/granite_speech_2b/session.cpp
+    INCLUDES
+        engine/community_models/granite_speech_2b/session.h
+    LOADERS
+        engine::community_models::granite_speech_2b::make_granite_speech_2b_loader
+)
+
 audiocpp_add_model(granite5asr
     SOURCES
         src/community_models/granite5asr/assets.cpp
@@ -4351,6 +4370,25 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             src/community_models/granite_speech_2b/prompt.cpp
             src/community_models/granite_speech_2b/decoder.cpp)
         target_link_libraries(granite_speech_2b_parity_probe PRIVATE engine_runtime ggml)
+        # granite_speech_2b D: offline session/loader units. Same explicit
+        # pattern, guarded by family-in-linked-models (the session links the
+        # registered family objects).
+        if (granite_speech_2b IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_executable(granite_speech_2b_d_units_test
+                tests/granite_speech_2b/test_granite_speech_2b_d_units.cpp
+                src/community_models/granite_speech_2b/assets.cpp
+                src/community_models/granite_speech_2b/frontend.cpp
+                src/community_models/granite_speech_2b/encoder.cpp
+                src/community_models/granite_speech_2b/projector.cpp
+                src/community_models/granite_speech_2b/prompt.cpp
+                src/community_models/granite_speech_2b/decoder.cpp
+                src/community_models/granite_speech_2b/session.cpp)
+            target_link_libraries(granite_speech_2b_d_units_test PRIVATE engine_runtime ggml)
+            target_include_directories(granite_speech_2b_d_units_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            target_compile_definitions(granite_speech_2b_d_units_test
+                PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+            add_test(NAME granite_speech_2b_d_units_test COMMAND granite_speech_2b_d_units_test)
+        endif()
     endif()
 
     if (sense_asr IN_LIST AUDIOCPP_LINKED_MODELS)
