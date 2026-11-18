@@ -108,10 +108,12 @@ samples → clean input error (chunk planner merges such tails).
     or pass `--model-spec-override`. `model_spec_system_test` fails from a
     build dir for unrelated families (pre-existing `miotts` case) and
     passes from the root.
-13. **CUDA builds with two toolkits**: CMake picks stale `/usr/bin/nvcc`
-    (12.0) and compiler-ID fails; configure with
-    `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.9/bin/nvcc
-    -DCUDAToolkit_ROOT=/usr/local/cuda-12.9`.
+13. **CUDA builds with two toolkits**: if CMake picks a stale distro
+    `nvcc` instead of the intended toolkit, the CUDA compiler-ID check
+    fails. Point the build at the intended toolkit explicitly (see also
+    `docs/build/linux.md`):
+    `-DCMAKE_CUDA_COMPILER=<cuda-home>/bin/nvcc
+    -DCUDAToolkit_ROOT=<cuda-home>`.
 14. **Stale-binary discipline**: always rebuild the exact binary under test;
     two incidents in this history (F server check, projector-fix probe)
     were scratch-dir staleness, not product bugs. Prefer a clean-room
@@ -187,17 +189,17 @@ and a re-run of the manager install path against the published bytes.
 export GRANITE2B_WORK="$PWD/build/granite-2b-handoff" GRANITE2B_HF="$GRANITE2B_WORK/hf"
 # reference env: python3 -m venv + torch 2.8.0 (CPU index) + transformers 4.57.0
 python tests/granite_speech_2b/reference.py --model "$GRANITE2B_HF" \
-  --audio <wav> --out-dir /tmp/opencode/trace/x
-cmake -S . -B /tmp/opencode/b -DCMAKE_BUILD_TYPE=Release \
+  --audio <wav> --out-dir "$GRANITE2B_WORK/trace/x"
+cmake -S . -B <build-dir> -DCMAKE_BUILD_TYPE=Release \
   -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=granite_speech_2b,granite5asr \
   -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON   # + -DENGINE_ENABLE_CUDA=ON (+ toolchain flags, §3.13) for GPU
-cmake --build /tmp/opencode/b --parallel 24 --target audiocpp_cli audiocpp_server audiocpp_gguf \
+cmake --build <build-dir> --parallel 24 --target audiocpp_cli audiocpp_server audiocpp_gguf \
   granite_speech_2b_parity_probe granite_speech_2b_b1_units_test granite_speech_2b_d_units_test \
   granite_speech_2b_f_units_test server_parallel_lifecycle_test
-ctest --test-dir /tmp/opencode/b -R 'granite_speech_2b|granite5asr_ctc|server_parallel'
-/tmp/opencode/b/bin/granite_speech_2b_parity_probe --model "$GRANITE2B_HF" \
-  --audio <wav> --backend cpu --threads 8 --through generate --out-dir /tmp/opencode/trace/y
-python tests/granite_speech_2b/compare_trace.py --reference /tmp/opencode/trace/x --candidate /tmp/opencode/trace/y
+ctest --test-dir <build-dir> -R 'granite_speech_2b|granite5asr_ctc|server_parallel'
+<build-dir>/bin/granite_speech_2b_parity_probe --model "$GRANITE2B_HF" \
+  --audio <wav> --backend cpu --threads 8 --through generate --out-dir "$GRANITE2B_WORK/trace/y"
+python tests/granite_speech_2b/compare_trace.py --reference "$GRANITE2B_WORK/trace/x" --candidate "$GRANITE2B_WORK/trace/y"
 ```
 
 ## 8. File map (new, excluding per-task tests/fixtures)
