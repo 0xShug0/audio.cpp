@@ -10,6 +10,8 @@
 namespace engine::models::zonos2 {
 
 inline constexpr int kZonos2EosDrainFrames = 10;
+// Positions the backbone reserves beyond the prompt and the generated frames.
+inline constexpr int kZonos2CapacitySlack = 8;
 
 struct Zonos2Codes {
     std::vector<int32_t> rows;  // [count][n_codebooks] raw delayed rows (EOA and pads included)

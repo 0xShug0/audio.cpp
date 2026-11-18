@@ -44,7 +44,7 @@
   "options": {
     "request": [
       {"name": "seed", "type": "int", "description": "Sampler seed; random when omitted. Long-form chunk i uses seed + i.", "required": false, "min": 0, "max": 4294967295},
-      {"name": "max_tokens", "type": "int", "description": "Generated frames per text chunk (86.13 frames/s), including the 10-frame end-of-speech drain.", "required": false, "min": 1, "default": 2000},
+      {"name": "max_tokens", "type": "int", "description": "Generated frames per text chunk (86.13 frames/s), including the 10-frame end-of-speech drain. A continuation prompt needs room for this many frames after the earlier chunks' audio.", "required": false, "min": 1, "default": 2000},
       {"name": "temperature", "type": "float", "description": "Sampling temperature; 0 decodes greedily.", "required": false, "min": 0, "default": 1.15},
       {"name": "top_k", "type": "int", "description": "Top-k candidates per codebook (ties at the threshold are kept).", "required": false, "min": 1, "default": 106},
       {"name": "top_p", "type": "float", "description": "Nucleus probability per codebook; 0 disables it.", "required": false, "min": 0, "max": 1, "default": 0.0},
@@ -59,8 +59,9 @@
       {"name": "speaking_rate_bucket", "type": "int", "description": "Adds a speaking-rate conditioning row with this bucket; omitted = no rate row.", "required": false, "min": 0, "max": 7},
       {"name": "quality_buckets", "type": "string", "description": "Comma list of feature:bucket quality rows over lufs (0-11), estimated_snr (0-11), max_pause (0-11), estimated_bandlimit_hz (0-7), leading_silence_s (0-7) and trailing_silence_s (0-7); none disables every quality row.", "required": false, "default": "trailing_silence_s:3"},
       {"name": "fade_out_ms", "type": "float", "description": "Cosine fade over the last N milliseconds of the output.", "required": false, "min": 0, "max": 2000, "default": 0.0},
-      {"name": "text_chunk_size", "type": "int", "description": "Maximum Unicode code points per long-form text chunk.", "required": false, "min": 1, "default": 300},
-      {"name": "text_chunk_mode", "type": "enum", "description": "Text chunking policy for long-form input.", "preset": "text_chunk_mode_full", "required": false, "default": "word_budget"}
+      {"name": "text_chunk_size", "type": "int", "description": "Maximum Unicode code points per long-form text chunk.", "required": false, "min": 1, "default": 150},
+      {"name": "long_form_continuation", "type": "bool", "description": "Generate each long-form chunk as a continuation of the first chunk's and the previous chunk's audio codes, so the voice and pacing carry across chunks; off generates every chunk independently.", "required": false, "default": true},
+      {"name": "text_chunk_mode", "type": "enum", "description": "Framework text chunking policy for long-form input. When omitted, long_form_continuation packs words into chunks as ZONOS2 does, and independent chunks use word_budget.", "preset": "text_chunk_mode_full", "required": false}
     ],
     "session": [
       {"name": "encoder_backend", "type": "enum", "description": "Backend for the speaker encoder: cpu, or the session backend (same).", "values": ["cpu", "same"], "required": false, "default": "cpu"},

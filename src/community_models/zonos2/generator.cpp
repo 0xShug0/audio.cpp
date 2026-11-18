@@ -10,7 +10,7 @@ Zonos2Codes generate_zonos2_codes(const Zonos2Hparams & hp, Zonos2Backbone & bac
                                   const Zonos2RowCallback & on_row) {
     if (max_frames <= 0) throw std::runtime_error("zonos2: max_frames must be positive");
     const int ncb = hp.n_codebooks;
-    backbone.begin(prompt.n_rows + max_frames + 8);
+    backbone.begin(prompt.n_rows + max_frames + kZonos2CapacitySlack);
     std::vector<float> logits;
     backbone.prefill(prompt, speaker, logits);
 
