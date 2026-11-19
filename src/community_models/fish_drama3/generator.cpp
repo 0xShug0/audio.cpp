@@ -94,7 +94,8 @@ std::vector<float> last_hidden(const std::vector<float> & values, int64_t width)
 Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     core::ExecutionContext & execution, const runtime::SessionOptions & options, bool streaming)
     : assets_(std::move(assets)), tokenizer_(assets_->resources),
-      cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)) {
+      cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)),
+      reference_cache_(parse_reference_cache_slots(options.options)) {
     if (cache_steps_ > 262144) throw std::runtime_error("Drama 3 context_length exceeds the checkpoint's maximum position count");
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.profile_first_audio"})) {
         profile_first_audio_ = runtime::parse_bool_option(*value, "fish_drama3.profile_first_audio");
@@ -180,23 +181,19 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
 Drama3Generator::~Drama3Generator() = default;
 
 codecs::FishDacCodes Drama3Generator::encode_reference(const runtime::AudioBuffer & audio) {
-    if (cached_reference_audio_ && cached_reference_audio_->sample_rate == audio.sample_rate &&
-        cached_reference_audio_->channels == audio.channels && cached_reference_audio_->samples == audio.samples) {
-        return cached_reference_codes_;
-    }
-    auto result = codec_->encode_codes(audio);
-    codec_->release_encode_graph();
-    validate_drama3_codes(result, assets_->tower.codebook_size);
-    // Keep one short reference in host memory. Exact waveform equality avoids
+    // Keep several short references in host memory. Exact waveform equality avoids
     // stale path-based hits when an uploaded file is replaced or re-decoded.
-    constexpr size_t max_cached_samples = 44100 * 30;
-    if (audio.samples.size() <= max_cached_samples) {
-        cached_reference_audio_ = audio;
-        cached_reference_codes_ = result;
-    } else {
-        cached_reference_audio_.reset();
-        cached_reference_codes_ = {};
-    }
+    Drama3ReferenceCache::Outcome outcome = Drama3ReferenceCache::Outcome::Miss;
+    auto result = reference_cache_.lookup_or_encode(audio, [this](const runtime::AudioBuffer & clip) {
+        auto codes = codec_->encode_codes(clip);
+        codec_->release_encode_graph();
+        validate_drama3_codes(codes, assets_->tower.codebook_size);
+        return codes;
+    }, &outcome);
+    const char * label = outcome == Drama3ReferenceCache::Outcome::Hit ? "hit"
+                       : outcome == Drama3ReferenceCache::Outcome::Skip ? "skip" : "miss";
+    debug::trace_log_scalar("drama3.reference_cache", std::string(label) + " " + std::to_string(reference_cache_.size()) +
+                            "/" + std::to_string(reference_cache_.capacity()));
     return result;
 }
 

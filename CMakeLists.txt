@@ -1869,6 +1869,7 @@ audiocpp_add_model(fish_drama3
         src/community_models/fish_drama3/generator.cpp
         src/community_models/fish_drama3/loader.cpp
         src/community_models/fish_drama3/prompt.cpp
+        src/community_models/fish_drama3/reference_cache.cpp
         src/community_models/fish_drama3/session.cpp
         src/community_models/fish_drama3/tokenizer_text.cpp
         src/community_models/fish_drama3/tower.cpp
@@ -4714,6 +4715,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_test(NAME fish_drama3_sampler_test COMMAND fish_drama3_sampler_test --log)
             add_engine_unittest(fish_drama3_expert_quantization_test tests/community_models/fish_drama3/expert_quantization_test.cpp)
             add_test(NAME fish_drama3_expert_quantization_test COMMAND fish_drama3_expert_quantization_test)
+            add_engine_unittest(fish_drama3_reference_cache_test tests/community_models/fish_drama3/reference_cache_test.cpp)
+            add_test(NAME fish_drama3_reference_cache_test COMMAND fish_drama3_reference_cache_test)
             add_engine_unittest(fish_drama3_tokenizer_test tests/community_models/fish_drama3/tokenizer_test.cpp)
             set(AUDIOCPP_DRAMA3_TOKENIZER_DIR "" CACHE PATH "Optional Drama 3 tokenizer sidecars for reference tests")
             if(AUDIOCPP_DRAMA3_TOKENIZER_DIR)

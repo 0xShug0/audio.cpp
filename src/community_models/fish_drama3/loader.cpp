@@ -17,7 +17,7 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_fish_drama3_loader() {
                                  "fish_drama3.codec_encoder_chunk_samples", "fish_drama3.device_sampling",
                                  "fish_drama3.codec_batch_frames", "fish_drama3.codec_async_decode",
                                  "fish_drama3.fused_moe", "fish_drama3.kv_cache_type", "fish_drama3.kv_cache_alignment",
-                                 "fish_drama3.perf_mode"}) {
+                                 "fish_drama3.perf_mode", "fish_drama3.reference_cache_slots"}) {
             if (!contract->session_option_keys.count(key)) validation_options.options.erase(key);
         }
         runtime::validate_spec_backed_session_options(validation_options, *contract, "fish_drama3", "Drama 3");
