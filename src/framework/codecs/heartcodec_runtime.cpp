@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -922,6 +923,7 @@ public:
         for (auto * input : {positions_, freqs_}) {
             if (input != nullptr) ggml_set_output(input);
         }
+        debug::timing_log_context_reservation("heartcodec.flow.graph", ctx_.get());
         allocate_workspace();
     }
 
@@ -1059,6 +1061,7 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
         for (auto * input : {input_}) ggml_set_input(input);
+        debug::timing_log_context_reservation("heartcodec.conditioning.graph", ctx_.get());
         allocate_workspace();
     }
 
@@ -1171,6 +1174,7 @@ public:
         graph_ = ggml_new_graph_custom(ctx_.get(), 262144, false);
         ggml_build_forward_expand(graph_, output_);
         for (auto * input : {input_}) ggml_set_input(input);
+        debug::timing_log_context_reservation("heartcodec.scalar.graph", ctx_.get());
         allocate_workspace();
     }
 

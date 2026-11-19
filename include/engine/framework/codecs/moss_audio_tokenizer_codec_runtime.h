@@ -81,9 +81,9 @@ private:
 };
 
 struct MossAudioTokenizerCodecRuntimeOptions {
-    size_t weight_context_bytes = 256ull * 1024ull * 1024ull;
-    size_t encoder_graph_arena_bytes = 2048ull * 1024ull * 1024ull;
-    size_t decoder_graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+    size_t weight_context_bytes = 8ull * 1024ull * 1024ull;
+    size_t encoder_graph_arena_bytes = 32ull * 1024ull * 1024ull;
+    size_t decoder_graph_arena_bytes = 32ull * 1024ull * 1024ull;
     bool separate_encoder_context = false;
     assets::TensorStorageType transformer_weight_storage_type = assets::TensorStorageType::F32;
     // Overrides the above for the encoder only. A family that continues directly from the

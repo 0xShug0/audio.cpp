@@ -65,26 +65,13 @@ private:
     // 21.2 GiB forced to BF16 and 10.6 GiB left native. Safetensors are bf16
     // upstream, so native is the same thing there.
     engine::assets::TensorStorageType weight_storage_type_ = engine::assets::TensorStorageType::Native;
-    size_t backbone_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-    size_t backbone_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
-    size_t heads_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
-    size_t heads_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
-    size_t codec_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t codec_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
-#else
-    size_t backbone_weight_context_bytes_ = 8192ull * 1024ull * 1024ull;
-    size_t heads_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
-    size_t heads_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
-    // Charged twice -- the codec runtime takes one arena size for the encoder and
-    // one for the decoder -- and this model, unlike moss_voicegen, holds both
-    // halves resident because cloning encodes a reference. The graphs are small
-    // (a few hundred codec frames at 12.5 a second), so moss_voicegen's 2 GiB was
-    // 4 GiB of VRAM here for no benefit, and on a 24 GiB card it was the
-    // difference between cloning running and failing to allocate the encoder.
-    size_t codec_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t codec_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
-#endif
+    // Metadata only; weights and activation buffers are allocated separately.
+    size_t backbone_graph_arena_bytes_ = 16ull * 1024ull * 1024ull;
+    size_t backbone_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
+    size_t heads_graph_arena_bytes_ = 16ull * 1024ull * 1024ull;
+    size_t heads_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
+    size_t codec_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t codec_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
 
     // The execution context comes from RuntimeSessionBase; the runtimes below borrow it.
     std::shared_ptr<tokenizers::LlamaBpeTokenizer> tokenizer_;

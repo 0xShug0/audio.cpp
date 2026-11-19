@@ -3,6 +3,7 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/module.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/linear_module.h"
 
 #include <ggml-backend.h>
@@ -142,6 +143,7 @@ MossTtsDelayHeadsRuntime::MossTtsDelayHeadsRuntime(
         impl_->audio_outputs.push_back(logits.tensor);
     }
 
+    debug::timing_log_context_reservation("moss_tts_delay.heads.graph", gctx);
     impl_->buffer = ggml_backend_alloc_ctx_tensors(gctx, impl_->backend);
     if (impl_->buffer == nullptr) {
         throw std::runtime_error("failed to allocate MOSS delay heads graph");

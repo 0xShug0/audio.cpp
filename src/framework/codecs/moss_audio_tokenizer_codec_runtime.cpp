@@ -964,6 +964,7 @@ struct MossAudioTokenizerEncoder::Impl {
         cache->graph = ggml_new_graph_custom(cache->graph_ctx.get(), 131072, false);
         ggml_build_forward_expand(cache->graph, hidden.tensor);
 
+        debug::timing_log_context_reservation("moss.audio_tokenizer.encode.graph", cache->graph_ctx.get());
         cache->gallocr.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)));
         if (cache->gallocr == nullptr ||
             !ggml_gallocr_reserve(cache->gallocr.get(), cache->graph) ||
@@ -1223,6 +1224,7 @@ struct MossAudioTokenizerDecoder::Impl {
         cache->graph = ggml_new_graph_custom(cache->graph_ctx.get(), 131072, false);
         ggml_build_forward_expand(cache->graph, cache->output);
         cache->attention_cache.build_forward_expand(cache->graph);
+        debug::timing_log_context_reservation("moss.audio_tokenizer.decode_stream.graph", cache->graph_ctx.get());
         cache->gallocr.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)));
         if (!cache->gallocr || !ggml_gallocr_reserve(cache->gallocr.get(), cache->graph) ||
             !ggml_gallocr_alloc_graph(cache->gallocr.get(), cache->graph)) {
@@ -1326,6 +1328,7 @@ struct MossAudioTokenizerDecoder::Impl {
         cache->graph = ggml_new_graph_custom(cache->graph_ctx.get(), 131072, false);
         ggml_build_forward_expand(cache->graph, hidden.tensor);
 
+        debug::timing_log_context_reservation("moss.audio_tokenizer.decode.graph", cache->graph_ctx.get());
         cache->gallocr.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend)));
         if (cache->gallocr == nullptr ||
             !ggml_gallocr_reserve(cache->gallocr.get(), cache->graph) ||

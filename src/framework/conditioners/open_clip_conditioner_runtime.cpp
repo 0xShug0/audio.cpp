@@ -502,6 +502,7 @@ struct OpenClipConditionerRuntime::Impl {
             graph = ggml_new_graph_custom(ctx.get(), 262144, false);
             ggml_set_output(output.tensor);
             ggml_build_forward_expand(graph, output.tensor);
+            debug::timing_log_context_reservation("framework.open_clip.text.graph", ctx.get());
             gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(owner.backend));
             if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
                 throw std::runtime_error("OpenCLIP text failed to allocate graph");
@@ -555,6 +556,7 @@ struct OpenClipConditionerRuntime::Impl {
             graph = ggml_new_graph_custom(ctx.get(), 262144, false);
             ggml_set_output(output.tensor);
             ggml_build_forward_expand(graph, output.tensor);
+            debug::timing_log_context_reservation("framework.open_clip.image.graph", ctx.get());
             gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(owner.backend));
             if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) || !ggml_gallocr_alloc_graph(gallocr, graph)) {
                 throw std::runtime_error("OpenCLIP image failed to allocate graph");
