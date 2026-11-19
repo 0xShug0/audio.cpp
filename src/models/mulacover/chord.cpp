@@ -1,6 +1,7 @@
 #include "engine/models/mulacover/chord.h"
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
@@ -9,7 +10,6 @@
 #include "engine/framework/modules/recurrent_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
-#include "ggml-alloc.h"
 
 #include <algorithm>
 #include <chrono>
@@ -140,40 +140,63 @@ std::vector<ChordTemplate> load_vocabulary(const std::filesystem::path & path) {
 }  // namespace
 
 class ChordNet::Impl {
+    // Bound the unrolled recurrent graph, not its sequence context. CNN instance
+    // normalization still sees the complete song; each direction carries state
+    // between blocks in its own temporal order.
+    static constexpr int64_t recurrent_block_frames = 128;
+    struct RecurrentGraph {
+        core::PreparedGraph::GraphId id;
+        ggml_tensor * input;
+        ggml_tensor * sequence;
+        ggml_tensor * hidden;
+        ggml_tensor * cell;
+    };
+    struct Block {
+        size_t recurrent;
+        ggml_tensor * features;
+        ggml_tensor * sequence;
+    };
     struct Graph {
         core::ExecutionContext & execution;
-        ggml_context * ctx = nullptr;
-        ggml_cgraph * graph = nullptr;
-        ggml_gallocr_t allocator = nullptr;
-        core::HostGraphPlan plan;
+        core::PreparedGraph prepared;
         ggml_tensor * input = nullptr;
-        ggml_tensor * zero = nullptr;
+        ggml_tensor * hidden = nullptr;
+        ggml_tensor * cell = nullptr;
         ggml_tensor * output = nullptr;
-        explicit Graph(core::ExecutionContext & e) : execution(e) {}
-        ~Graph() {
-            release_workspace();
-            if (ctx) ggml_free(ctx);
-        }
-        void allocate() {
-            if (allocator) return;
-            allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()));
-            if (!allocator || !ggml_gallocr_alloc_graph(allocator, graph))
-                throw std::runtime_error("Cannot allocate ChordNet graph tensors");
-            core::prepare_host_graph_plan(execution, graph, plan);
-            debug::timing_log_scalar("mulacover.chord.graph_buffer_mb",
-                static_cast<double>(ggml_gallocr_get_buffer_size(allocator, 0)) / (1024 * 1024));
-        }
-        void release_workspace() {
-            plan.reset();
-            if (!allocator) return;
-            core::release_backend_graph_resources(execution.backend(), graph, true);
-            ggml_gallocr_free(allocator);
-            allocator = nullptr;
-            for (auto * tensor = ggml_get_first_tensor(ctx); tensor; tensor = ggml_get_next_tensor(ctx, tensor)) {
-                tensor->data = nullptr;
-                tensor->buffer = nullptr;
-                tensor->extra = nullptr;
+        core::PreparedGraph::GraphId classifier = 0;
+        std::vector<RecurrentGraph> recurrent;
+        std::array<std::vector<Block>, 2> directions;
+
+        Graph(core::ExecutionContext & e, size_t nodes, size_t blocks)
+            : execution(e), prepared(e, {"mulacover.chord",
+                6 * (nodes * (ggml_tensor_overhead() + 128) + ggml_graph_overhead_custom(nodes, false)),
+                nodes, (16 + 4 * blocks) * ggml_tensor_overhead()}) {}
+
+        void run(const std::vector<float> & cqt, std::vector<float> & prediction) {
+            if (!prepared.allocated()) {
+                prepared.allocate_persistent();
+                prepared.allocate_releasable();
             }
+            debug::timing_log_scalar("mulacover.chord.graph_buffer_mb",
+                (prepared.workspace_bytes() + prepared.persistent_bytes()) / (1024.0 * 1024.0));
+            ggml_backend_tensor_set(input, cqt.data(), 0, cqt.size() * sizeof(float));
+            prepared.compute();
+            const std::array<float, 96> zero{};
+            for (const auto & blocks : directions) {
+                ggml_backend_tensor_set(hidden, zero.data(), 0, sizeof(zero));
+                ggml_backend_tensor_set(cell, zero.data(), 0, sizeof(zero));
+                for (const auto & block : blocks) {
+                    const auto & step = recurrent[block.recurrent];
+                    ggml_backend_tensor_copy_async(execution.backend(), execution.backend(), block.features, step.input);
+                    prepared.compute(step.id);
+                    ggml_backend_tensor_copy_async(execution.backend(), execution.backend(), step.sequence, block.sequence);
+                    ggml_backend_tensor_copy_async(execution.backend(), execution.backend(), step.hidden, hidden);
+                    ggml_backend_tensor_copy_async(execution.backend(), execution.backend(), step.cell, cell);
+                }
+            }
+            prepared.compute(classifier);
+            ggml_backend_tensor_get(output, prediction.data(), 0, prediction.size() * sizeof(float));
+            prepared.release_buffers();
             debug::timing_log_scalar("mulacover.chord.graph_buffer_mb", 0.0);
         }
     };
@@ -192,14 +215,13 @@ class ChordNet::Impl {
     Graph & graph_for(Fold & fold, int64_t frames) {
         if (fold.graph && fold.frames == frames) return *fold.graph;
         fold.graph.reset();
-        auto target = std::make_unique<Graph>(execution_);
-        // LSTMSequence unrolls time. Size the metadata arena and node table from T.
-        const size_t nodes = 8192 + static_cast<size_t>(frames) * 256;
-        target->ctx = ggml_init({nodes * (ggml_tensor_overhead() + 128) +
-            ggml_graph_overhead_custom(nodes, false), nullptr, true});
-        if (!target->ctx) throw std::runtime_error("Cannot allocate ChordNet graph context");
-        core::ModuleBuildContext ctx{target->ctx, "mulacover.chord", execution_.backend_type()};
-        auto x = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1,1,frames,252}));
+        const int64_t block_frames = std::min(frames, recurrent_block_frames);
+        const size_t nodes = 4096 + static_cast<size_t>(block_frames) * 64;
+        const size_t blocks = static_cast<size_t>((frames + block_frames - 1) / block_frames);
+        auto target = std::make_unique<Graph>(execution_, nodes, blocks);
+        auto & ctx = target->prepared.build_context();
+        auto & persistent = target->prepared.persistent_build_context();
+        auto x = core::make_tensor(persistent, GGML_TYPE_F32, TensorShape::from_dims({1,1,frames,252}));
         target->input = x.tensor;
         ggml_set_input(target->input);
         for (size_t i = 0; i < 10; ++i) {
@@ -225,10 +247,49 @@ class ChordNet::Impl {
         x = modules::TransposeModule({{0,2,1,3},4}).build(ctx,x);
         x = core::ensure_backend_addressable_layout(ctx,x);
         x = core::reshape_tensor(ctx,x,TensorShape::from_dims({frames,240}));
-        auto zero = core::make_tensor(ctx,GGML_TYPE_F32,TensorShape::from_dims({1,96}));
-        target->zero = zero.tensor;
-        ggml_set_input(target->zero);
-        x = modules::BidirectionalLSTMModule({240,96}).build(ctx,x,zero,zero,zero,zero,fold.lstm).sequence;
+        auto features = core::make_tensor(persistent, GGML_TYPE_F32, TensorShape::from_dims({frames,240}));
+        auto * feature_copy = ggml_cpy(ctx.ggml, x.tensor, features.tensor);
+        ggml_build_forward_expand(target->prepared.graph(), feature_copy);
+        auto hidden = core::make_tensor(persistent, GGML_TYPE_F32, TensorShape::from_dims({1,96}));
+        auto cell = core::make_tensor(persistent, GGML_TYPE_F32, TensorShape::from_dims({1,96}));
+        target->hidden = hidden.tensor;
+        target->cell = cell.tensor;
+        std::array<TensorValue, 2> sequences;
+        for (size_t direction = 0; direction < 2; ++direction) {
+            sequences[direction] = core::make_tensor(persistent, GGML_TYPE_F32, TensorShape::from_dims({frames,96}));
+            const auto & weights = direction == 0 ? fold.lstm.forward : fold.lstm.reverse;
+            for (int64_t offset = 0; offset < frames; offset += block_frames) {
+                const int64_t count = std::min(block_frames, frames - offset);
+                const int64_t begin = direction == 0 ? offset : frames - offset - count;
+                size_t index = target->recurrent.size();
+                // Only full-block and remainder graphs are needed per direction.
+                for (const auto & block : target->directions[direction]) {
+                    if (target->recurrent[block.recurrent].input->ne[2] == count) {
+                        index = block.recurrent;
+                        break;
+                    }
+                }
+                if (index == target->recurrent.size()) {
+                    auto input = core::make_tensor(persistent, GGML_TYPE_F32, TensorShape::from_dims({count,1,240}));
+                    const auto id = target->prepared.add_graph("lstm." + std::to_string(direction) + "." + std::to_string(count));
+                    const auto result = modules::LSTMSequenceModule({240,96,direction != 0,true}).build(
+                        ctx, input, hidden, cell, {weights});
+                    auto sequence = core::reshape_tensor(ctx,result.sequence,TensorShape::from_dims({count,96}));
+                    ggml_set_output(sequence.tensor);
+                    ggml_set_output(result.hidden.tensor);
+                    ggml_set_output(result.cell.tensor);
+                    ggml_build_forward_expand(target->prepared.graph(id), sequence.tensor);
+                    ggml_build_forward_expand(target->prepared.graph(id), result.hidden.tensor);
+                    ggml_build_forward_expand(target->prepared.graph(id), result.cell.tensor);
+                    target->recurrent.push_back({id,input.tensor,sequence.tensor,result.hidden.tensor,result.cell.tensor});
+                }
+                auto * source = ggml_view_3d(persistent.ggml,features.tensor,240,1,count,240*sizeof(float),240*sizeof(float),begin*240*sizeof(float));
+                auto * destination = ggml_view_2d(persistent.ggml,sequences[direction].tensor,96,count,96*sizeof(float),begin*96*sizeof(float));
+                target->directions[direction].push_back({index,source,destination});
+            }
+        }
+        target->classifier = target->prepared.add_graph("classifier");
+        x = modules::ConcatModule({1}).build(ctx,sequences[0],sequences[1]);
         x = modules::LinearModule({192,100,true,GGML_PREC_DEFAULT}).build(ctx,x,fold.linear);
         TensorValue probabilities;
         int offset = 0;
@@ -240,9 +301,7 @@ class ChordNet::Impl {
         }
         target->output = core::ensure_backend_addressable_layout(ctx,probabilities).tensor;
         ggml_set_output(target->output);
-        target->graph = ggml_new_graph_custom(ctx.ggml,nodes,false);
-        ggml_build_forward_expand(target->graph,target->output);
-        core::validate_backend_graph_supported(execution_.backend(),target->graph,"mulacover.chord");
+        ggml_build_forward_expand(target->prepared.graph(target->classifier),target->output);
         fold.frames = frames;
         fold.graph = std::move(target);
         return *fold.graph;
@@ -286,16 +345,15 @@ public:
         std::vector<ChordEvent> events;
         if (frames != 0) {
             std::vector<float> probabilities(frames*100,0.0f), prediction(frames*100);
-            const std::array<float,96> zero{};
             for (auto & fold : folds_) {
                 auto & graph = graph_for(fold,static_cast<int64_t>(frames));
-                graph.allocate();
-                ggml_backend_tensor_set(graph.input,cqt.data(),0,cqt.size()*sizeof(float));
-                ggml_backend_tensor_set(graph.zero,zero.data(),0,sizeof(zero));
-                if (core::compute_graph(execution_,graph.graph,graph.plan) != GGML_STATUS_SUCCESS)
-                    throw std::runtime_error("ChordNet graph execution failed");
-                ggml_backend_tensor_get(graph.output,prediction.data(),0,prediction.size()*sizeof(float));
-                graph.release_workspace();
+                try {
+                    graph.run(cqt, prediction);
+                } catch (...) {
+                    // Failed preparation/execution cannot remain a reusable cache entry.
+                    fold.graph.reset();
+                    throw;
+                }
                 for (size_t j = 0; j < prediction.size(); ++j) probabilities[j] += prediction[j];
             }
             // numpy.mean on five F32 predictions: sum in fold order, then divide.
