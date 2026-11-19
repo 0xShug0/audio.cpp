@@ -5,6 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/lookup_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -95,6 +96,7 @@ DecoderHiddenConfig hidden_config_from_runtime(const CausalDecoderRuntimeConfig 
     DecoderHiddenConfig out;
     out.stack = config.decoder.stack;
     out.hidden_mode = config.decoder.logits_mode;
+    out.embedding_scale = config.decoder.embedding_scale;
     out.static_cache_type = config.decoder.static_cache_type;
     return out;
 }
@@ -2111,7 +2113,13 @@ private:
         for (auto * tensor : {block_input_, block_positions_, block_mask_, block_last_}) { ggml_set_input(tensor); }
         block_graph_ = ggml_new_graph_custom(ctx.ggml, 65536, false);
         const DecoderLayerModule layer(decoder_layer_config_from_stack(config_.decoder.stack));
+        // Chunked block prefill bypasses DecoderHiddenModule, so the opt-in
+        // input embedding scale is applied here at the same boundary (once,
+        // before the first layer, after host embeddings are uploaded).
         auto hidden = input;
+        if (config_.decoder.embedding_scale != 1.0F) {
+            hidden = ScaleBiasModule({config_.decoder.embedding_scale, 0.0F}).build(ctx, hidden);
+        }
         for (size_t i = 0; i < weights_.stack.layers.size(); ++i) {
             hidden = layer.build_with_static_cache_block(ctx, block_graph_, hidden, positions,
                 weights_.stack.layers[i], decode_cache_.key_tensor(i), decode_cache_.value_tensor(i),
@@ -2133,9 +2141,16 @@ private:
                 hidden = core::wrap_tensor(ggml_cast(ctx.ggml, hidden.tensor, *config_.decoder.lm_head_input_type),
                     hidden.shape, *config_.decoder.lm_head_input_type);
             }
-            block_logits_ = LinearModule({config_.decoder.stack.hidden_size, config_.decoder.logits_size,
+            auto block_logits_value = LinearModule({config_.decoder.stack.hidden_size, config_.decoder.logits_size,
                 config_.decoder.use_lm_head_bias, config_.decoder.lm_head_precision})
-                .build(ctx, hidden, *weights_.lm_head).tensor;
+                .build(ctx, hidden, *weights_.lm_head);
+            // The block path inlines the LM head, so the opt-in logit divisor
+            // is applied here to match CausalDecoderModule.
+            if (config_.decoder.logit_divisor != 1.0F) {
+                block_logits_value = ScaleBiasModule({1.0F / config_.decoder.logit_divisor, 0.0F})
+                    .build(ctx, block_logits_value);
+            }
+            block_logits_ = block_logits_value.tensor;
             ggml_set_output(block_logits_);
             ggml_build_forward_expand(block_graph_, block_logits_);
         }

@@ -5336,6 +5336,44 @@
           "options": {"voice_id": "english_female"}
         }
       ]
+    },
+    {
+      "id": "granite_speech5_short_en",
+      "coverage": "Granite Speech 5.0 2B short English transcription with an explicit language hint",
+      "family": "granite_speech5",
+      "model": "build/granite-2b-handoff/hf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "short_en", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "language": "en"},
+        {"id": "short_en_repeat", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "language": "en"}
+      ]
+    },
+    {
+      "id": "granite_speech5_japanese_hint",
+      "coverage": "Granite Speech 5.0 2B Japanese transcription with a Japanese hint and an auto repeat",
+      "family": "granite_speech5",
+      "model": "build/granite-2b-handoff/hf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "japanese_hint", "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav", "language": "ja"},
+        {"id": "japanese_auto", "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"}
+      ]
+    },
+    {
+      "id": "granite_speech5_fixed_chunking",
+      "coverage": "Granite Speech 5.0 2B fixed chunking with input longer than the requested chunk limit",
+      "family": "granite_speech5",
+      "model": "build/granite-2b-handoff/hf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "fixed_4s", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "language": "en", "options": {"audio_chunk_mode": "fixed", "audio_chunk_duration_sec": 4}}
+      ]
     }
   ],
   "audit_gaps": [

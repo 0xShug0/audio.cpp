@@ -2523,6 +2523,25 @@ audiocpp_add_model(citrinet_asr
         engine::models::citrinet_asr::make_citrinet_asr_loader
 )
 
+# granite_speech5 must precede granite5asr: granite5asr's can_load also
+# matches model_type "granite_speech", so registration order decides native
+# auto-detect between the TurboCTC checkpoint and this conditional-generation
+# checkpoint (this loader's triple check rejects TurboCTC snapshots).
+audiocpp_add_model(granite_speech5
+    SOURCES
+        src/community_models/granite_speech5/assets.cpp
+        src/community_models/granite_speech5/frontend.cpp
+        src/community_models/granite_speech5/encoder.cpp
+        src/community_models/granite_speech5/projector.cpp
+        src/community_models/granite_speech5/decoder.cpp
+        src/community_models/granite_speech5/prompt.cpp
+        src/community_models/granite_speech5/session.cpp
+    INCLUDES
+        engine/community_models/granite_speech5/session.h
+    LOADERS
+        engine::community_models::granite_speech5::make_granite_speech5_loader
+)
+
 audiocpp_add_model(granite5asr
     SOURCES
         src/community_models/granite5asr/assets.cpp
@@ -4294,6 +4313,24 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(granite5asr_ctc_timestamps_test tests/granite5asr/test_ctc_timestamps.cpp)
         target_include_directories(granite5asr_ctc_timestamps_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(NAME granite5asr_ctc_timestamps_test COMMAND granite5asr_ctc_timestamps_test)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND granite_speech5 IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_library(granite_speech5_test_impl STATIC
+            $<TARGET_OBJECTS:engine_model_granite_speech5>)
+        target_link_libraries(granite_speech5_test_impl PUBLIC engine_runtime ggml)
+        foreach(stage b1 b2 c1 c2 d f)
+            set(test_name granite_speech5_${stage}_units_test)
+            add_executable(${test_name}
+                tests/granite_speech5/test_granite_speech5_${stage}_units.cpp)
+            target_link_libraries(${test_name} PRIVATE granite_speech5_test_impl)
+            target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            target_compile_definitions(${test_name} PRIVATE AUDIOCPP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+            add_test(NAME ${test_name} COMMAND ${test_name})
+        endforeach()
+        add_executable(granite_speech5_parity_probe
+            tests/granite_speech5/granite_speech5_parity_probe.cpp)
+        target_link_libraries(granite_speech5_parity_probe PRIVATE granite_speech5_test_impl)
     endif()
 
     if (sense_asr IN_LIST AUDIOCPP_LINKED_MODELS)
