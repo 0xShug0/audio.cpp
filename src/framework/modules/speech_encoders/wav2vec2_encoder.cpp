@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -669,7 +670,7 @@ private:
         }
         release_graph();
         ggml_init_params params{
-            1024ull * 1024ull * 1024ull,
+            32ull * 1024ull * 1024ull,
             nullptr,
             true,
         };
@@ -701,6 +702,7 @@ private:
                 ggml_build_forward_expand(graph_, layer_output.tensor);
             }
         }
+        debug::timing_log_context_reservation("framework.wav2vec2.graph", ggml_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->execution_context->backend()));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
@@ -769,7 +771,7 @@ Wav2Vec2EncoderRuntime Wav2Vec2EncoderRuntime::load_from_tensor_source(
         weights->execution_context->backend(),
         weights->execution_context->backend_type(),
         "framework.wav2vec2.weights",
-        1024ull * 1024ull * 1024ull);
+        8ull * 1024ull * 1024ull);
 
     const auto & config_ref = weights->config;
     weights->tensors.reserve(static_cast<size_t>(config_ref.num_hidden_layers * 12 + config_ref.conv_dim.size() * 3 + 8));

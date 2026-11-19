@@ -29,11 +29,7 @@
 namespace engine::models::rvc {
 namespace {
 
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-constexpr size_t kDefaultGraphCtxBytes = 1024ull * 1024ull * 1024ull;
-#else
-constexpr size_t kDefaultGraphCtxBytes = 4096ull * 1024ull * 1024ull;
-#endif
+constexpr size_t kDefaultGraphCtxBytes = 32ull * 1024ull * 1024ull;
 
 using engine::core::TensorShape;
 using engine::core::TensorValue;
@@ -146,7 +142,7 @@ std::shared_ptr<RvcSynthesizerWeights> load_weights(
         weights->execution_context->backend(),
         weights->execution_context->backend_type(),
         "rvc.synthesizer.weights",
-        1024ull * 1024ull * 1024ull);
+        8ull * 1024ull * 1024ull);
     const auto tensors = source->tensors();
     weights->tensors.reserve(tensors.size());
     for (const auto & tensor : tensors) {
@@ -804,6 +800,7 @@ RvcSynthesizerOutput RvcSynthesizer::infer(const RvcSynthesizerInput & input) co
         state_->graph = ggml_new_graph_custom(state_->graph_ctx, 524288, false);
         ggml_set_output(state_->output.tensor);
         ggml_build_forward_expand(state_->graph, state_->output.tensor);
+        engine::debug::timing_log_context_reservation("rvc.synthesizer.graph", state_->graph_ctx);
         state_->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(state_->weights->execution_context->backend()));
         if (state_->gallocr == nullptr ||
             !ggml_gallocr_reserve(state_->gallocr, state_->graph) ||

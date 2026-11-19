@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -582,12 +583,12 @@ private:
         }
         release_graph();
         const auto build_start = Clock::now();
-        ggml_init_params graph_params{512ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params graph_params{32ull * 1024ull * 1024ull, nullptr, true};
         graph_ctx_.reset(ggml_init(graph_params));
         if (graph_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize HiFi-GAN graph context");
         }
-        ggml_init_params input_params{32ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params input_params{16ull * 1024ull * 1024ull, nullptr, true};
         input_ctx_.reset(ggml_init(input_params));
         if (input_ctx_ == nullptr) {
             throw std::runtime_error("failed to initialize HiFi-GAN input context");
@@ -643,6 +644,8 @@ private:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(graph_ctx_.get(), 131072, false);
         ggml_build_forward_expand(graph_, output_);
+        debug::timing_log_context_reservation("framework.hifigan.graph", graph_ctx_.get());
+        debug::timing_log_context_reservation("framework.hifigan.inputs", input_ctx_.get());
         input_buffer_ = ggml_backend_alloc_ctx_tensors(input_ctx_.get(), weights_.execution_context->backend());
         if (input_buffer_ == nullptr) {
             release_graph();
@@ -701,7 +704,7 @@ HifiGanVocoderComponent HifiGanVocoderComponent::load_from_tensor_source(
         weights->execution_context->backend(),
         weights->execution_context->backend_type(),
         "framework.hifigan.weights",
-        512ull * 1024ull * 1024ull);
+        8ull * 1024ull * 1024ull);
 
     for (const auto & tensor : source->tensors()) {
         if (!weights->config.tensor_prefix.empty() &&

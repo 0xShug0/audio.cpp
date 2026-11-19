@@ -47,10 +47,10 @@ struct HeartCodecConfig {
 };
 
 struct HeartCodecRuntimeOptions {
-    size_t weight_context_bytes = 32ull * 1024ull * 1024ull;
-    size_t flow_estimator_graph_arena_bytes = 2048ull * 1024ull * 1024ull;
-    size_t conditioning_graph_arena_bytes = 512ull * 1024ull * 1024ull;
-    size_t scalar_decoder_graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+    size_t weight_context_bytes = 8ull * 1024ull * 1024ull;
+    size_t flow_estimator_graph_arena_bytes = 32ull * 1024ull * 1024ull;
+    size_t conditioning_graph_arena_bytes = 16ull * 1024ull * 1024ull;
+    size_t scalar_decoder_graph_arena_bytes = 32ull * 1024ull * 1024ull;
     assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native;
 };
 
