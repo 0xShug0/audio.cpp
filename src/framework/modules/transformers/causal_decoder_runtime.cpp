@@ -5,6 +5,7 @@
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/lookup_modules.h"
+#include "engine/framework/modules/primitive_modules.h"
 
 #include <ggml-backend.h>
 #include <ggml.h>
@@ -2117,10 +2118,7 @@ private:
         // before the first layer, after host embeddings are uploaded).
         auto hidden = input;
         if (config_.decoder.embedding_scale != 1.0F) {
-            hidden = core::wrap_tensor(
-                ggml_scale(ctx.ggml, hidden.tensor, config_.decoder.embedding_scale),
-                hidden.shape,
-                hidden.type);
+            hidden = ScaleBiasModule({config_.decoder.embedding_scale, 0.0F}).build(ctx, hidden);
         }
         for (size_t i = 0; i < weights_.stack.layers.size(); ++i) {
             hidden = layer.build_with_static_cache_block(ctx, block_graph_, hidden, positions,
@@ -2149,10 +2147,8 @@ private:
             // The block path inlines the LM head, so the opt-in logit divisor
             // is applied here to match CausalDecoderModule.
             if (config_.decoder.logit_divisor != 1.0F) {
-                block_logits_value = core::wrap_tensor(
-                    ggml_scale(ctx.ggml, block_logits_value.tensor, 1.0F / config_.decoder.logit_divisor),
-                    block_logits_value.shape,
-                    block_logits_value.type);
+                block_logits_value = ScaleBiasModule({1.0F / config_.decoder.logit_divisor, 0.0F})
+                    .build(ctx, block_logits_value);
             }
             block_logits_ = block_logits_value.tensor;
             ggml_set_output(block_logits_);

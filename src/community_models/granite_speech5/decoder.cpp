@@ -19,12 +19,14 @@ modules::DecoderStackConfig make_granite_stack_config(core::BackendType backend)
     stack.use_qk_norm = false;
     stack.attention_scale = kGraniteSpeech5AttentionScale;
     stack.residual_scale = kGraniteSpeech5ResidualScale;
-    stack.rope_freq_scale = kGraniteSpeech5YarnFreqScale;
-    stack.rope_ext_factor = kGraniteSpeech5YarnExtFactor;
-    stack.rope_attn_factor = kGraniteSpeech5YarnAttnFactor;
-    stack.rope_beta_fast = kGraniteSpeech5YarnBetaFast;
-    stack.rope_beta_slow = kGraniteSpeech5YarnBetaSlow;
-    stack.rope_orig_context = kGraniteSpeech5YarnOrigContext;
+    modules::RoPEConfig rope{stack.head_dim, stack.rope_type, stack.rope_theta};
+    rope.freq_scale = kGraniteSpeech5YarnFreqScale;
+    rope.ext_factor = kGraniteSpeech5YarnExtFactor;
+    rope.attn_factor = kGraniteSpeech5YarnAttnFactor;
+    rope.beta_fast = kGraniteSpeech5YarnBetaFast;
+    rope.beta_slow = kGraniteSpeech5YarnBetaSlow;
+    rope.orig_context = kGraniteSpeech5YarnOrigContext;
+    stack.rope = rope;
     // Retain manual Vulkan prefill after flash prefill triggered device loss.
     // Single-token decoding still uses the framework flash path.
     stack.runtime.attention.prefill_mode = backend == core::BackendType::Vulkan

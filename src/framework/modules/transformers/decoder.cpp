@@ -58,51 +58,26 @@ int64_t require_head_dim(const DecoderLayerConfig & config) {
     if (!std::isfinite(config.residual_scale) || config.residual_scale <= 0.0F) {
         throw std::runtime_error("QwenDecoderLayerConfig residual_scale must be positive and finite");
     }
-    for (const float value :
-         {config.rope_freq_scale, config.rope_ext_factor, config.rope_attn_factor,
-          config.rope_beta_fast, config.rope_beta_slow}) {
-        if (!std::isfinite(value)) {
-            throw std::runtime_error("QwenDecoderLayerConfig RoPE scaling values must be finite");
+    if (config.rope) {
+        const auto & rope = *config.rope;
+        for (const float value : {rope.freq_scale, rope.ext_factor, rope.attn_factor, rope.beta_fast, rope.beta_slow}) {
+            if (!std::isfinite(value)) {
+                throw std::runtime_error("Decoder rotary scaling values must be finite");
+            }
         }
-    }
-    if (config.rope_freq_scale <= 0.0F) {
-        throw std::runtime_error("QwenDecoderLayerConfig rope_freq_scale must be positive");
-    }
-    if (config.rope_beta_fast < 0.0F || config.rope_beta_slow < 0.0F || config.rope_orig_context < 0) {
-        throw std::runtime_error("QwenDecoderLayerConfig RoPE beta factors and orig context must be non-negative");
-    }
-    if (config.rope_ext_factor != 0.0F && config.rope_orig_context <= 0) {
-        throw std::runtime_error(
-            "QwenDecoderLayerConfig rope_ext_factor requires a positive rope_orig_context");
+        if (rope.freq_scale <= 0.0F || rope.beta_fast < 0.0F || rope.beta_slow < 0.0F || rope.orig_context < 0 ||
+            (rope.ext_factor != 0.0F && rope.orig_context == 0)) {
+            throw std::runtime_error("Decoder rotary scaling configuration is invalid");
+        }
     }
     return config.head_dim;
 }
 
-float resolve_attention_scale(const DecoderLayerConfig & config, int64_t dim) {
-    if (config.attention_scale.has_value()) {
-        return *config.attention_scale;
-    }
-    return 1.0F / std::sqrt(static_cast<float>(dim));
-}
-
-core::TensorValue scale_residual_branch(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & branch,
-    float residual_scale) {
-    if (residual_scale == 1.0F) {
-        return branch;
-    }
-    return core::wrap_tensor(ggml_scale(ctx.ggml, branch.tensor, residual_scale), branch.shape, branch.type);
-}
-
 RoPEConfig make_layer_rope_config(const DecoderLayerConfig & config, int64_t dim) {
+    if (config.rope) {
+        return *config.rope;
+    }
     RoPEConfig rope{dim, config.rope_type, config.rope_theta};
-    rope.freq_scale = config.rope_freq_scale;
-    rope.ext_factor = config.rope_ext_factor;
-    rope.attn_factor = config.rope_attn_factor;
-    rope.beta_fast = config.rope_beta_fast;
-    rope.beta_slow = config.rope_beta_slow;
-    rope.orig_context = config.rope_orig_context;
     rope.intermediate_round_type = config.activation_cast.rope_intermediate_type;
     return rope;
 }
@@ -437,12 +412,7 @@ DecoderLayerConfig decoder_layer_config_from_stack(const DecoderStackConfig & co
     out.use_qk_norm = config.use_qk_norm;
     out.attention_scale = config.attention_scale;
     out.residual_scale = config.residual_scale;
-    out.rope_freq_scale = config.rope_freq_scale;
-    out.rope_ext_factor = config.rope_ext_factor;
-    out.rope_attn_factor = config.rope_attn_factor;
-    out.rope_beta_fast = config.rope_beta_fast;
-    out.rope_beta_slow = config.rope_beta_slow;
-    out.rope_orig_context = config.rope_orig_context;
+    out.rope = config.rope;
     out.activation_cast = config.activation_cast;
     out.runtime = config.runtime;
     return out;
@@ -687,7 +657,7 @@ DecoderLayerOutputs DecoderLayerModule::build(
         all_v = ConcatModule({1}).build(ctx, *attention_prefix_value, v);
     }
     core::TensorValue context;
-    const float attention_scale = resolve_attention_scale(config_, dim);
+    const float attention_scale = config_.attention_scale.value_or(1.0F / std::sqrt(static_cast<float>(dim)));
     if (allow_flash && !prefix_key.has_value() && attention_mask.has_value() &&
         config_.runtime.attention.prefill_mode == DecoderAttentionMode::FlashGroupedViewKV) {
         q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
@@ -762,7 +732,10 @@ DecoderLayerOutputs DecoderLayerModule::build(
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention_output) {
         attn_out = activation_cast(ctx, attn_out, config_.activation_cast);
     }
-    auto x = AddModule{}.build(ctx, input, scale_residual_branch(ctx, attn_out, config_.residual_scale));
+    if (config_.residual_scale != 1.0F) {
+        attn_out = ScaleBiasModule({config_.residual_scale, 0.0F}).build(ctx, attn_out);
+    }
+    auto x = AddModule{}.build(ctx, input, attn_out);
     if (config_.activation_cast.enabled && config_.activation_cast.after_residual) {
         x = activation_cast(ctx, x, config_.activation_cast);
     }
@@ -774,7 +747,10 @@ DecoderLayerOutputs DecoderLayerModule::build(
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
     }
     auto ff = build_mlp(ctx, ff_in, config_, weights.mlp);
-    auto output = AddModule{}.build(ctx, x, scale_residual_branch(ctx, ff, config_.residual_scale));
+    if (config_.residual_scale != 1.0F) {
+        ff = ScaleBiasModule({config_.residual_scale, 0.0F}).build(ctx, ff);
+    }
+    auto output = AddModule{}.build(ctx, x, ff);
     if (config_.activation_cast.enabled && config_.activation_cast.after_output) {
         output = activation_cast(ctx, output, config_.activation_cast);
     }
@@ -909,7 +885,7 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
     core::TensorValue context;
-    const float attention_scale = resolve_attention_scale(config_, dim);
+    const float attention_scale = config_.attention_scale.value_or(1.0F / std::sqrt(static_cast<float>(dim)));
     const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
         config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery &&
@@ -978,7 +954,10 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention_output) {
         attn_out = activation_cast(ctx, attn_out, config_.activation_cast);
     }
-    auto x = AddModule{}.build(ctx, input, scale_residual_branch(ctx, attn_out, config_.residual_scale));
+    if (config_.residual_scale != 1.0F) {
+        attn_out = ScaleBiasModule({config_.residual_scale, 0.0F}).build(ctx, attn_out);
+    }
+    auto x = AddModule{}.build(ctx, input, attn_out);
     if (config_.activation_cast.enabled && config_.activation_cast.after_residual) {
         x = activation_cast(ctx, x, config_.activation_cast);
     }
@@ -990,7 +969,10 @@ DecoderLayerOutputs DecoderLayerModule::build_static_cache_impl(
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
     }
     auto ff = build_mlp(ctx, ff_in, config_, weights.mlp);
-    auto output = AddModule{}.build(ctx, x, scale_residual_branch(ctx, ff, config_.residual_scale));
+    if (config_.residual_scale != 1.0F) {
+        ff = ScaleBiasModule({config_.residual_scale, 0.0F}).build(ctx, ff);
+    }
+    auto output = AddModule{}.build(ctx, x, ff);
     if (config_.activation_cast.enabled && config_.activation_cast.after_output) {
         output = activation_cast(ctx, output, config_.activation_cast);
     }
@@ -1078,7 +1060,7 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
     auto k_heads = TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
     auto v_heads = TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
     core::TensorValue context;
-    const float attention_scale = resolve_attention_scale(config_, dim);
+    const float attention_scale = config_.attention_scale.value_or(1.0F / std::sqrt(static_cast<float>(dim)));
     const bool allow_flash = flash_branches_allowed(config_);
     const bool use_grouped_query =
         config_.runtime.attention.static_mode == DecoderAttentionMode::ManualRepeatThenGroupedQuery &&
@@ -1147,7 +1129,10 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
     if (config_.activation_cast.enabled && config_.activation_cast.after_attention_output) {
         attn_out = activation_cast(ctx, attn_out, config_.activation_cast);
     }
-    auto x = AddModule{}.build(ctx, input, scale_residual_branch(ctx, attn_out, config_.residual_scale));
+    if (config_.residual_scale != 1.0F) {
+        attn_out = ScaleBiasModule({config_.residual_scale, 0.0F}).build(ctx, attn_out);
+    }
+    auto x = AddModule{}.build(ctx, input, attn_out);
     if (config_.activation_cast.enabled && config_.activation_cast.after_residual) {
         x = activation_cast(ctx, x, config_.activation_cast);
     }
@@ -1159,7 +1144,10 @@ DecoderLayerOutputs DecoderLayerModule::build_with_static_cache_tail_batched(
         ff_in = activation_cast(ctx, ff_in, config_.activation_cast);
     }
     auto ff = build_mlp(ctx, ff_in, config_, weights.mlp);
-    auto output = AddModule{}.build(ctx, x, scale_residual_branch(ctx, ff, config_.residual_scale));
+    if (config_.residual_scale != 1.0F) {
+        ff = ScaleBiasModule({config_.residual_scale, 0.0F}).build(ctx, ff);
+    }
+    auto output = AddModule{}.build(ctx, x, ff);
     if (config_.activation_cast.enabled && config_.activation_cast.after_output) {
         output = activation_cast(ctx, output, config_.activation_cast);
     }
