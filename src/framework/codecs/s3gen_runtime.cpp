@@ -1,5 +1,6 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/deferred_tensor_writer.h"
 #include "engine/framework/core/execution_context.h"
@@ -1283,7 +1284,7 @@ private:
             const engine::core::BackendConfig &)
             : execution_context_(weights.execution_context) {
             ggml_init_params params = {};
-            params.mem_size = 192ull * 1024ull * 1024ull;
+            params.mem_size = 32ull * 1024ull * 1024ull;
             params.mem_buffer = nullptr;
             params.no_alloc = true;
             ggml_ = ggml_init(params);
@@ -1390,7 +1391,7 @@ private:
                 const engine::core::BackendConfig &)
                 : execution_context_(&execution_context) {
                 ggml_init_params params = {};
-                params.mem_size = 192ull * 1024ull * 1024ull;
+                params.mem_size = 32ull * 1024ull * 1024ull;
                 params.mem_buffer = nullptr;
                 params.no_alloc = true;
                 ggml_ = ggml_init(params);
@@ -1477,7 +1478,7 @@ private:
                 const engine::core::BackendConfig &)
                 : execution_context_(&execution_context) {
                 ggml_init_params params = {};
-                params.mem_size = 128ull * 1024ull * 1024ull;
+                params.mem_size = 32ull * 1024ull * 1024ull;
                 params.mem_buffer = nullptr;
                 params.no_alloc = true;
                 ggml_ = ggml_init(params);
@@ -1547,7 +1548,7 @@ private:
             const engine::core::BackendConfig &)
             : execution_context_(weights.execution_context) {
             ggml_init_params params = {};
-            params.mem_size = 192ull * 1024ull * 1024ull;
+            params.mem_size = 32ull * 1024ull * 1024ull;
             params.mem_buffer = nullptr;
             params.no_alloc = true;
             ggml_ = ggml_init(params);
@@ -1623,7 +1624,7 @@ private:
             const engine::core::BackendConfig &)
             : execution_context_(&execution_context) {
             ggml_init_params params = {};
-            params.mem_size = 64ull * 1024ull * 1024ull;
+            params.mem_size = 16ull * 1024ull * 1024ull;
             params.mem_buffer = nullptr;
             params.no_alloc = true;
             ggml_ = ggml_init(params);
@@ -1749,7 +1750,7 @@ public:
         cached_attention_mask_values_.clear();
 
         ggml_init_params params = {};
-        params.mem_size = 512ull * 1024ull * 1024ull;
+        params.mem_size = 32ull * 1024ull * 1024ull;
         params.mem_buffer = nullptr;
         params.no_alloc = true;
         graph_ggml_ = ggml_init(params);
@@ -1836,6 +1837,7 @@ public:
 
         graph_ = ggml_new_graph_custom(graph_ggml_, 262144, false);
         ggml_build_forward_expand(graph_, output_tensor_.tensor);
+        engine::debug::timing_log_context_reservation("s3gen.decoder.graph", graph_ggml_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||
@@ -2055,7 +2057,7 @@ std::shared_ptr<const S3FlowEncoderWeights> load_s3_flow_encoder_weights(
         execution_context.backend(),
         execution_context.backend_type(),
         "s3gen.encoder.weights",
-        1024ull * 1024ull * 1024ull);
+        8ull * 1024ull * 1024ull);
     // ggml_get_rows (used by S3TokenEmbeddingGraph for this lookup table) only supports F32/F16
     // and legacy quant types on the CUDA backend, not K-quants -- pin this one small table
     // (~6.7 MB in F16) to F16 regardless of the requested weight_storage_type so a Q4_K/Q5_K/...
@@ -2131,7 +2133,7 @@ std::shared_ptr<const S3FlowDecoderWeights> load_s3_flow_decoder_weights(
         execution_context.backend(),
         execution_context.backend_type(),
         "s3gen.decoder.weights",
-        2048ull * 1024ull * 1024ull);
+        8ull * 1024ull * 1024ull);
 
     auto load_causal_block = [&](const std::string & prefix, int64_t in_channels, int64_t out_channels) {
         S3FlowDecoderWeights::CausalBlockWeights block;
@@ -2578,7 +2580,7 @@ public:
         : frames_(frames),
           execution_context_(&execution_context) {
         ggml_init_params params = {};
-        params.mem_size = 64ull * 1024ull * 1024ull;
+        params.mem_size = 16ull * 1024ull * 1024ull;
         params.mem_buffer = nullptr;
         params.no_alloc = true;
         ggml_ = ggml_init(params);

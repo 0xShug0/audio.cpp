@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/asr_helpers.h"
@@ -745,6 +746,7 @@ void NemotronFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     graph->graph = ggml_new_graph_custom(graph->ggml, kEncoderGraphNodes, false);
     ggml_build_forward_expand(graph->graph, graph->output.tensor);
     const auto alloc_start = Clock::now();
+    engine::debug::timing_log_context_reservation("nemotron_asr.encoder.graph", graph->ggml);
     graph->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(graph->backend));
     if (graph->gallocr == nullptr ||
         !ggml_gallocr_reserve(graph->gallocr, graph->graph) ||

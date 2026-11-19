@@ -98,8 +98,8 @@ public:
         core::BackendType backend_type,
         int device,
         int threads,
-        size_t weight_context_bytes = 256ull * 1024ull * 1024ull,
-        size_t constant_context_bytes = 128ull * 1024ull * 1024ull,
+        size_t weight_context_bytes = 8ull * 1024ull * 1024ull,
+        size_t constant_context_bytes = 16ull * 1024ull * 1024ull,
         assets::TensorStorageType weight_storage_type = assets::TensorStorageType::Native);
 
     ~VibeVoiceTokenizerWeightsRuntime();

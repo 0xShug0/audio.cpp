@@ -183,7 +183,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "decode_graph_arena_mb",
@@ -191,7 +191,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "weight_context_mb",
@@ -199,7 +199,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 8
       },
       {
         "name": "codec_weight_context_mb",
@@ -207,7 +207,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 8
       },
       {
         "name": "codec_constant_context_mb",
@@ -215,7 +215,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 16
       },
       {
         "name": "global_graph_arena_mb",
@@ -223,7 +223,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 32
       },
       {
         "name": "wave_graph_arena_mb",
@@ -231,7 +231,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 32
       }
     ],
     "load": []

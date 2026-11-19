@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -25,8 +26,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kGemmaPromptWeightContextBytes = 28ull * 1024ull * 1024ull * 1024ull;
-constexpr size_t kGemmaPromptAggregateWeightContextBytes = 1024ull * 1024ull * 1024ull;
+constexpr size_t kGemmaPromptWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kGemmaPromptAggregateWeightContextBytes = 8ull * 1024ull * 1024ull;
 constexpr float kFeatureRmsNormEps = 1.0e-6F;
 constexpr float kMaskNegInf = -std::numeric_limits<float>::max();
 
@@ -368,7 +369,7 @@ private:
         engine::debug::trace_log_scalar("dramabox.gemma_prompt.graph.max_batch", max_batch_);
         engine::debug::trace_log_scalar("dramabox.gemma_prompt.graph.tokens", config.gemma.prompt_max_length);
         engine::debug::trace_log_scalar("dramabox.gemma_prompt.graph.cuda", backend_type_ == core::BackendType::Cuda);
-        ggml_init_params params{1536ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{64ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("DramaBox Gemma prompt ggml context initialization failed");
@@ -413,6 +414,7 @@ private:
         ggml_set_output(output_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
         ggml_build_forward_expand(graph_, output_);
+        engine::debug::timing_log_context_reservation("dramabox.gemma_prompt.graph", ctx_.get());
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr ||
             !ggml_gallocr_reserve(gallocr_, graph_) ||

@@ -32,13 +32,9 @@ namespace engine::models::vibevoice_asr {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr size_t kDefaultTokenizerWeightContextBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultConnectorWeightContextBytes = 128ull * 1024ull * 1024ull;
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-constexpr size_t kDefaultDecoderWeightContextBytes = 1024ull * 1024ull * 1024ull;
-#else
-constexpr size_t kDefaultDecoderWeightContextBytes = 4096ull * 1024ull * 1024ull;
-#endif
+constexpr size_t kDefaultTokenizerWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDefaultConnectorWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDefaultDecoderWeightContextBytes = 8ull * 1024ull * 1024ull;
 constexpr double kDefaultAudioChunkSeconds = 20.0 * 60.0;
 constexpr int64_t kStreamingDecoderInitialCacheSteps = 1024;
 

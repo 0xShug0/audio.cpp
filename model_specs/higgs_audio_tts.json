@@ -160,9 +160,10 @@
       {
         "name": "ar_weight_context_mb",
         "type": "int",
-        "description": "AR weight context in MiB; 4096 on 64-bit builds, 1024 on 32-bit builds.",
+        "description": "AR weight context in MiB; default 8.",
         "required": false,
-        "min": 1
+        "min": 1,
+        "default": 8
       },
       {
         "name": "codec_weight_context_mb",
@@ -170,7 +171,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 1536
+        "default": 8
       },
       {
         "name": "ar_decode_graph_arena_mb",
@@ -178,7 +179,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 32
       },
       {
         "name": "codec_decode_graph_arena_mb",
@@ -186,7 +187,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 128
+        "default": 32
       },
       {
         "name": "codec_encode_graph_arena_mb",
@@ -194,7 +195,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 32
       },
       {
         "name": "reference_cache_slots",

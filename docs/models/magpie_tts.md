@@ -95,7 +95,7 @@ numeric speaker index. `--voice-id` takes precedence over
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `magpie_tts.graph_arena_mb` | integer MiB | `1024` | Reusable graph arena size for Magpie stages. |
-| `magpie_tts.weight_context_mb` | integer MiB | `2048` | Weight metadata arena size. |
+| `magpie_tts.graph_arena_mb` | integer MiB | `32` | Main-stage graph metadata arena. Local codebook graphs use a separate fixed 64 MiB arena. |
+| `magpie_tts.weight_context_mb` | integer MiB | `8` | Weight metadata arena size. |
 | `magpie_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Matmul weight storage type when supported. |
 | `magpie_tts.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type when supported. |

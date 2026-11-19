@@ -355,7 +355,7 @@ public:
         const float attn_scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
 
         ggml_init_params params = {};
-        params.mem_size = 512ull * 1024ull * 1024ull;
+        params.mem_size = 32ull * 1024ull * 1024ull;
         params.mem_buffer = nullptr;
         params.no_alloc = true;
         ggml_ = ggml_init(params);

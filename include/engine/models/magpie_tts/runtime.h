@@ -13,8 +13,8 @@
 namespace engine::models::magpie_tts {
 
 struct MagpieTTSRuntimeOptions {
-    size_t graph_arena_bytes = 1024ull * 1024ull * 1024ull;
-    size_t weight_context_bytes = 2048ull * 1024ull * 1024ull;
+    size_t graph_arena_bytes = 32ull * 1024ull * 1024ull;
+    size_t weight_context_bytes = 8ull * 1024ull * 1024ull;
     assets::TensorStorageType matmul_weight_storage_type = assets::TensorStorageType::Native;
     assets::TensorStorageType conv_weight_storage_type = assets::TensorStorageType::Native;
 };

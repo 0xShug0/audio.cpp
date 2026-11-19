@@ -343,7 +343,7 @@ VibeVoiceConnectorOutput VibeVoiceConnectorWeightsRuntime::project_acoustic(
             "vibevoice.connector.acoustic",
             1,
             frames,
-            64ull * 1024ull * 1024ull);
+            16ull * 1024ull * 1024ull);
     }
     auto out = acoustic_graph_->run(features, input_dim);
     return out;
@@ -373,7 +373,7 @@ std::vector<VibeVoiceConnectorOutput> VibeVoiceConnectorWeightsRuntime::project_
             "vibevoice.connector.acoustic",
             batch_size,
             frames,
-            64ull * 1024ull * 1024ull);
+            16ull * 1024ull * 1024ull);
     }
     auto out = acoustic_graph_->run_batch(features);
     return out;
@@ -395,7 +395,7 @@ VibeVoiceConnectorOutput VibeVoiceConnectorWeightsRuntime::project_semantic(
             "vibevoice.connector.semantic",
             1,
             frames,
-            64ull * 1024ull * 1024ull);
+            16ull * 1024ull * 1024ull);
     }
     auto out = semantic_graph_->run(features, input_dim);
     return out;
@@ -425,7 +425,7 @@ std::vector<VibeVoiceConnectorOutput> VibeVoiceConnectorWeightsRuntime::project_
             "vibevoice.connector.semantic",
             batch_size,
             frames,
-            64ull * 1024ull * 1024ull);
+            16ull * 1024ull * 1024ull);
     }
     auto out = semantic_graph_->run_batch(features);
     return out;

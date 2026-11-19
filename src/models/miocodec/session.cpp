@@ -24,11 +24,11 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kDefaultCodecWeightContextBytes = 256ull * 1024ull * 1024ull;
-constexpr size_t kDefaultContentGraphArenaBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultGlobalGraphArenaBytes = 256ull * 1024ull * 1024ull;
-constexpr size_t kDefaultWaveGraphArenaBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultConstantContextBytes = 256ull * 1024ull * 1024ull;
+constexpr size_t kDefaultCodecWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDefaultContentGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultGlobalGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultWaveGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultConstantContextBytes = 16ull * 1024ull * 1024ull;
 constexpr int64_t kMioCodecWaveHeadBins = 394;
 
 engine::assets::TensorStorageType parse_miocodec_weight_type(

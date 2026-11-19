@@ -83,7 +83,7 @@ ZipVoiceWeights load_zipvoice_weights(
 
     ZipVoiceWeights weights;
     weights.store = std::make_shared<core::BackendWeightStore>(
-        backend, backend_type, "zipvoice.weights", 2ULL * 1024ULL * 1024ULL * 1024ULL);
+        backend, backend_type, "zipvoice.weights", 8ULL * 1024ULL * 1024ULL);
 
     // Dimension arguments are PHYSICAL ggml order (ne0 fastest). -1 accepts
     // any value; non-wildcard entries are validated against the checkpoint

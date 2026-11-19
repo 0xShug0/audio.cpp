@@ -255,7 +255,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 3072
+        "default": 8
       },
       {
         "name": "text_embedding_graph_arena_mb",
@@ -263,7 +263,7 @@
         "description": "Text embedding host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
-        "default": 64
+        "default": 32
       },
       {
         "name": "lm_step_graph_arena_mb",
@@ -271,7 +271,7 @@
         "description": "LM step host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "projection_graph_arena_mb",
@@ -279,7 +279,7 @@
         "description": "Projection host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 32
       },
       {
         "name": "local_encoder_graph_arena_mb",
@@ -287,7 +287,7 @@
         "description": "Local encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 32
       },
       {
         "name": "dit_graph_arena_mb",
@@ -295,7 +295,7 @@
         "description": "DiT estimator host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "audiovae_weight_context_mb",
@@ -303,7 +303,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 768
+        "default": 8
       },
       {
         "name": "audiovae_graph_arena_mb",
@@ -311,7 +311,7 @@
         "description": "AudioVAE decoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "audiovae_encoder_graph_arena_mb",
@@ -319,7 +319,7 @@
         "description": "AudioVAE encoder host graph-metadata arena size in MiB, not device workspace.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "audiovae_latent_capacity",

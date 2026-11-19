@@ -124,18 +124,18 @@
       {
         "name": "graph_arena_mb",
         "type": "int",
-        "description": "Reusable ggml graph arena size in MiB for Magpie stages; default 1024.",
+        "description": "Main-stage graph metadata arena size in MiB; default 32. Local codebook graphs use a separate fixed 64 MiB arena.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "weight_context_mb",
         "type": "int",
-        "description": "Weight loading context size in MiB; default 2048.",
+        "description": "Weight loading context size in MiB; default 8.",
         "required": false,
         "min": 1,
-        "default": 2048
+        "default": 8
       },
       {
         "name": "weight_type",

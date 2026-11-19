@@ -729,7 +729,7 @@ public:
         }
 
         ggml_init_params params = {};
-        params.mem_size = 256ull * 1024ull * 1024ull;
+        params.mem_size = 32ull * 1024ull * 1024ull;
         params.mem_buffer = nullptr;
         params.no_alloc = true;
         ggml_ = ggml_init(params);
@@ -1063,7 +1063,7 @@ public:
         }
 
         ggml_init_params params = {};
-        params.mem_size = 768ull * 1024ull * 1024ull;
+        params.mem_size = 32ull * 1024ull * 1024ull;
         params.mem_buffer = nullptr;
         params.no_alloc = true;
         ggml_ = ggml_init(params);

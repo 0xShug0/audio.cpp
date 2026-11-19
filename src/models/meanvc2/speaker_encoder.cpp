@@ -163,8 +163,8 @@ std::shared_ptr<const ecapa::EcapaWeights> load_meanvc2_ecapa_weights(
     weights->feature_dim = kWavlmHiddenSize;
     weights->embedding_dim = kEcapaEmbeddingDims;
     weights->stats_eps = kStatsEps;
-    weights->weight_context_bytes = 512ull * 1024ull * 1024ull;
-    weights->graph_context_bytes = 512ull * 1024ull * 1024ull;
+    weights->weight_context_bytes = 8ull * 1024ull * 1024ull;
+    weights->graph_context_bytes = 32ull * 1024ull * 1024ull;
     weights->block0 = meanvc2_tdnn_weights(*source, "layer1", kEcapaChannels, kWavlmHiddenSize, 5, 2, 1);
     weights->se_blocks = {
         meanvc2_se_res2_block_weights(*source, "layer2", 2),

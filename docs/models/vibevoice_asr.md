@@ -133,9 +133,9 @@ directory may contain only `model.gguf`.
 | `vibevoice_asr.tokenizer_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
 | `vibevoice_asr.connector_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
 | `vibevoice_asr.decoder_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; component-specific settings inherit weight_type. |
-| `vibevoice_asr.tokenizer_weight_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `vibevoice_asr.connector_weight_context_mb` | integer >= 1 | `128` | Context or graph arena size in MiB. |
-| `vibevoice_asr.decoder_weight_context_mb` | integer >= 1 | not set | Decoder weight context in MiB; 4096 on 64-bit builds, 1024 on 32-bit builds. |
+| `vibevoice_asr.tokenizer_weight_context_mb` | integer >= 1 | `8` | Context or graph arena size in MiB. |
+| `vibevoice_asr.connector_weight_context_mb` | integer >= 1 | `8` | Context or graph arena size in MiB. |
+| `vibevoice_asr.decoder_weight_context_mb` | integer >= 1 | `8` | Decoder weight context in MiB; default 8. |
 | `vibevoice_asr.max_history_steps` | integer | `0` | Maximum retained decoder history; zero uses the model limit. Cannot exceed checkpoint position capacity; zero uses that capacity. |
 | `vibevoice_asr.vad_model_path` | model directory | `assets/framework/models/silero_vad` | Internal VAD model used by `--audio-chunk-mode vad`. |
 

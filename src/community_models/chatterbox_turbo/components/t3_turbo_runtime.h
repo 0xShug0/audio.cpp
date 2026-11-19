@@ -439,7 +439,7 @@ public:
             throw std::runtime_error("T3TurboDecodeBackendRunner requires positive cache_steps");
         }
         ggml_init_params params = {};
-        params.mem_size = 256ull * 1024ull * 1024ull;
+        params.mem_size = 32ull * 1024ull * 1024ull;
         params.no_alloc = true;
         ggml_ = ggml_init(params);
         if (ggml_ == nullptr) {
@@ -658,7 +658,7 @@ public:
             throw std::runtime_error("T3 Turbo prefill runner requires positive seq_len and non-negative prefix");
         }
         ggml_init_params params = {};
-        params.mem_size = 768ull * 1024ull * 1024ull;
+        params.mem_size = 32ull * 1024ull * 1024ull;
         params.no_alloc = true;
         ggml_ = ggml_init(params);
         if (ggml_ == nullptr) {

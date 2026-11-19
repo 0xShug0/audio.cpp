@@ -131,26 +131,26 @@
       {
         "name": "weight_context_mb",
         "type": "int",
-        "description": "Weight context arena size in MiB; default 3072.",
+        "description": "Weight context arena size in MiB; default 8.",
         "required": false,
         "min": 1,
-        "default": 3072
+        "default": 8
       },
       {
         "name": "encoder_graph_arena_mb",
         "type": "int",
-        "description": "Encoder graph arena size in MiB; default 1024.",
+        "description": "Encoder graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 32
       },
       {
         "name": "decoder_graph_arena_mb",
         "type": "int",
-        "description": "Decoder graph arena size in MiB; default 256.",
+        "description": "Decoder graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 32
       },
       {
         "name": "audio_chunk_duration_sec",
