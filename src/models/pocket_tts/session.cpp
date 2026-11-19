@@ -266,7 +266,11 @@ std::vector<std::string> split_generation_text(
     const PocketTTSAssets & manifest,
     const GenerationRequest & request) {
     if (request.text_chunk_size.has_value()) {
-        return engine::text::split_text_chunks(request.text, *request.text_chunk_size);
+        // Cut after the config's replace_characters step, which prepare() runs on each chunk:
+        // a chunk made only of characters the table deletes (a closing "»" or ")") would
+        // otherwise prepare to an empty prompt.
+        return engine::text::split_text_chunks(
+            text_conditioner.apply_replace_characters(manifest, request.text), *request.text_chunk_size);
     }
     return text_conditioner.split_into_sentence_chunks(manifest, request.text, request.max_tokens);
 }
