@@ -74,7 +74,7 @@ checkpoint or session setting, or leaves the optional value unset as described.
 | Option | Type / values | Default | Description |
 |---|---|---|---|
 | `granite5asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared model weight storage type. |
-| `granite5asr.encoder_graph_arena_mb` | `int` | `1024` | Encoder graph arena size in MB. Positive MiB allocation; invalid/nonpositive values resolve to 1024 MiB. Declared range: minimum 1. |
+| `granite5asr.encoder_graph_arena_mb` | `int` | `16` | Minimum encoder graph metadata arena in MiB; grows with graph size. Invalid/nonpositive values resolve to 16 MiB. Declared range: minimum 1. |
 | `granite5asr.vad_model_path` | `string` | Model/session default | Path to a VAD weight file of any built-in VAD family (e.g. silero_vad_16k.safetensors), not a directory; VAD runs only when this path is a regular file. |
 
 ## Architecture
@@ -102,3 +102,5 @@ Limits:
 - A repeated non-blank label occupies every frame of that run.
 - Blanks between subword pieces of one word are inside the word's time span and outside its confidence.
 - Streaming words arrive on the final result only.
+
+The encoder retains its most recent input shape in a session-owned graph and reuses its allocation for matching requests. A shape change releases the previous graph before preparing its replacement.

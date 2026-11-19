@@ -48,11 +48,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr float kDefaultChunkSeconds = 30.0f;
-constexpr size_t kDefaultGraphArenaBytes = 1024ull * 1024ull * 1024ull;
-
-std::filesystem::path default_spec_path() {
-    return engine::model_spec::default_spec_path("granite5asr");
-}
+constexpr size_t kDefaultGraphArenaBytes = 16ull * 1024ull * 1024ull;
 
 std::shared_ptr<const Granite5ASRAssets> require_assets(
     std::shared_ptr<const Granite5ASRAssets> assets) {
@@ -60,25 +56,6 @@ std::shared_ptr<const Granite5ASRAssets> require_assets(
         throw std::runtime_error("Granite 5 ASR session requires assets");
     }
     return assets;
-}
-
-assets::TensorStorageType parse_weight_storage(
-    const runtime::SessionOptions & options,
-    const std::string & family) {
-    const std::string key = family + ".weight_type";
-    const auto it = options.options.find(key);
-    if (it == options.options.end()) {
-        return assets::TensorStorageType::Native;
-    }
-    const auto type = assets::parse_tensor_storage_type(it->second);
-    if (type == assets::TensorStorageType::Native ||
-        type == assets::TensorStorageType::F32 ||
-        type == assets::TensorStorageType::F16 ||
-        type == assets::TensorStorageType::BF16 ||
-        type == assets::TensorStorageType::Q8_0) {
-        return type;
-    }
-    throw std::runtime_error(key + " supports only native, f32, f16, bf16, and q8_0");
 }
 
 size_t parse_graph_arena_bytes(
@@ -158,7 +135,7 @@ public:
             }
         }
         try {
-            const auto resources = engine::model_spec::load_resource_bundle(request.model_path, default_spec_path());
+            const auto resources = engine::model_spec::load_resource_bundle(request.model_path, engine::model_spec::default_spec_path("granite5asr"));
             const auto config_root = resources.parse_json("config");
             const auto model_type = json::optional_string(config_root, "model_type", "");
             return model_type == "granite_speech5_ctc" || model_type == "granite5asr" || model_type == "granite_speech";
@@ -170,7 +147,7 @@ public:
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
         const auto resources = engine::model_spec::load_resource_bundle(
             request.model_path,
-            default_spec_path());
+            engine::model_spec::default_spec_path("granite5asr"));
         runtime::ModelInspection inspection;
         inspection.cli.request_options = {
             {"language", "code", kLanguageOptionHelp, false, "en"},
@@ -179,7 +156,7 @@ public:
         };
         inspection.cli.session_options = {
             {"granite5asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared model weight storage type. Default: native.", false, "native"},
-            {"granite5asr.encoder_graph_arena_mb", "int", "Encoder graph arena size in MB. Positive MiB allocation; invalid/nonpositive values resolve to 1024 MiB. Default: 1024.", false, "1024", "1"},
+            {"granite5asr.encoder_graph_arena_mb", "int", "Minimum encoder graph metadata arena in MiB; grows with graph size. Invalid/nonpositive values resolve to 16 MiB. Default: 16.", false, "16", "1"},
             {"granite5asr.vad_model_path", "string", "Path to a VAD weight file of any built-in VAD family (e.g. silero_vad_16k.safetensors), not a directory; VAD runs only when this path is a regular file."},
         };
         inspection.model_root = resources.model_root();
@@ -199,11 +176,11 @@ public:
         inspection.capabilities.supports_timestamps = true;
         inspection.discovered_configs = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            default_spec_path(),
+            engine::model_spec::default_spec_path("granite5asr"),
             engine::model_spec::ResourceKind::Files);
         inspection.discovered_weights = runtime::discover_named_assets_from_package_spec(
             request.model_path,
-            default_spec_path(),
+            engine::model_spec::default_spec_path("granite5asr"),
             engine::model_spec::ResourceKind::Tensors);
         return inspection;
     }
@@ -227,14 +204,15 @@ Granite5ASRSessionBase::Granite5ASRSessionBase(
     if (task_.task != runtime::VoiceTaskKind::Asr) {
         throw std::runtime_error("Granite 5 ASR only supports VoiceTaskKind::Asr");
     }
-    const auto storage_type = parse_weight_storage(RuntimeSessionBase::options(), family_impl());
+    const auto storage_type = runtime::parse_tensor_storage_option(
+        RuntimeSessionBase::options().options, family_impl() + ".weight_type",
+        assets::TensorStorageType::Native,
+        {assets::TensorStorageType::Native, assets::TensorStorageType::F32,
+         assets::TensorStorageType::F16, assets::TensorStorageType::BF16,
+         assets::TensorStorageType::Q8_0});
     const auto arena_bytes = parse_graph_arena_bytes(RuntimeSessionBase::options(), family_impl());
-    encoder_ = std::unique_ptr<Granite5ConformerEncoderRuntime>(
-        new Granite5ConformerEncoderRuntime(
-            assets_,
-            execution_context(),
-            storage_type,
-            arena_bytes));
+    encoder_ = std::make_unique<Granite5ConformerEncoderRuntime>(
+        assets_, execution_context(), storage_type, arena_bytes);
 }
 
 Granite5ASRSessionBase::~Granite5ASRSessionBase() = default;
