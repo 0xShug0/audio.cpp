@@ -17,7 +17,6 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
-#include <iostream>
 #include <limits>
 #include <mutex>
 #include <numeric>
@@ -2283,19 +2282,7 @@ void convert_tensor_sources_to_gguf(const std::vector<TensorSourceInput> & input
                 (!ggml_is_quantized(requested_type) ? source_is_float && !item.shape.empty() : can_quantize);
             const bool use_f16_lookup = !preserve_source_dtype && ggml_is_quantized(requested_type) &&
                 source_is_float && is_lookup_table;
-            auto type_override = find_tensor_type_override(item.name, options.type_overrides);
-            // Rank-0 (scalar) tensors keep native storage under a float
-            // override: there is no shaped data to convert, and restamping a
-            // counter such as num_batches_tracked to BF16 would be lossy.
-            // A quantized override on a scalar still fails loudly below.
-            if (item.shape.empty() && type_override.has_value() &&
-                *type_override != TensorStorageType::Native &&
-                !ggml_is_quantized(ggml_type_for_tensor_storage(*type_override))) {
-                std::cerr << "[warning][gguf] ignoring float type override to "
-                          << ggml_type_name(ggml_type_for_tensor_storage(*type_override))
-                          << " for rank-0 tensor '" << item.name << "'; keeping native storage\n";
-                type_override.reset();
-            }
+            const auto type_override = find_tensor_type_override(item.name, options.type_overrides);
             const bool use_override = type_override.has_value() && *type_override != TensorStorageType::Native;
             const ggml_type override_type = use_override ? ggml_type_for_tensor_storage(*type_override) : source_type;
             if (use_override && ggml_is_quantized(override_type)) {

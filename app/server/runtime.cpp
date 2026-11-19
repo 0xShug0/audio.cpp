@@ -1346,7 +1346,6 @@ HttpResponse ServerState::handle_transcription_multipart(
     std::string model_id;
     std::string language;
     std::string prompt;
-    std::string target_language;
     std::optional<int> busy_timeout_ms;
     bool stream = false;
     for (const auto & part : parts) {
@@ -1356,12 +1355,6 @@ HttpResponse ServerState::handle_transcription_multipart(
             model_id = part.data;
         } else if (part.name == "language") {
             language = part.data;
-        } else if (part.name == "target_language") {
-            // Translation targets travel in JSON options / CLI request
-            // options only: the single-file OpenAI-compat shape has no
-            // options channel, so a target here is rejected loudly instead
-            // of silently transcribing in the wrong mode.
-            target_language = part.data;
         } else if (part.name == "prompt" || part.name == "text") {
             // Recognition-context biasing. "prompt" is the OpenAI
             // transcription field name; "text" matches the JSON request
@@ -1385,11 +1378,6 @@ HttpResponse ServerState::handle_transcription_multipart(
                 throw std::runtime_error("multipart transcription stream field must be true or false");
             }
         }
-    }
-    if (!target_language.empty()) {
-        throw engine::runtime::InvalidRequestError(
-            "multipart transcription does not accept a 'target_language' part: send translation "
-            "requests as JSON to /v1/audio/transcriptions with options.target_language");
     }
     if (file_part == nullptr || file_part->data.empty()) {
         if (engine::debug::log_enabled()) {

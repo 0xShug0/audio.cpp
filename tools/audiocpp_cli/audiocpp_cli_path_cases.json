@@ -5338,9 +5338,9 @@
       ]
     },
     {
-      "id": "granite_speech_2b_short_en",
+      "id": "granite_speech5_short_en",
       "coverage": "Granite Speech 5.0 2B short English transcription with an explicit language hint",
-      "family": "granite_speech_2b",
+      "family": "granite_speech5",
       "model": "build/granite-2b-handoff/hf",
       "task": "asr",
       "mode": "offline",
@@ -5351,9 +5351,9 @@
       ]
     },
     {
-      "id": "granite_speech_2b_japanese_hint",
+      "id": "granite_speech5_japanese_hint",
       "coverage": "Granite Speech 5.0 2B Japanese transcription with a Japanese hint and an auto repeat",
-      "family": "granite_speech_2b",
+      "family": "granite_speech5",
       "model": "build/granite-2b-handoff/hf",
       "task": "asr",
       "mode": "offline",
@@ -5364,9 +5364,9 @@
       ]
     },
     {
-      "id": "granite_speech_2b_fixed_chunking",
+      "id": "granite_speech5_fixed_chunking",
       "coverage": "Granite Speech 5.0 2B fixed chunking with input longer than the requested chunk limit",
-      "family": "granite_speech_2b",
+      "family": "granite_speech5",
       "model": "build/granite-2b-handoff/hf",
       "task": "asr",
       "mode": "offline",

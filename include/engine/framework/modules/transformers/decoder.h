@@ -117,6 +117,8 @@ struct DecoderLayerConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     DecoderQKVLayout qkv_layout = DecoderQKVLayout::Separate;
     bool use_qk_norm = true;
+    DecoderActivationCastPolicy activation_cast;
+    DecoderRuntimePolicy runtime;
     // Opt-in attention scale override. Nullopt preserves the legacy
     // 1/sqrt(head_dim) softmax/scale factor on every attention path.
     std::optional<float> attention_scale;
@@ -133,8 +135,6 @@ struct DecoderLayerConfig {
     float rope_beta_fast = 0.0f;
     float rope_beta_slow = 0.0f;
     int32_t rope_orig_context = 0;
-    DecoderActivationCastPolicy activation_cast;
-    DecoderRuntimePolicy runtime;
 };
 
 struct DecoderMLPWeights {
@@ -243,6 +243,8 @@ struct DecoderStackConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     DecoderQKVLayout qkv_layout = DecoderQKVLayout::Separate;
     bool use_qk_norm = true;
+    DecoderActivationCastPolicy activation_cast;
+    DecoderRuntimePolicy runtime;
     std::optional<float> attention_scale;
     float residual_scale = 1.0f;
     float rope_freq_scale = 1.0f;
@@ -251,8 +253,6 @@ struct DecoderStackConfig {
     float rope_beta_fast = 0.0f;
     float rope_beta_slow = 0.0f;
     int32_t rope_orig_context = 0;
-    DecoderActivationCastPolicy activation_cast;
-    DecoderRuntimePolicy runtime;
 };
 
 DecoderLayerConfig decoder_layer_config_from_stack(const DecoderStackConfig & config);

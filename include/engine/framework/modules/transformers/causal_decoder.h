@@ -22,11 +22,11 @@ enum class CausalDecoderLogitsMode {
 struct DecoderHiddenConfig {
     DecoderStackConfig stack;
     CausalDecoderLogitsMode hidden_mode = CausalDecoderLogitsMode::LastStep;
+    ggml_type static_cache_type = GGML_TYPE_F32;
     // Opt-in input embedding scale, applied once at the hidden-module entry
     // so embedded prefill and single-token decode share the boundary. 1.0
     // preserves the legacy unscaled input.
     float embedding_scale = 1.0f;
-    ggml_type static_cache_type = GGML_TYPE_F32;
 };
 
 struct CausalDecoderConfig {
@@ -36,12 +36,12 @@ struct CausalDecoderConfig {
     bool use_lm_head_bias = false;
     ggml_prec lm_head_precision = GGML_PREC_DEFAULT;
     std::optional<ggml_type> lm_head_input_type;
+    ggml_type static_cache_type = GGML_TYPE_F32;
     // Opt-in input embedding scale, forwarded to the hidden module entry.
     float embedding_scale = 1.0f;
     // Opt-in logit divisor, applied once after the LM head projection.
     // 1.0 preserves the legacy unscaled logits.
     float logit_divisor = 1.0f;
-    ggml_type static_cache_type = GGML_TYPE_F32;
 };
 
 struct CausalDecoderWeights {

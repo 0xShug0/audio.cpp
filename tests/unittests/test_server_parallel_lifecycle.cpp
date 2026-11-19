@@ -286,33 +286,6 @@ struct Fixture {
     }
 };
 
-void multipart_translation_target_rejected() {
-    // granite_speech_2b translation is JSON/CLI-only: a target_language part
-    // on the single-file OpenAI-compat shape must fail loudly (400 naming the
-    // field), never silently transcribe in ASR mode. The rejection precedes
-    // model lookup, so no model asset is needed.
-    Fixture f(1);
-    srv::HttpRequest request;
-    request.method = "POST"; request.path = "/v1/audio/transcriptions";
-    request.headers["content-type"] = "multipart/form-data; boundary=test_boundary";
-    request.body = "--test_boundary\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nshared\r\n";
-    request.body += "--test_boundary\r\nContent-Disposition: form-data; name=\"target_language\"\r\n\r\nfr\r\n";
-    request.body += "--test_boundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"input.wav\"\r\n"
-                    "Content-Type: audio/wav\r\n\r\nRIFFdata\r\n";
-    request.body += "--test_boundary--\r\n";
-    try {
-        const auto response = f.state->handle(request);
-        require(response.status == 400 &&
-                    response.body.find("target_language") != std::string::npos,
-                "multipart target_language was not rejected: " +
-                    std::to_string(response.status) + " " + response.body);
-    } catch (const std::runtime_error & error) {
-        require(std::string(error.what()).find("target_language") != std::string::npos,
-                std::string("multipart target_language threw without naming the field: ") +
-                    error.what());
-    }
-}
-
 void per_model_device_selection() {
     Fixture f(1, 0, 3);
     auto inherited = f.add("inherited");
@@ -1222,7 +1195,6 @@ int main(int argc, char ** argv) {
         concurrent_json_parsing();
         stream_artifacts_are_output();
         per_model_device_selection();
-        multipart_translation_target_rejected();
         unsupported_capacity_preserves_registration();
         dynamic_capacity_changes_use_parallel_lifecycle();
         generic_batch_single_slot_and_invalid_input();

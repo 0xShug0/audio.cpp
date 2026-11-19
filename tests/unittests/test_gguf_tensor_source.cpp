@@ -418,58 +418,6 @@ void test_packed_multi_source_gguf() {
     std::filesystem::remove_all(root);
 }
 
-// A float --keep-type matching a rank-0 tensor must keep native storage (a
-// lossy restamp such as I64 num_batches_tracked to BF16 is refused with a
-// warning), while a quantized override on a scalar must still fail loudly.
-// Ordinary shaped tensors matched by the same patterns keep their override.
-void test_scalar_type_override_policy() {
-    using namespace engine::assets;
-    const auto root = std::filesystem::temp_directory_path() / "audiocpp_scalar_override_test";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root);
-    const auto safetensors = root / "model.safetensors";
-    const auto gguf = root / "model.gguf";
-    std::vector<float> matrix(64);
-    for (size_t i = 0; i < matrix.size(); ++i) matrix[i] = static_cast<float>(i) / 64.0F - 0.5F;
-    engine::io::write_safetensors_file(safetensors, {
-        {"counter", "I64", {}, bytes_for(std::vector<int64_t>{7})},
-        {"gain", "F32", {}, bytes_for(std::vector<float>{0.5F})},
-        {"block.weight", "F32", {2, 32}, bytes_for(matrix)},
-        {"block.bias", "F32", {32}, bytes_for(std::vector<float>(32, 1.0F))},
-    });
-    GgufConversionOptions options;
-    options.type_overrides = {
-        {"counter", TensorStorageType::BF16},
-        {"gain", TensorStorageType::BF16},
-        {"block.*", TensorStorageType::BF16},
-    };
-    convert_tensor_sources_to_gguf({{safetensors, ""}}, gguf, TensorStorageType::Q8_0, false, false, {}, {},
-                                   std::nullopt, options);
-    const auto source = open_tensor_source(gguf);
-    engine::test::require(source->require_metadata("counter").shape.empty(), "override lost scalar rank");
-    engine::test::require_eq(source->require_i64_scalar("counter"), int64_t{7}, "override changed scalar value");
-    engine::test::require(
-        source->require_f32("gain", std::vector<int64_t>{}) == std::vector<float>{0.5F},
-        "override changed float scalar value");
-    engine::test::require_eq(
-        source->require_metadata("block.weight").dtype, std::string("bf16"), "shaped override not honored");
-
-    // A quantized override cannot apply to a scalar: it must throw, not reset.
-    GgufConversionOptions quantized;
-    quantized.type_overrides = {{"counter", TensorStorageType::Q8_0}};
-    bool loudly_rejected = false;
-    try {
-        convert_tensor_sources_to_gguf({{safetensors, ""}}, root / "rejected.gguf", TensorStorageType::Q8_0,
-                                       false, false, {}, {}, std::nullopt, quantized);
-    } catch (const std::runtime_error & error) {
-        const std::string message = error.what();
-        loudly_rejected = message.find("cannot quantize") != std::string::npos &&
-            message.find("counter") != std::string::npos;
-    }
-    engine::test::require(loudly_rejected, "quantized scalar override was not rejected loudly");
-    std::filesystem::remove_all(root);
-}
-
 void test_all_rank0_gguf() {
     const auto root = std::filesystem::temp_directory_path() / "audiocpp_rank0_only_gguf_test";
     std::filesystem::remove_all(root);
@@ -925,7 +873,6 @@ int main() {
         test_extensionless_tensor_source_is_sniffed();
         test_source_policy_cache_and_views();
         test_packed_multi_source_gguf();
-        test_scalar_type_override_policy();
         test_all_rank0_gguf();
         test_embedded_model_spec_roundtrip_and_precedence();
         test_release_named_gguf_directory_selects_the_gguf_source();
