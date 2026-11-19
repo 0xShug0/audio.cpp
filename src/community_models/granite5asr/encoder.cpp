@@ -3,21 +3,21 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/debug/profiler.h"
+#include "engine/framework/decoders/ctc_host_decoder.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/feed_forward_modules.h"
+#include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 
-#include <ggml-alloc.h>
 #include <ggml-backend.h>
 #include <ggml.h>
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -26,32 +26,7 @@
 namespace engine::community_models::granite5asr {
 namespace {
 
-constexpr size_t kEncoderGraphNodes = 1048576;
 constexpr float kLayerNormEpsilon = 1.0e-5f;
-
-modules::LinearWeights load_linear_with_bias(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t in_features,
-    int64_t out_features,
-    assets::TensorStorageType storage_type) {
-    return {
-        store.load_tensor(source, prefix + ".weight", storage_type, {out_features, in_features}),
-        store.load_f32_tensor(source, prefix + ".bias", {out_features}),
-    };
-}
-
-modules::NormWeights load_layer_norm(
-    core::BackendWeightStore & store,
-    const assets::TensorSource & source,
-    const std::string & prefix,
-    int64_t hidden_size) {
-    return {
-        store.load_f32_tensor(source, prefix + ".weight", {hidden_size}),
-        store.load_f32_tensor(source, prefix + ".bias", {hidden_size}),
-    };
-}
 
 void load_folded_depthwise_conv(
     core::BackendWeightStore & store,
@@ -102,47 +77,47 @@ Granite5LayerWeights load_layer_weights(
     w.is_subsample = (std::find(config.subsample_layers.begin(), config.subsample_layers.end(), layer_idx) != config.subsample_layers.end());
 
     // FFN1
-    w.ffn1_norm = load_layer_norm(store, source, pfx + "norm_feed_forward1", config.hidden_size);
-    w.ffn1_fc1 = load_linear_with_bias(store, source, pfx + "feed_forward1.linear1", config.hidden_size, config.intermediate_size, storage_type);
-    w.ffn1_fc2 = load_linear_with_bias(store, source, pfx + "feed_forward1.linear2", config.intermediate_size, config.hidden_size, storage_type);
+    w.ffn1_norm = modules::binding::norm_from_source(store, source, pfx + "norm_feed_forward1", config.hidden_size);
+    w.ffn1_fc1 = modules::binding::linear_from_source(store, source, pfx + "feed_forward1.linear1", storage_type, config.intermediate_size, config.hidden_size, true);
+    w.ffn1_fc2 = modules::binding::linear_from_source(store, source, pfx + "feed_forward1.linear2", storage_type, config.hidden_size, config.intermediate_size, true);
 
     // Self-Attention
-    w.norm_self_att = load_layer_norm(store, source, pfx + "norm_self_att", config.hidden_size);
+    w.norm_self_att = modules::binding::norm_from_source(store, source, pfx + "norm_self_att", config.hidden_size);
     w.q_proj = store.load_tensor(source, pfx + "self_attn.q_proj.weight", storage_type, {config.hidden_size, config.hidden_size});
     w.k_proj = store.load_tensor(source, pfx + "self_attn.k_proj.weight", storage_type, {config.hidden_size, config.hidden_size});
     w.v_proj = store.load_tensor(source, pfx + "self_attn.v_proj.weight", storage_type, {config.hidden_size, config.hidden_size});
-    w.o_proj = load_linear_with_bias(store, source, pfx + "self_attn.o_proj", config.hidden_size, config.hidden_size, storage_type);
+    w.o_proj = modules::binding::linear_from_source(store, source, pfx + "self_attn.o_proj", storage_type, config.hidden_size, config.hidden_size, true);
 
     const int64_t max_pos_rows = 2 * config.max_position_embeddings + 1;
     const auto raw_emb = source.require_f32(pfx + "self_attn.rel_pos_emb.weight", {max_pos_rows, config.head_dim});
-    std::vector<float> rel_128(static_cast<size_t>(config.context_size * config.context_size * config.head_dim), 0.0f);
+    std::vector<float> relative_positions(static_cast<size_t>(config.context_size * config.context_size * config.head_dim), 0.0f);
     for (int64_t i = 0; i < config.context_size; ++i) {
         for (int64_t j = 0; j < config.context_size; ++j) {
             const int64_t dist = std::clamp(i - j, static_cast<int64_t>(-512), static_cast<int64_t>(512)) + 512;
             const float * src_d = &raw_emb[static_cast<size_t>(dist * config.head_dim)];
-            float * dst_d = &rel_128[static_cast<size_t>((i * config.context_size + j) * config.head_dim)];
+            float * dst_d = &relative_positions[static_cast<size_t>((i * config.context_size + j) * config.head_dim)];
             std::memcpy(dst_d, src_d, static_cast<size_t>(config.head_dim) * sizeof(float));
         }
     }
     w.rel_pos_emb = store.make_from_f32(
         core::TensorShape::from_dims({config.head_dim, config.context_size, config.context_size}),
         storage_type == assets::TensorStorageType::Native ? assets::TensorStorageType::F32 : storage_type,
-        std::move(rel_128));
+        std::move(relative_positions));
 
     // Convolution
     const int64_t conv_inner_dim = config.hidden_size * config.conv_expansion_factor; // 2048
-    w.norm_conv = load_layer_norm(store, source, pfx + "norm_conv", config.hidden_size);
-    w.conv_pw1 = load_linear_with_bias(store, source, pfx + "conv.pointwise_lin1", config.hidden_size, conv_inner_dim * 2, storage_type);
+    w.norm_conv = modules::binding::norm_from_source(store, source, pfx + "norm_conv", config.hidden_size);
+    w.conv_pw1 = modules::binding::linear_from_source(store, source, pfx + "conv.pointwise_lin1", storage_type, conv_inner_dim * 2, config.hidden_size, true);
     load_folded_depthwise_conv(store, source, pfx + "conv", conv_inner_dim, config.conv_kernel_size, storage_type, w.conv_dw_weight, w.conv_dw_bias);
-    w.conv_pw2 = load_linear_with_bias(store, source, pfx + "conv.pointwise_lin2", conv_inner_dim, config.hidden_size, storage_type);
+    w.conv_pw2 = modules::binding::linear_from_source(store, source, pfx + "conv.pointwise_lin2", storage_type, config.hidden_size, conv_inner_dim, true);
 
     // FFN2
-    w.ffn2_norm = load_layer_norm(store, source, pfx + "norm_feed_forward2", config.hidden_size);
-    w.ffn2_fc1 = load_linear_with_bias(store, source, pfx + "feed_forward2.linear1", config.hidden_size, config.intermediate_size, storage_type);
-    w.ffn2_fc2 = load_linear_with_bias(store, source, pfx + "feed_forward2.linear2", config.intermediate_size, config.hidden_size, storage_type);
+    w.ffn2_norm = modules::binding::norm_from_source(store, source, pfx + "norm_feed_forward2", config.hidden_size);
+    w.ffn2_fc1 = modules::binding::linear_from_source(store, source, pfx + "feed_forward2.linear1", storage_type, config.intermediate_size, config.hidden_size, true);
+    w.ffn2_fc2 = modules::binding::linear_from_source(store, source, pfx + "feed_forward2.linear2", storage_type, config.hidden_size, config.intermediate_size, true);
 
     // Norm Out
-    w.norm_out = load_layer_norm(store, source, pfx + "norm_out", config.hidden_size);
+    w.norm_out = modules::binding::norm_from_source(store, source, pfx + "norm_out", config.hidden_size);
     return w;
 }
 
@@ -152,21 +127,15 @@ Granite5ConformerEncoderWeights load_encoder_weights(
     const Granite5ASRConfig & config,
     assets::TensorStorageType storage_type) {
     Granite5ConformerEncoderWeights weights;
-    weights.input_linear = load_linear_with_bias(
-        store, source, "encoder.input_linear",
-        config.encoder.input_features, config.encoder.hidden_size, storage_type);
+    weights.input_linear = modules::binding::linear_from_source(store, source, "encoder.input_linear", storage_type, config.encoder.hidden_size, config.encoder.input_features, true);
 
     weights.layers.reserve(static_cast<size_t>(config.encoder.num_layers));
     for (int64_t idx = 0; idx < config.encoder.num_layers; ++idx) {
         weights.layers.push_back(load_layer_weights(store, source, idx, config.encoder, storage_type));
     }
 
-    weights.out = load_linear_with_bias(
-        store, source, "encoder.out",
-        config.encoder.hidden_size, config.vocab_size, storage_type);
-    weights.out_mid = load_linear_with_bias(
-        store, source, "encoder.out_mid",
-        config.vocab_size, config.encoder.hidden_size, storage_type);
+    weights.out = modules::binding::linear_from_source(store, source, "encoder.out", storage_type, config.vocab_size, config.encoder.hidden_size, true);
+    weights.out_mid = modules::binding::linear_from_source(store, source, "encoder.out_mid", storage_type, config.encoder.hidden_size, config.vocab_size, true);
 
     store.upload();
     return weights;
@@ -193,36 +162,40 @@ core::TensorValue build_block_attention(
     const int64_t num_blocks = nb_full + (nr > 0 ? 1 : 0);
 
     std::vector<core::TensorValue> block_outputs;
-    block_outputs.reserve(static_cast<size_t>(num_blocks));
+    block_outputs.reserve(ctx.backend_type == core::BackendType::Cpu
+        ? static_cast<size_t>(num_blocks) : 2);
 
-    for (int64_t b = 0; b < num_blocks; ++b) {
-        const int64_t blk = (b == nb_full) ? nr : c;
+    for (int64_t b = 0; b < num_blocks;) {
+        const bool full = b < nb_full;
+        const int64_t batch = full && ctx.backend_type != core::BackendType::Cpu ? nb_full : 1;
+        const int64_t blk = full ? c : nr;
+        const int64_t frames = batch * blk;
         const int64_t t_offset = b * c;
 
-        auto q_blk = modules::SliceModule({1, t_offset, blk}).build(ctx, q_all);
-        auto k_blk = modules::SliceModule({1, t_offset, blk}).build(ctx, k_all);
-        auto v_blk = modules::SliceModule({1, t_offset, blk}).build(ctx, v_all);
+        auto q_blk = modules::SliceModule({1, t_offset, frames}).build(ctx, q_all);
+        auto k_blk = modules::SliceModule({1, t_offset, frames}).build(ctx, k_all);
+        auto v_blk = modules::SliceModule({1, t_offset, frames}).build(ctx, v_all);
 
-        auto q_3d = core::wrap_tensor(
-            ggml_reshape_3d(ctx.ggml, q_blk.tensor, d_head, heads, blk),
-            core::TensorShape::from_dims({blk, heads, d_head}),
+        auto q_blocks = core::wrap_tensor(
+            ggml_reshape_4d(ctx.ggml, q_blk.tensor, d_head, heads, blk, batch),
+            core::TensorShape::from_dims({batch, blk, heads, d_head}),
             GGML_TYPE_F32);
-        auto k_3d = core::wrap_tensor(
-            ggml_reshape_3d(ctx.ggml, k_blk.tensor, d_head, heads, blk),
-            core::TensorShape::from_dims({blk, heads, d_head}),
+        auto k_blocks = core::wrap_tensor(
+            ggml_reshape_4d(ctx.ggml, k_blk.tensor, d_head, heads, blk, batch),
+            core::TensorShape::from_dims({batch, blk, heads, d_head}),
             GGML_TYPE_F32);
-        auto v_3d = core::wrap_tensor(
-            ggml_reshape_3d(ctx.ggml, v_blk.tensor, d_head, heads, blk),
-            core::TensorShape::from_dims({blk, heads, d_head}),
+        auto v_blocks = core::wrap_tensor(
+            ggml_reshape_4d(ctx.ggml, v_blk.tensor, d_head, heads, blk, batch),
+            core::TensorShape::from_dims({batch, blk, heads, d_head}),
             GGML_TYPE_F32);
 
         auto q_perm = core::wrap_tensor(
-            ggml_permute(ctx.ggml, q_3d.tensor, 0, 2, 1, 3),
-            core::TensorShape::from_dims({heads, blk, d_head}),
+            ggml_permute(ctx.ggml, q_blocks.tensor, 0, 2, 1, 3),
+            core::TensorShape::from_dims({batch, heads, blk, d_head}),
             GGML_TYPE_F32);
         auto k_perm = core::wrap_tensor(
-            ggml_permute(ctx.ggml, k_3d.tensor, 0, 2, 1, 3),
-            core::TensorShape::from_dims({heads, blk, d_head}),
+            ggml_permute(ctx.ggml, k_blocks.tensor, 0, 2, 1, 3),
+            core::TensorShape::from_dims({batch, heads, blk, d_head}),
             GGML_TYPE_F32);
 
         auto k_cont = core::wrap_tensor(
@@ -231,7 +204,7 @@ core::TensorValue build_block_attention(
             GGML_TYPE_F32);
         auto scores = core::wrap_tensor(
             ggml_mul_mat(ctx.ggml, k_cont.tensor, q_perm.tensor),
-            core::TensorShape::from_dims({heads, blk, blk}),
+            core::TensorShape::from_dims({batch, heads, blk, blk}),
             GGML_TYPE_F32);
 
         const size_t elem_size = ggml_type_size(weights.rel_pos_emb.type);
@@ -255,15 +228,22 @@ core::TensorValue build_block_attention(
             rel_slice.shape,
             weights.rel_pos_emb.type);
 
-        auto pos_bias_c = core::wrap_tensor(
-            ggml_mul_mat(ctx.ggml, rel_slice_cont.tensor, q_3d.tensor),
-            core::TensorShape::from_dims({blk, heads, blk}),
-            GGML_TYPE_F32);
-
-        auto pos_bias = core::wrap_tensor(
-            ggml_permute(ctx.ggml, pos_bias_c.tensor, 0, 2, 1, 3),
-            core::TensorShape::from_dims({heads, blk, blk}),
-            GGML_TYPE_F32);
+        ggml_tensor * position_scores;
+        if (ctx.backend_type == core::BackendType::Vulkan && batch > 1) {
+            // Vulkan requires matching fourth dimensions in MUL_MAT. Fold
+            // blocks into the head axis without duplicating relative weights.
+            auto * position_queries = ggml_reshape_3d(ctx.ggml,
+                ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, q_blocks.tensor, 0, 1, 3, 2)),
+                d_head, heads * batch, blk);
+            position_scores = ggml_mul_mat(ctx.ggml, rel_slice_cont.tensor, position_queries);
+            position_scores = ggml_reshape_4d(ctx.ggml, position_scores, blk, heads, batch, blk);
+            position_scores = ggml_permute(ctx.ggml, position_scores, 0, 2, 3, 1);
+        } else {
+            position_scores = ggml_mul_mat(ctx.ggml, rel_slice_cont.tensor, q_blocks.tensor);
+            position_scores = ggml_permute(ctx.ggml, position_scores, 0, 2, 1, 3);
+        }
+        auto pos_bias = core::wrap_tensor(position_scores,
+            core::TensorShape::from_dims({batch, heads, blk, blk}), GGML_TYPE_F32);
 
         auto total_scores = core::wrap_tensor(
             ggml_add(ctx.ggml, scores.tensor, pos_bias.tensor),
@@ -280,8 +260,8 @@ core::TensorValue build_block_attention(
             GGML_TYPE_F32);
 
         auto v_perm = core::wrap_tensor(
-            ggml_permute(ctx.ggml, v_3d.tensor, 1, 2, 0, 3),
-            core::TensorShape::from_dims({heads, d_head, blk}),
+            ggml_permute(ctx.ggml, v_blocks.tensor, 1, 2, 0, 3),
+            core::TensorShape::from_dims({batch, heads, d_head, blk}),
             GGML_TYPE_F32);
         auto v_cont = core::wrap_tensor(
             ggml_cont(ctx.ggml, v_perm.tensor),
@@ -290,22 +270,23 @@ core::TensorValue build_block_attention(
 
         auto out_head = core::wrap_tensor(
             ggml_mul_mat(ctx.ggml, v_cont.tensor, attn_weights.tensor),
-            core::TensorShape::from_dims({heads, blk, d_head}),
+            core::TensorShape::from_dims({batch, heads, blk, d_head}),
             GGML_TYPE_F32);
 
         auto out_perm = core::wrap_tensor(
             ggml_permute(ctx.ggml, out_head.tensor, 0, 2, 1, 3),
-            core::TensorShape::from_dims({blk, heads, d_head}),
+            core::TensorShape::from_dims({batch, blk, heads, d_head}),
             GGML_TYPE_F32);
         auto out_cont = core::wrap_tensor(
             ggml_cont(ctx.ggml, out_perm.tensor),
             out_perm.shape,
             GGML_TYPE_F32);
         auto out_block = core::wrap_tensor(
-            ggml_reshape_3d(ctx.ggml, out_cont.tensor, d_model, blk, 1),
-            core::TensorShape::from_dims({1, blk, d_model}),
+            ggml_reshape_3d(ctx.ggml, out_cont.tensor, d_model, frames, 1),
+            core::TensorShape::from_dims({1, frames, d_model}),
             GGML_TYPE_F32);
         block_outputs.push_back(out_block);
+        b += batch;
     }
 
     core::TensorValue attn_out = block_outputs[0];
@@ -325,32 +306,27 @@ core::TensorValue build_conformer_block(
     const int64_t d_ffn = config.intermediate_size;
     const int64_t d_conv = d_model * config.conv_expansion_factor; // 2048
 
+    modules::FeedForwardConfig ffn_config{d_model, d_ffn};
+    ffn_config.activation = modules::FeedForwardActivation::Silu;
+    const modules::FeedForwardModule ffn(ffn_config);
+
     // 1. FFN1: x + 0.5 * Linear2(SiLU(Linear1(LN(x))))
     auto h_norm1 = modules::LayerNormModule({d_model, kLayerNormEpsilon}).build(ctx, input_btc, weights.ffn1_norm);
-    auto h_ff1 = modules::LinearModule({d_model, d_ffn, true}).build(ctx, h_norm1, weights.ffn1_fc1);
-    h_ff1 = modules::SiluModule().build(ctx, h_ff1);
-    h_ff1 = modules::LinearModule({d_ffn, d_model, true}).build(ctx, h_ff1, weights.ffn1_fc2);
-    auto h_scaled1 = core::wrap_tensor(
-        ggml_scale(ctx.ggml, h_ff1.tensor, 0.5f),
-        h_ff1.shape,
-        GGML_TYPE_F32);
-    auto x1 = core::wrap_tensor(
-        ggml_add(ctx.ggml, input_btc.tensor, h_scaled1.tensor),
-        input_btc.shape,
-        GGML_TYPE_F32);
+    auto h_ff1 = ffn.build(ctx, h_norm1, {
+        weights.ffn1_fc1.weight, weights.ffn1_fc1.bias,
+        weights.ffn1_fc2.weight, weights.ffn1_fc2.bias});
+    auto h_scaled1 = modules::ScaleBiasModule({0.5f, 0.0f}).build(ctx, h_ff1);
+    auto x1 = modules::AddModule().build(ctx, input_btc, h_scaled1);
 
     // 2. Self-Attention: x1 + OutLinear(BlockAttn(LN(x1)))
     auto h_norm_att = modules::LayerNormModule({d_model, kLayerNormEpsilon}).build(ctx, x1, weights.norm_self_att);
     auto h_att = build_block_attention(ctx, h_norm_att, weights, config);
-    auto x2 = core::wrap_tensor(
-        ggml_add(ctx.ggml, x1.tensor, h_att.tensor),
-        x1.shape,
-        GGML_TYPE_F32);
+    auto x2 = modules::AddModule().build(ctx, x1, h_att);
 
     // 3. Conformer Convolution
     auto h_norm_conv = modules::LayerNormModule({d_model, kLayerNormEpsilon}).build(ctx, x2, weights.norm_conv);
     auto h_pw1 = modules::LinearModule({d_model, d_conv * 2, true}).build(ctx, h_norm_conv, weights.conv_pw1);
-    auto h_glu = modules::GLUModule().build(ctx, h_pw1); // [1, T, 2048]
+    auto h_glu = modules::GLUModule({core::uses_ggml_cuda_or_hip_backend(ctx.backend_type)}).build(ctx, h_pw1); // [1, T, 2048]
 
     auto h_bct = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, h_glu);
 
@@ -382,30 +358,18 @@ core::TensorValue build_conformer_block(
         auto conv_pw2_trimmed = (conv_pw2.shape.dims[1] == t_half)
             ? conv_pw2
             : modules::SliceModule({1, 0, t_half}).build(ctx, conv_pw2);
-        x3 = core::wrap_tensor(
-            ggml_add(ctx.ggml, conv_pw2_trimmed.tensor, x2_pooled.tensor),
-            x2_pooled.shape,
-            GGML_TYPE_F32);
+        x3 = modules::AddModule().build(ctx, conv_pw2_trimmed, x2_pooled);
     } else {
-        x3 = core::wrap_tensor(
-            ggml_add(ctx.ggml, x2.tensor, conv_pw2.tensor),
-            x2.shape,
-            GGML_TYPE_F32);
+        x3 = modules::AddModule().build(ctx, x2, conv_pw2);
     }
 
     // 4. FFN2: x3 + 0.5 * Linear2(SiLU(Linear1(LN(x3))))
     auto h_norm2 = modules::LayerNormModule({d_model, kLayerNormEpsilon}).build(ctx, x3, weights.ffn2_norm);
-    auto h_ff2 = modules::LinearModule({d_model, d_ffn, true}).build(ctx, h_norm2, weights.ffn2_fc1);
-    h_ff2 = modules::SiluModule().build(ctx, h_ff2);
-    h_ff2 = modules::LinearModule({d_ffn, d_model, true}).build(ctx, h_ff2, weights.ffn2_fc2);
-    auto h_scaled2 = core::wrap_tensor(
-        ggml_scale(ctx.ggml, h_ff2.tensor, 0.5f),
-        h_ff2.shape,
-        GGML_TYPE_F32);
-    auto x4 = core::wrap_tensor(
-        ggml_add(ctx.ggml, x3.tensor, h_scaled2.tensor),
-        x3.shape,
-        GGML_TYPE_F32);
+    auto h_ff2 = ffn.build(ctx, h_norm2, {
+        weights.ffn2_fc1.weight, weights.ffn2_fc1.bias,
+        weights.ffn2_fc2.weight, weights.ffn2_fc2.bias});
+    auto h_scaled2 = modules::ScaleBiasModule({0.5f, 0.0f}).build(ctx, h_ff2);
+    auto x4 = modules::AddModule().build(ctx, x3, h_scaled2);
 
     // 5. Output LayerNorm
     return modules::LayerNormModule({d_model, kLayerNormEpsilon}).build(ctx, x4, weights.norm_out);
@@ -424,7 +388,7 @@ Granite5ConformerEncoderRuntime::Granite5ConformerEncoderRuntime(
           execution_context.backend(),
           execution_context.backend_type(),
           "Granite 5 ASR encoder weights",
-          256ull * 1024ull * 1024ull),
+          8ull * 1024ull * 1024ull),
       graph_arena_bytes_(graph_arena_bytes) {
     if (assets_ == nullptr) {
         throw std::runtime_error("Granite 5 ASR encoder runtime requires assets");
@@ -461,28 +425,20 @@ std::vector<CtcArgmaxFrame> Granite5ConformerEncoderRuntime::transcribe_features
     const int64_t num_frames = features.frames;
     const int64_t feat_dim = features.feature_dim;
 
-    ggml_init_params params{};
-    params.mem_size = graph_arena_bytes_;
-    params.mem_buffer = nullptr;
-    params.no_alloc = true;
-
-    ggml_context * ggml_ctx = ggml_init(params);
-    if (!ggml_ctx) {
-        throw std::runtime_error("Failed to initialize GGML context for Granite 5 ASR encoder");
-    }
-
-    ggml_gallocr * galloc = ggml_gallocr_new(
-        ggml_backend_get_default_buffer_type(execution_context_->backend()));
-    if (!galloc) {
-        ggml_free(ggml_ctx);
-        throw std::runtime_error("Failed to initialize GGML allocator for Granite 5 ASR encoder");
-    }
-
-    std::vector<CtcArgmaxFrame> token_ids;
-
-    try {
-        core::ModuleBuildContext ctx{ggml_ctx, "granite5asr_encoder", execution_context_->backend_type()};
-
+    if (!graph_ || graph_frames_ != num_frames) {
+        graph_.reset();
+        // GPU attention has at most two groups. CPU retains per-block graphs.
+        const size_t blocks = static_cast<size_t>((num_frames + config.encoder.context_size - 1) /
+            config.encoder.context_size);
+        const size_t nodes = execution_context_->backend_type() == core::BackendType::Cpu
+            ? 4096 + static_cast<size_t>(config.encoder.num_layers) * (256 + 64 * blocks)
+            : 16384;
+        const size_t metadata = std::max(graph_arena_bytes_,
+            ggml_graph_overhead_custom(nodes, false) + nodes * ggml_tensor_overhead());
+        auto prepared = std::make_unique<core::PreparedGraph>(*execution_context_,
+            core::PreparedGraphConfig{"granite5asr.encoder", metadata, nodes});
+        auto & ctx = prepared->build_context();
+        auto * ggml_ctx = ctx.ggml;
         auto in_tensor = core::wrap_tensor(
             ggml_new_tensor_2d(ggml_ctx, GGML_TYPE_F32, feat_dim, num_frames),
             core::TensorShape::from_dims({1, num_frames, feat_dim}),
@@ -504,66 +460,43 @@ std::vector<CtcArgmaxFrame> Granite5ConformerEncoderRuntime::transcribe_features
                     GGML_TYPE_F32);
                 auto h_inj = modules::LinearModule({config.vocab_size, config.encoder.hidden_size, true})
                                  .build(ctx, p_mid, weights_.out_mid);
-                h = core::wrap_tensor(
-                    ggml_add(ctx.ggml, h.tensor, h_inj.tensor),
-                    h.shape,
-                    GGML_TYPE_F32);
+                h = modules::AddModule().build(ctx, h, h_inj);
             }
         }
 
         auto logits = modules::LinearModule({config.encoder.hidden_size, config.vocab_size, true})
                           .build(ctx, h, weights_.out);
 
-        ggml_cgraph * gf = ggml_new_graph_custom(ggml_ctx, kEncoderGraphNodes, false);
-        ggml_build_forward_expand(gf, logits.tensor);
-
-        if (!ggml_gallocr_alloc_graph(galloc, gf)) {
-            throw std::runtime_error("Failed to allocate GGML graph for Granite 5 ASR encoder");
-        }
-
-        ggml_backend_tensor_set(
-            in_tensor.tensor,
-            features.values.data(),
-            0,
-            features.values.size() * sizeof(float));
-
-        if (ggml_backend_graph_compute(execution_context_->backend(), gf) != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Failed to compute GGML graph for Granite 5 ASR encoder");
-        }
-
-        const int64_t out_frames = logits.shape.dims[1];
-        const int64_t vocab_size = config.vocab_size;
-        std::vector<float> logits_data(static_cast<size_t>(out_frames * vocab_size));
-        ggml_backend_tensor_get(
-            logits.tensor,
-            logits_data.data(),
-            0,
-            logits_data.size() * sizeof(float));
-
-        token_ids.reserve(static_cast<size_t>(out_frames));
-        for (int64_t t = 0; t < out_frames; ++t) {
-            const float * frame_logits = &logits_data[static_cast<size_t>(t * vocab_size)];
-            int32_t best_id = 0;
-            float max_val = frame_logits[0];
-            for (int32_t v = 1; v < static_cast<int32_t>(vocab_size); ++v) {
-                if (frame_logits[v] > max_val) {
-                    max_val = frame_logits[v];
-                    best_id = v;
-                }
-            }
-            token_ids.push_back(CtcArgmaxFrame{
-                best_id,
-                greedy_class_probability(frame_logits, static_cast<int32_t>(vocab_size), max_val),
-            });
-        }
-    } catch (...) {
-        ggml_gallocr_free(galloc);
-        ggml_free(ggml_ctx);
-        throw;
+        ggml_set_input(in_tensor.tensor);
+        ggml_set_output(logits.tensor);
+        ggml_build_forward_expand(prepared->graph(), logits.tensor);
+        prepared->allocate();
+        input_ = in_tensor.tensor;
+        logits_ = logits;
+        logits_data_.resize(static_cast<size_t>(logits.shape.dims[1] * config.vocab_size));
+        graph_frames_ = num_frames;
+        graph_ = std::move(prepared);
     }
 
-    ggml_gallocr_free(galloc);
-    ggml_free(ggml_ctx);
+    ggml_backend_tensor_set(input_, features.values.data(), 0,
+        features.values.size() * sizeof(float));
+
+    graph_->compute();
+    const int64_t out_frames = logits_.shape.dims[1];
+    const int64_t vocab_size = config.vocab_size;
+    ggml_backend_tensor_get(logits_.tensor, logits_data_.data(), 0,
+        logits_data_.size() * sizeof(float));
+    const auto ids = decoders::CtcHostDecoder::frame_ids(logits_data_.data(), out_frames, vocab_size);
+    std::vector<CtcArgmaxFrame> token_ids;
+    token_ids.reserve(ids.size());
+    for (int64_t t = 0; t < out_frames; ++t) {
+        const float * frame_logits = &logits_data_[static_cast<size_t>(t * vocab_size)];
+        const int32_t best_id = ids[static_cast<size_t>(t)];
+        token_ids.push_back(CtcArgmaxFrame{
+            best_id,
+            greedy_class_probability(frame_logits, static_cast<int32_t>(vocab_size), frame_logits[best_id]),
+        });
+    }
     return token_ids;
 }
 

@@ -55,7 +55,6 @@ struct Granite5ASRAssets {
     std::shared_ptr<const assets::TensorSource> source;
     Granite5ASRConfig config;
     std::shared_ptr<tokenizers::HuggingFaceTokenizerJson> tokenizer;
-    std::vector<uint8_t> special_token_ids;
 };
 
 Granite5ASRConfig parse_granite5asr_config(const std::string & json_text);

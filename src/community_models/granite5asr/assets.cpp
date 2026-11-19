@@ -27,25 +27,6 @@ void validate_config(const Granite5ASRConfig & config) {
     }
 }
 
-std::vector<uint8_t> parse_special_token_ids(
-    const std::filesystem::path & tokenizer_json,
-    int64_t vocab_size) {
-    std::vector<uint8_t> special(static_cast<size_t>(vocab_size), 0);
-    const auto root = json::parse_file(tokenizer_json);
-    if (const auto * added = root.find("added_tokens"); added != nullptr && added->is_array()) {
-        for (const auto & item : added->as_array()) {
-            if (!json::optional_bool(item, "special", false)) {
-                continue;
-            }
-            const int64_t id = json::require_i64(item, "id");
-            if (id >= 0 && id < vocab_size) {
-                special[static_cast<size_t>(id)] = 1;
-            }
-        }
-    }
-    return special;
-}
-
 Granite5ASRConfig parse_config(const assets::ResourceBundle & resources) {
     const auto config_root = resources.parse_json("config");
 
@@ -110,8 +91,6 @@ std::shared_ptr<const Granite5ASRAssets> load_granite5asr_assets(
     assets->config = parse_config(assets->resources);
     const auto & tokenizer_json = assets->resources.require_file("tokenizer_json");
     assets->tokenizer = engine::tokenizers::load_huggingface_tokenizer_json(tokenizer_json);
-    assets->special_token_ids =
-        parse_special_token_ids(tokenizer_json, assets->config.vocab_size);
     return assets;
 }
 
