@@ -196,6 +196,15 @@
         "default": 4
       },
       {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Encoded reference voices kept in host memory, least recently used evicted first. A hit needs the exact same waveform. 0 encodes every request. Each slot keeps its waveform (up to 5.3 MB).",
+        "required": false,
+        "min": 0,
+        "max": 64,
+        "default": 8
+      },
+      {
         "name": "codec_async_decode",
         "type": "bool",
         "description": "Overlap streaming codec decoding with AR generation on the dedicated codec backend. Uses a bounded queue and waits for all audio before completing the request.",

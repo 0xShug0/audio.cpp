@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/fish_drama3/prompt.h"
+#include "engine/community_models/fish_drama3/reference_cache.h"
 #include "engine/framework/runtime/streaming_audio.h"
 
 #include <functional>
@@ -51,8 +52,7 @@ private:
     std::unique_ptr<Drama3Tower> tower_;
     std::unique_ptr<core::ExecutionContext> codec_execution_;
     std::unique_ptr<codecs::FishDacCodecRuntime> codec_;
-    std::optional<runtime::AudioBuffer> cached_reference_audio_;
-    codecs::FishDacCodes cached_reference_codes_;
+    Drama3ReferenceCache reference_cache_;
 };
 
 }  // namespace engine::models::fish_drama3
