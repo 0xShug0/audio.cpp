@@ -99,6 +99,41 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
     return descriptor;
 }
 
+bool starts_with(const std::string & text, const char * prefix) {
+    return text.rfind(prefix, 0) == 0;
+}
+
+// The replace_characters table of the upstream config for `language`, the same at 6 and 24 layers, for packages that
+// embed no config. Empty for a language upstream does not ship.
+std::vector<std::pair<std::string, std::string>> builtin_replace_characters(const std::string & language) {
+    std::vector<std::pair<std::string, std::string>> table{{"‘", "'"}, {"’", "'"}};
+    if (!starts_with(language, "english")) {
+        bool known = false;
+        for (const char * name : {"french", "german", "italian", "portuguese", "spanish", "dutch"}) {
+            known = known || starts_with(language, name);
+        }
+        if (!known) {
+            return {};
+        }
+        for (const char * deleted : {"\"", "“", "”", "„", "«", "»", "(", ")", "[", "]"}) {
+            table.emplace_back(deleted, "");
+        }
+        table.emplace_back("–", ",");
+        if (starts_with(language, "french")) {
+            table.emplace_back(":", ",");
+        }
+        if (starts_with(language, "german")) {
+            table.emplace_back("—", ",");
+        }
+        if (starts_with(language, "spanish")) {
+            table.emplace_back("¡", "");
+            table.emplace_back("¿", "");
+        }
+    }
+    std::sort(table.begin(), table.end());
+    return table;
+}
+
 PocketTTSDescriptor descriptor_from_builtin_defaults(const std::string & language) {
     PocketTTSDescriptor descriptor;
     // Upstream pocket-tts defaults the english and english_2026-04 models to
@@ -109,9 +144,11 @@ PocketTTSDescriptor descriptor_from_builtin_defaults(const std::string & languag
     descriptor.pad_with_spaces_for_short_inputs = (language == "english_2026-01");
     descriptor.insert_bos_before_voice = (language != "english_2026-01");
     if (language.find("french_24l") != std::string::npos) {
-        descriptor.remove_semicolons = true;
         descriptor.model_recommended_frames_after_eos = 8;
     }
+    // Upstream's french and german configs, at both sizes, map ";" to ",".
+    descriptor.remove_semicolons = starts_with(language, "french") || starts_with(language, "german");
+    descriptor.replace_characters = builtin_replace_characters(language);
     descriptor.flow_layers = language.find("_24l") != std::string::npos ? 24 : 6;
     descriptor.mimi_inner_dim = (language == "english_2026-01") ? 512 : 32;
     return descriptor;
