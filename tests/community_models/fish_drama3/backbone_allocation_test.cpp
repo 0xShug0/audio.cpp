@@ -110,8 +110,7 @@ int main(int argc, char ** argv) {
                         drama::Drama3BackboneCachedDecodeGraph graph(execution, weights, config, 32, 8 * 1024 * 1024);
                     } catch (const std::runtime_error & error) {
                         const std::string expected = buffer_failure ? "failed to allocate Drama 3 backbone cached decode graph"
-                            : split ? "Cannot allocate drama3_backbone.cached_decode scheduled graph"
-                                    : "cannot reserve graph activation workspace";
+                            : "cannot reserve graph activation workspace";
                         if (std::string(error.what()) != expected) throw;
                         rejected = true;
                     }
