@@ -125,8 +125,12 @@ is limited to eight codebook positions and reset for each audio frame. Cached
 decode graphs attend to the active prefix in 128-position buckets and share one
 scratch allocator. Backbone prefill, symbolic-conditioning, transcription-encoder,
 chord-fold and codec workspaces are released after use. ChordNet retains only
-the current reference-length graph for each fold. Codebook heads use views of
-the stored weights and share one scratch buffer.
+the current reference shape for each fold. Its CNN processes the complete
+reference, preserving instance-normalization statistics. LSTM sequences use
+cached graphs of up to 128 frames with hidden/cell state carried between blocks
+in each direction. This bounds recurrent graph size without truncating song
+context. Codebook heads use views of the stored weights and share one scratch
+buffer.
 
 The prompt and generation budget must fit the 8,192-token context. Symbolic
 conditioning is limited to 5,000 sixteenth notes. Offline generation uses

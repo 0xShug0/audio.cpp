@@ -9,6 +9,8 @@
 // midi: --melody FILE --chord FILE [--drums FILE]
 // conditioning: --source CHECKPOINT --first-layer N --train-tag true|false --cfg true|false
 // Common: --metadata JSON, --atol FLOAT (1e-4), --rtol FLOAT (1e-3).
+// chord: --repeat N, --sequence JSON array of reference paths (metadata beside each),
+//   --expect-error TEXT to verify repeated preparation failures keep their cause.
 // Metadata may supply tags, bpm, sample_rate; explicit tags/bpm take precedence.
 // Fixture contract (logical row-major shapes, floating expected tensors):
 // style: style [1024]. frontend: waveform [samples] or [frames,channels],
@@ -90,7 +92,7 @@ int main(int argc, char ** argv) {
         const std::string mode = argv[1];
         const std::vector<std::string> modes{"style", "prompt", "frontend", "transcriber", "chord", "midi", "conditioning"};
         if (std::find(modes.begin(), modes.end(), mode) == modes.end()) throw std::runtime_error("Unknown mode: " + mode);
-        const std::vector<std::string> flags{"--reference", "--backend", "--log", "--source", "--source1", "--source2", "--source3", "--source4", "--tokenizer", "--tags", "--lyrics", "--input", "--bpm", "--metadata", "--atol", "--rtol", "--vocabulary", "--melody", "--chord", "--drums", "--first-layer", "--train-tag", "--cfg", "--weight-type"};
+        const std::vector<std::string> flags{"--reference", "--backend", "--log", "--source", "--source1", "--source2", "--source3", "--source4", "--tokenizer", "--tags", "--lyrics", "--input", "--bpm", "--metadata", "--atol", "--rtol", "--vocabulary", "--melody", "--chord", "--drums", "--first-layer", "--train-tag", "--cfg", "--weight-type", "--repeat", "--sequence", "--expect-error"};
         std::map<std::string, std::string> args;
         for (int i = 2; i < argc; i += 2) {
             const std::string flag = argv[i];
@@ -180,19 +182,54 @@ int main(int argc, char ** argv) {
         } else if (mode == "chord") {
             std::array<std::shared_ptr<const engine::assets::TensorSource>, 5> sources;
             for (size_t i = 0; i < sources.size(); ++i) sources[i] = engine::assets::open_tensor_source(required(i == 0 ? "--source" : "--source" + std::to_string(i)));
-            const auto cqt_shape = reference->require_metadata("cqt").shape;
-            if (cqt_shape.size() != 2 || cqt_shape[1] != 252) throw std::runtime_error("cqt must be [frames,252]");
             engine::core::ExecutionContext execution(backend);
             mc::ChordNet model(execution, sources, required("--vocabulary"));
-            const auto events = model.forward(reference->require_f32("cqt"));
-            const auto & labels = metadata.require("chord_labels").as_array();
-            if (events.size() != labels.size()) throw std::runtime_error("Chord event count mismatch");
-            std::vector<float> times;
-            for (size_t i = 0; i < events.size(); ++i) {
-                if (events[i].label != labels[i].as_string()) throw std::runtime_error("Chord label mismatch at " + std::to_string(i));
-                times.insert(times.end(), {static_cast<float>(events[i].onset_seconds), static_cast<float>(events[i].offset_seconds)});
+            std::vector<std::filesystem::path> cases{required("--reference")};
+            if (args.count("--sequence")) {
+                cases.clear();
+                const auto sequence = engine::io::json::parse_file(args.at("--sequence"));
+                for (const auto & entry : sequence.as_array()) cases.emplace_back(entry.as_string());
+                if (cases.empty()) throw std::runtime_error("Chord sequence must not be empty");
             }
-            compare(*reference, "chord_times", times, {static_cast<int64_t>(events.size()), 2}, atol, rtol);
+            const int repeat = args.count("--repeat") ? std::stoi(args.at("--repeat")) : 1;
+            if (repeat < 1) throw std::runtime_error("Chord repeat must be positive");
+            for (int iteration = 0; iteration < repeat; ++iteration) {
+                for (const auto & path : cases) {
+                    const auto expected = engine::assets::open_tensor_source(path);
+                    auto label_path = path;
+                    label_path.replace_extension(".json");
+                    const auto labels_json = args.count("--sequence")
+                        ? engine::io::json::parse_file(label_path) : metadata;
+                    const auto shape = expected->require_metadata("cqt").shape;
+                    if (shape.size() != 2 || shape[1] != 252) throw std::runtime_error("cqt must be [frames,252]");
+                    engine::debug::log_message("validation.case=" + path.filename().string() + " iteration=" + std::to_string(iteration));
+                    std::vector<mc::ChordEvent> events;
+                    try {
+                        events = model.forward(expected->require_f32("cqt"));
+                    } catch (const std::exception & error) {
+                        if (!args.count("--expect-error") || std::string(error.what()).find(args.at("--expect-error")) == std::string::npos) throw;
+                        engine::debug::log_message("validation.expected_error=" + std::string(error.what()));
+                        continue;
+                    }
+                    if (args.count("--expect-error")) throw std::runtime_error("Expected ChordNet preparation failure");
+                    const auto & labels = labels_json.require("chord_labels").as_array();
+                    std::vector<float> times;
+                    engine::io::json::Value::Array actual;
+                    for (const auto & event : events) {
+                        times.insert(times.end(), {static_cast<float>(event.onset_seconds), static_cast<float>(event.offset_seconds)});
+                        actual.push_back(engine::io::json::Value::make_array({
+                            engine::io::json::Value::make_string(event.label),
+                            engine::io::json::Value::make_number(event.onset_seconds),
+                            engine::io::json::Value::make_number(event.offset_seconds)}));
+                    }
+                    engine::debug::log_message("validation.chord.events=" + engine::io::json::stringify(engine::io::json::Value::make_array(std::move(actual))));
+                    if (events.size() != labels.size()) throw std::runtime_error("Chord event count mismatch");
+                    for (size_t i = 0; i < events.size(); ++i) {
+                        if (events[i].label != labels[i].as_string()) throw std::runtime_error("Chord label mismatch at " + std::to_string(i));
+                    }
+                    compare(*expected, "chord_times", times, {static_cast<int64_t>(events.size()), 2}, atol, rtol);
+                }
+            }
         } else if (mode == "midi") {
             const auto symbolic = mc::load_symbolic_midi(required("--melody"), required("--chord"), args.count("--drums") ? std::optional<std::filesystem::path>(args.at("--drums")) : std::nullopt);
             compare(*reference, "pianoroll", symbolic.pianoroll, {symbolic.length, 256}, 0, 0);

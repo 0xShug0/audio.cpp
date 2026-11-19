@@ -1,5 +1,6 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/activation_modules.h"
@@ -1518,15 +1519,80 @@ void test_batched_rope_matches_independent_rows() {
     }
 }
 
+void test_selu_reference(engine::core::BackendType backend) {
+    using namespace engine;
+    core::ExecutionContext execution({backend, 0, 8});
+    core::PreparedGraph graph(execution, {"selu_test", 2u << 20, 128, 0});
+    auto & ctx = graph.build_context();
+    const auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({8,512}));
+    ggml_set_input(input.tensor);
+    const auto strided = modules::SliceModule({1,1,510}).build(ctx,input);
+    const auto output = modules::SeluModule().build(ctx,input);
+    const auto sliced_output = modules::SeluModule().build(ctx,strided);
+    ggml_set_output(output.tensor);
+    ggml_set_output(sliced_output.tensor);
+    ggml_build_forward_expand(graph.graph(),output.tensor);
+    ggml_build_forward_expand(graph.graph(),sliced_output.tensor);
+    bool has_elu = false, has_expm1 = false;
+    for (int i = 0; i < ggml_graph_n_nodes(graph.graph()); ++i) {
+        const auto * node = ggml_graph_node(graph.graph(),i);
+        if (node->op != GGML_OP_UNARY) continue;
+        has_elu |= ggml_get_unary_op(node) == GGML_UNARY_OP_ELU;
+        has_expm1 |= ggml_get_unary_op(node) == GGML_UNARY_OP_EXPM1;
+    }
+    const bool vulkan = backend == core::BackendType::Vulkan;
+    require(has_elu == vulkan && has_expm1 != vulkan, "SELU backend lowering");
+    graph.allocate();
+    double max_error = 0;
+    for (int round = 0; round < 3; ++round) {
+        std::vector<float> values(8 * 512), expected(values.size()), sliced_expected;
+        const std::vector<float> boundary{-1000,-80,-1,-0.01F,-1e-4F,-1e-6F,-1e-8F,-1e-12F,
+                                        -0.0F,0.0F,1e-12F,1e-8F,1e-6F,0.01F,80,1000};
+        for (size_t i = 0; i < values.size(); ++i) {
+            values[i] = 0.125F * static_cast<float>(static_cast<int>((i + round * 37) % 257) - 128);
+            if (i < boundary.size()) values[i] = boundary[i];
+            // Independent scalar SELU oracle; match the existing F32 constants
+            // and multiplication boundaries, not a second GGML graph.
+            constexpr float alpha = 1.6732632423543772848170429916717F;
+            constexpr float scale = 1.0507009873554804934193349852946F;
+            expected[i] = scale * (values[i] > 0 ? values[i]
+                : alpha * static_cast<float>(std::expm1(static_cast<double>(values[i]))));
+            if (i % 512 > 0 && i % 512 < 511) sliced_expected.push_back(expected[i]);
+        }
+        core::write_tensor_f32(input,values);
+        graph.compute();
+        const auto actual = core::read_tensor_f32(output.tensor);
+        require_allclose(actual,expected,1e-6F,"SELU scalar reference");
+        require_allclose(core::read_tensor_f32(sliced_output.tensor),sliced_expected,1e-6F,"SELU strided scalar reference");
+        for (size_t i = 0; i < actual.size(); ++i)
+            max_error = std::max(max_error,std::abs(static_cast<double>(actual[i]) - expected[i]));
+    }
+    debug::timing_log_scalar("validation.selu.max_abs_error",max_error);
+}
+
 }  // namespace
 
 int main(int argc, char ** argv) {
     const auto started = std::chrono::steady_clock::now();
     try {
-        if (argc == 3 && std::string(argv[1]) == "--log")
-            engine::debug::configure_logging({true, argv[2]});
-        else if (argc != 1)
-            throw std::runtime_error("Usage: encoder_module_test [--log FILE]");
+        std::optional<engine::core::BackendType> selu_backend;
+        for (int i = 1; i < argc; i += 2) {
+            if (i + 1 == argc) throw std::runtime_error("Missing test option value");
+            const std::string flag = argv[i], value = argv[i + 1];
+            if (flag == "--log") engine::debug::configure_logging({true,value});
+            else if (flag == "--selu-backend") {
+                if (value == "cpu") selu_backend = engine::core::BackendType::Cpu;
+                else if (value == "cuda") selu_backend = engine::core::BackendType::Cuda;
+                else if (value == "vulkan") selu_backend = engine::core::BackendType::Vulkan;
+                else throw std::runtime_error("Unsupported SELU test backend: " + value);
+            } else throw std::runtime_error("Usage: encoder_module_test [--log FILE] [--selu-backend cpu|cuda|vulkan]");
+        }
+        test_selu_reference(selu_backend.value_or(engine::core::BackendType::Cpu));
+        if (selu_backend) {
+            engine::debug::timing_log_scalar("session.wall_ms",engine::debug::elapsed_ms(started));
+            std::cout << "SELU reference and backend lowering: passed\n";
+            return 0;
+        }
         test_batched_rope_matches_independent_rows();
         test_cuda_f16_lowerings_default_off();
         test_mul_optional_broadcasting();
