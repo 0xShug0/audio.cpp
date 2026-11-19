@@ -9650,14 +9650,6 @@ static inline void ggml_ssm_exp_lanes(float * v) {
 #endif
 }
 
-// v * sigmoid(v) for kSsmLanes floats in place.
-static inline void ggml_ssm_silu_lanes(float * v) {
-    float e[kSsmLanes];
-    for (int64_t l = 0; l < kSsmLanes; ++l) e[l] = -v[l];
-    ggml_ssm_exp_lanes(e);
-    for (int64_t l = 0; l < kSsmLanes; ++l) v[l] = v[l] / (1.0f + e[l]);
-}
-
 void ggml_compute_forward_ssm_conv_causal_silu(const ggml_compute_params * params, ggml_tensor * dst) {
     const auto * x = dst->src[0];
     const auto * w = (const float *) dst->src[1]->data;
@@ -9688,7 +9680,7 @@ void ggml_compute_forward_ssm_conv_causal_silu(const ggml_compute_params * param
                 for (int64_t l = 0; l < kSsmLanes; ++l) value[l] = std::fma(sample[l], weights[k*kSsmLanes + l], value[l]);
             }
             for (int64_t l = 0; l < kSsmLanes; ++l) value[l] += b[l];
-            ggml_ssm_silu_lanes(value);
+            ggml_vec_silu_f32(kSsmLanes, value, value);
             std::copy_n(value, lanes, output + (seq*tokens + t)*channels + first);
         }
     }
@@ -9764,7 +9756,7 @@ void ggml_compute_forward_ssm_scan_mamba1(const ggml_compute_params * params, gg
                         sum[n % 4][l] = std::fma(s[l], c, sum[n % 4][l]);
                     }
                 }
-                ggml_ssm_silu_lanes(z);
+                ggml_vec_silu_f32(kSsmLanes, z, z);
                 float * out = output + (seq*tokens + t)*channels + first;
                 for (int64_t l = 0; l < lanes; ++l) {
                     out[l] = z[l]*((sum[0][l] + sum[1][l] + sum[2][l] + sum[3][l]) + sample[l]*skip[l]);
