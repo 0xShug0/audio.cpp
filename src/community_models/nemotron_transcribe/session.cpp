@@ -1,3 +1,4 @@
+#include "engine/framework/runtime/moe_options.h"
 #include "engine/community_models/nemotron_transcribe/session.h"
 
 #include "engine/community_models/nemotron_transcribe/assets.h"
@@ -9,6 +10,7 @@
 #include "engine/framework/runtime/spec_backed_model.h"
 
 #include <algorithm>
+#include <mutex>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -135,7 +137,7 @@ public:
         const auto storage = transcribe_weight_type(
             runtime::find_option(options.options, {"nemotron_transcribe.weight_type"}).value_or("native"));
         DecoderOptions decoder_options;
-        decoder_options.moe = core::resolve_moe_execution_policy(options.options, "nemotron_transcribe",
+        decoder_options.moe = runtime::resolve_moe_options(options.options, "nemotron_transcribe",
             decoder_options.moe, static_cast<size_t>(std::count(decoder_config.block_pattern.begin(),
                 decoder_config.block_pattern.end(), 'E')));
         encoder_ = std::make_unique<ParallelExpertEncoder>(execution_context(), *assets_->encoder_weights, encoder_config, storage);
@@ -149,14 +151,16 @@ public:
     runtime::RunMode run_mode() const override { return task_.mode; }
 
     void prepare(const runtime::SessionPreparationRequest & request) override {
-        const auto execution = acquire_moe_execution();
+        std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+        if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
         if (!request.audio || request.audio->sample_rate <= 0 || request.audio->channels <= 0)
             throw runtime::InvalidRequestError("Nemotron Transcribe requires a valid audio format");
         mark_prepared();
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
-        const auto execution = acquire_moe_execution();
+        std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+        if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
         require_prepared("Nemotron Transcribe run");
         if (!request.audio_input) throw runtime::InvalidRequestError("Nemotron Transcribe requires audio");
         const auto & audio = *request.audio_input;
@@ -333,6 +337,7 @@ public:
         return result;
     }
 private:
+    std::mutex request_mutex_;
     runtime::TaskSpec task_;
     std::shared_ptr<const TranscribeAssets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
@@ -354,10 +359,10 @@ std::shared_ptr<runtime::IVoiceModelLoader> make_nemotron_transcribe_loader() {
         const auto assets = load_transcribe_assets(path);
         const auto storage = transcribe_weight_type(
             runtime::find_option(options, {"nemotron_transcribe.weight_type"}).value_or("native"));
-        const auto policy = core::resolve_moe_execution_policy(options, "nemotron_transcribe",
+        const auto policy = runtime::resolve_moe_options(options, "nemotron_transcribe",
             DecoderOptions{}.moe, static_cast<size_t>(std::count(assets->decoder.block_pattern.begin(),
                 assets->decoder.block_pattern.end(), 'E')));
-        const bool offload = policy.residency == core::MoeExpertResidency::Staged;
+        const bool offload = policy.residency == moe::Residency::Staged;
         const auto slots = offload ? policy.cache_slots : 0;
         runtime::ModelResourcePlan plan;
         // Report both files so the host does not price the compressed decoder

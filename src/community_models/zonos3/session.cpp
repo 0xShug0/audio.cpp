@@ -1,3 +1,5 @@
+#include <mutex>
+#include "engine/framework/runtime/moe_options.h"
 #include "engine/community_models/zonos3/session.h"
 
 #include "engine/community_models/zonos3/codec_decoder.h"
@@ -150,7 +152,7 @@ Zonos3Session::Zonos3Session(runtime::TaskSpec task, const runtime::SessionOptio
     }
     const auto & session = options.options;
     Zonos3BackboneOptions backbone;
-    backbone.moe = core::resolve_moe_execution_policy(session, "zonos3", backbone.moe,
+    backbone.moe = runtime::resolve_moe_options(session, "zonos3", backbone.moe,
                                                      static_cast<size_t>(assets_->hparams.n_layer - 1));
     if (backbone.moe.cache_slots > 64) {
         throw std::runtime_error("zonos3.expert_cache_size must be at most 64");
@@ -183,7 +185,8 @@ runtime::VoiceTaskKind Zonos3Session::task_kind() const { return task_.task; }
 runtime::RunMode Zonos3Session::run_mode() const { return task_.mode; }
 
 void Zonos3Session::prepare(const runtime::SessionPreparationRequest & request) {
-    const auto execution = acquire_moe_execution();
+    std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+    if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
     runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "ZONOS3");
     defaults_ = {};
     defaults_.text_input = request.text;
@@ -231,7 +234,8 @@ Zonos3Voice Zonos3Session::encode_voice(const runtime::AudioBuffer & audio, bool
 }
 
 runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & request, bool streaming) {
-    const auto execution = acquire_moe_execution();
+    std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+    if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
     require_prepared("ZONOS3 generation");
     runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_, "ZONOS3");
     const auto started = std::chrono::steady_clock::now();

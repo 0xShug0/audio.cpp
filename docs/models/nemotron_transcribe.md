@@ -462,3 +462,7 @@ every storage type.
 Weights retain OpenMDW-1.1 and component notices. Runtime alignment adaptations
 and Unicode/numerical attributions are in the model's `THIRD_PARTY_NOTICES.md`
 and `LICENSE.apache-2.0`.
+
+### MoE engine policies
+
+The routed backbone accepts independent placement and cache-eviction policies through `moe_policy` and stage-scoped `moe_policy_params.placement.*` / `moe_policy_params.eviction.*`. See [shared controls and policy parameters](../usage.md#independent-moe-policies). Omitted policies preserve the model's existing residency and CPU-layer defaults. Active policies require staged experts; shared/dense branches and model state remain on their existing paths.

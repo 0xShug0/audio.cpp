@@ -5,7 +5,7 @@ namespace engine::runtime {
 
 RuntimeSessionBase::RuntimeSessionBase(const SessionOptions & options)
     : options_(options),
-      execution_context_(options.backend, parse_finite_float_option(options.options, {"moe_cpu_share"}).value_or(0)),
+      execution_context_(options.backend),
       graph_executor_(execution_context_) {}
 
 engine::core::ExecutionContext & RuntimeSessionBase::execution_context() noexcept {
@@ -49,17 +49,6 @@ const GraphExecutor & RuntimeSessionBase::graph_executor() const noexcept {
 }
 
 void RuntimeSessionBase::mark_prepared() {
-    for (const auto & [key, value] : options_.options) {
-        (void) value;
-        if (key.rfind("moe_", 0) != 0) continue;
-        if (key != "moe_cpu_share" && key != "moe_disk_experts" && key != "moe_pin_experts" &&
-            key != "moe_expert_cache_size" && key != "moe_disk_expert_read_threads" && key != "moe_cpu_expert_layers")
-            throw std::invalid_argument("unknown shared MoE session option: " + key);
-        // Explicit zero preserves the existing disabled behavior on non-MoE sessions.
-        if (key == "moe_cpu_share" && execution_context_.moe_cpu_share() == 0) continue;
-        if (!execution_context_.has_moe_resources())
-            throw std::invalid_argument("session does not support shared MoE resources: " + key);
-    }
     prepared_ = true;
 }
 
@@ -68,13 +57,6 @@ void RuntimeSessionBase::require_prepared(std::string_view operation) const {
         throw std::runtime_error(
             "session prepare() must be called before " + std::string(operation));
     }
-}
-
-std::unique_lock<std::mutex> RuntimeSessionBase::acquire_moe_execution() {
-    std::unique_lock<std::mutex> lock(moe_execution_mutex_, std::defer_lock);
-    if (!lock.try_lock())
-        throw std::runtime_error("overlapping requests on one MoE session are not supported");
-    return lock;
 }
 
 void RuntimeSessionBase::trace(engine::debug::LogLevel level, std::string_view category, std::string_view message) const {

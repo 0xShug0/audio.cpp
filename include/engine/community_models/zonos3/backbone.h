@@ -3,7 +3,7 @@
 #include "engine/community_models/zonos3/assets.h"
 #include "engine/community_models/zonos3/prompt.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/core/moe_resources.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 
 #include <array>
 #include <cstdint>
@@ -13,7 +13,7 @@
 namespace engine::models::zonos3 {
 
 struct Zonos3BackboneOptions {
-    core::MoeExecutionPolicy moe{core::MoeExpertResidency::Backend, false, 16, 1, {}, 0};
+    moe::EngineConfig moe{moe::Residency::Resident, false, 16, 1, {}, {}};
     // Parity control: compare staged and resident experts with identical plain kernels.
     bool repack_experts = true;
 };

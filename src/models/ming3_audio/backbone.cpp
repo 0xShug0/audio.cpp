@@ -1,12 +1,10 @@
 #include "engine/framework/modules/feed_forward_modules.h"
-#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/moe_engine/moe_prepared_graph.h"
 #include "engine/models/ming3_audio/backbone.h"
 
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
-#include "engine/framework/modules/moe_module.h"
-#include "engine/framework/modules/staged_moe_runtime.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/packed_linear_weights.h"
@@ -31,7 +29,7 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
     : store(execution.backend(), execution.backend_type(), "ming3_audio.thinker.weights", 4 * 1024 * 1024) {
     namespace binding = modules::binding;
     const auto native = assets::TensorStorageType::Native;
-    experts = std::make_unique<core::MoeResources>(execution, source, store, options.moe,
+    experts = std::make_unique<moe::MoeEngine>(execution, store, source, options.moe,
         "ming3_audio.thinker.cpu_experts", 4 * 1024 * 1024);
     embedding = store.load_tensor(source, "model.word_embeddings.weight", native, {c.vocabulary_size, c.hidden_size});
     head = store.load_tensor(source, "lm_head.weight", native, {c.vocabulary_size, c.hidden_size});
@@ -81,30 +79,28 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
         const bool routed = layer >= c.dense_layers;
         const auto dense = prefix + (routed ? ".mlp.shared_experts" : ".mlp");
         const auto middle = routed ? c.shared_intermediate_size : c.intermediate_size;
-        auto & shared = w.ffn.shared.emplace<modules::GatedFeedForwardWeights>();
+        auto & shared = w.shared;
+        moe::LayerBindings expert_bindings;
         shared.up_gate_proj = modules::PackedLinearWeightsBuilder({c.hidden_size, {
             {dense + ".gate_proj.weight", std::nullopt, middle},
             {dense + ".up_proj.weight", std::nullopt, middle}}, false, true}).build(store, source, native);
         shared.down_proj = binding::linear_from_source(store, source, dense + ".down_proj", native, c.hidden_size, middle, false);
         if (routed) {
-            w.ffn.router = store.load_f32_tensor(source, prefix + ".mlp.gate.weight", {c.experts, c.hidden_size});
+            expert_bindings.router = store.load_f32_tensor(source, prefix + ".mlp.gate.weight", {c.experts, c.hidden_size});
             auto bias = source.require_f32(prefix + ".mlp.gate.expert_bias", {c.experts});
             // The official BF16 loader casts this buffer before the F32 router uses it.
             core::round_f32_to_bf16_in_place(bias);
-            w.ffn.selection_bias = store.make_f32(core::TensorShape::from_dims({c.experts}), std::move(bias));
-            const auto & bank = experts->bind_layer(static_cast<size_t>(layer - c.dense_layers),
-                static_cast<size_t>(layer), {
+            expert_bindings.selection_bias = store.make_f32(core::TensorShape::from_dims({c.experts}), std::move(bias));
+            expert_bindings.experts = {
                     {prefix + ".mlp.experts.gate_proj.weight", "thinker/" + prefix + ".mlp.experts.gate_proj.weight",
                         {c.experts, c.expert_intermediate_size, c.hidden_size}, native},
                     {prefix + ".mlp.experts.up_proj.weight", "thinker/" + prefix + ".mlp.experts.up_proj.weight",
                         {c.experts, c.expert_intermediate_size, c.hidden_size}, native},
                     {prefix + ".mlp.experts.down_proj.weight", "thinker/" + prefix + ".mlp.experts.down_proj.weight",
-                        {c.experts, c.hidden_size, c.expert_intermediate_size}, native}}, c.experts_per_token);
-            w.disk_store = bank.disk_store;
-            w.disk_group = bank.disk_group;
-            w.ffn.experts.gate = bank.weights[0].tensor;
-            w.ffn.experts.up = bank.weights[1].tensor;
-            w.ffn.experts.down = bank.weights[2].tensor;
+                        {c.experts, c.hidden_size, c.expert_intermediate_size}, native}};
+            expert_bindings.experts[0].role = moe::ProjectionRole::Gate;
+            expert_bindings.experts[1].role = moe::ProjectionRole::Up;
+            expert_bindings.experts[2].role = moe::ProjectionRole::Down;
         }
         modules::GatedFeedForwardConfig shared_config;
         shared_config.hidden_size = c.hidden_size;
@@ -113,25 +109,26 @@ ThinkerWeights::ThinkerWeights(core::ExecutionContext & execution, const assets:
         shared_config.packed_gate_first = true;
         shared_config.round_projections = shared_config.round_activation = true;
         shared_config.round_product = shared_config.round_output = true;
-        w.ffn_config.shared = shared_config;
-        auto & routing = w.ffn_config.routing;
+        w.shared_config = shared_config;
+        moe::LayerMath math;
+        auto & routing = math.routing;
         routing.experts = c.experts;
         routing.selected = c.experts_per_token;
-        routing.scoring = modules::MoeScoring::Sigmoid;
-        routing.normalization = c.experts_per_token > 1 ? modules::MoeNormalization::AddEpsilon : modules::MoeNormalization::None;
+        routing.scoring = moe::Scoring::Sigmoid;
+        routing.normalization = c.experts_per_token > 1 ? moe::Normalization::AddEpsilon : moe::Normalization::None;
         routing.denominator_epsilon = 1e-20F;
         routing.scale = c.routed_scaling_factor;
         routing.precision = GGML_PREC_F32;
         routing.groups = c.expert_groups;
         routing.selected_groups = c.selected_groups;
-        w.ffn_config.experts = {modules::MoeActivation::SwiGlu, false, true, true, true, true};
-        w.ffn_config.round_routed_output = w.ffn_config.round_output = true;
+        math.experts = {moe::ExpertActivation::SwiGlu, false, true, true, true, true};
+        if (routed) w.expert = experts->register_layer(std::move(expert_bindings), math);
         layers.push_back(std::move(w));
     }
     store.upload();
     experts->finalize_weights();
-    if (const auto * disk_store = experts->disk_store()) {
-        const auto stats = disk_store->statistics();
+    if (experts->staged()) {
+        const auto stats = experts->statistics();
         debug::timing_log_scalar("ming3_audio.thinker.expert_cache_mb", stats.buffer_bytes / (1024.0 * 1024.0));
         debug::timing_log_scalar("ming3_audio.thinker.host_experts_mb", stats.host_buffer_bytes / (1024.0 * 1024.0));
     }
@@ -266,16 +263,15 @@ core::TensorValue build_mla(core::ModuleBuildContext & ctx, const core::TensorVa
 }
 
 core::TensorValue build_thinker_mlp(core::ModuleBuildContext & ctx, const core::TensorValue & input,
-    const ThinkerLayerWeights & w, const ThinkerConfig & c, bool routed) {
-    if (!routed) {
-        return modules::GatedFeedForwardModule(std::get<modules::GatedFeedForwardConfig>(*w.ffn_config.shared))
-            .build(ctx, input, std::get<modules::GatedFeedForwardWeights>(w.ffn.shared));
-    }
-    const modules::MoeFeedForwardModule ffn(w.ffn_config);
+    const ThinkerLayerWeights & w, const ThinkerConfig & c, bool routed,
+    moe::MoePreparedGraph & graph, moe::MoeEngine & engine) {
+    auto shared = modules::GatedFeedForwardModule(w.shared_config).build(ctx, input, w.shared);
+    if (!routed) return shared;
     auto * x = ggml_reshape_2d(ctx.ggml, input.tensor, c.hidden_size, input.shape.dims[1]);
-    const auto inputs = ffn.build_inputs(ctx, x, w.ffn);
-    auto * bank_ids = w.disk_store ? w.disk_store->route(ctx, ggml_cont(ctx.ggml, inputs.routing.ids), w.disk_group) : inputs.routing.ids;
-    return core::wrap_tensor(ffn.build_output(ctx, inputs, w.ffn, bank_ids), input.shape);
+    auto * experts = ggml_round_bf16(ctx.ggml, engine.build(graph, w.expert, x));
+    auto * output = ggml_round_bf16(ctx.ggml, ggml_add(ctx.ggml, experts,
+        ggml_reshape_2d(ctx.ggml, shared.tensor, c.hidden_size, input.shape.dims[1])));
+    return core::wrap_tensor(ggml_reshape_3d(ctx.ggml, output, c.hidden_size, input.shape.dims[1], 1), input.shape);
 }
 
 struct Thinker::Impl {
@@ -283,7 +279,7 @@ struct Thinker::Impl {
         explicit Graph(core::ExecutionContext & execution)
             : prepared(execution, {"ming3_audio.thinker", ggml_tensor_overhead() * 32768 +
                 ggml_graph_overhead_custom(32768, false), 32768}) {}
-        core::PreparedGraph prepared;
+        moe::MoePreparedGraph prepared;
         core::TensorValue ids;
         core::TensorValue audio;
         core::TensorValue audio_indices;
@@ -310,20 +306,10 @@ struct Thinker::Impl {
             constexpr size_t nodes = 1024, small_nodes = 128;
             const auto large_bytes = ggml_graph_overhead_custom(nodes, false) + nodes * ggml_tensor_overhead();
             const auto small_bytes = ggml_graph_overhead_custom(small_nodes, false) + small_nodes * ggml_tensor_overhead();
-            prepared_ = std::make_unique<core::PreparedGraph>(execution, core::PreparedGraphConfig{
+            prepared_ = std::make_unique<moe::MoePreparedGraph>(execution, core::PreparedGraphConfig{
                 "ming3_audio.offload_prefill", static_cast<size_t>(config.layers) * large_bytes + 3 * small_bytes,
-                small_nodes, 64 * ggml_tensor_overhead()});
+                small_nodes, 64 * ggml_tensor_overhead()}, workspace_);
             const auto h = config.hidden_size;
-            modules::StagedMoeConfig staged_config;
-            staged_config.hidden_size = h;
-            staged_config.tokens = steps;
-            staged_config.selected = config.experts_per_token;
-            staged_config.experts = config.experts;
-            staged_config.cache_slots = weights.layers.at(config.dense_layers).ffn.experts.gate->ne[2];
-            staged_config.rows_per_expert = {32};
-            staged_config.scatter_index_type = GGML_TYPE_I32;
-            staged_moe_ = std::make_unique<modules::StagedMoeRuntime>(execution, staged_config, workspace_,
-                weights.experts->cpu_execution());
             auto * persistent = prepared_->persistent_build_context().ggml;
             ids_ = ggml_new_tensor_1d(persistent, GGML_TYPE_I32, steps);
             audio_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
@@ -332,7 +318,8 @@ struct Thinker::Impl {
             mask_ = ggml_new_tensor_4d(persistent, GGML_TYPE_F32, capacity, steps, 1, 1);
             // Residual/shared values are saved before normalized expert input
             // replaces x; the finish graph writes the next layer's state here.
-            x_ = staged_moe_->hidden_input();
+            x_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
+            ggml_set_input(x_);
             residual_ = ggml_new_tensor_3d(persistent, GGML_TYPE_F32, h, steps, 1);
             shared_ = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, h, steps);
             for (auto * tensor : {ids_, audio_, audio_indices_, positions_, mask_, residual_, shared_})
@@ -353,6 +340,7 @@ struct Thinker::Impl {
             ggml_build_forward_expand(prepared_->graph(initial_), ggml_cpy(ctx.ggml, embedded.tensor, x_));
             modules::NormConfig norm{h, config.rms_norm_eps, true, false};
             norm.normalized_round_type = GGML_TYPE_BF16;
+            std::vector<moe::MoePreparedGraph::Step> sequence{initial_};
             for (int64_t layer = 0; layer < config.layers; ++layer) {
                 const auto & w = weights.layers[layer];
                 const auto & state = states[layer];
@@ -378,43 +366,42 @@ struct Thinker::Impl {
                     modules::RMSNormModule(norm).build(ctx, residual, w.post_norm));
                 const bool routed = layer >= config.dense_layers;
                 if (!routed) {
-                    auto shared = build_thinker_mlp(ctx, normalized, w, config, false);
+                    auto shared = build_thinker_mlp(ctx, normalized, w, config, false, *prepared_, *weights.experts);
                     auto output = modules::Bf16RoundModule{}.build(ctx,
                         modules::AddModule{}.build(ctx, residual, shared));
                     ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, output.tensor, x_));
                 } else {
-                    const auto inputs = modules::MoeFeedForwardModule(w.ffn_config).build_inputs(ctx,
-                        ggml_reshape_2d(ctx.ggml, normalized.tensor, h, steps), w.ffn);
-                    for (const auto & copy : {std::make_pair(residual.tensor, residual_), std::make_pair(inputs.shared, shared_)})
+                    auto shared = modules::GatedFeedForwardModule(w.shared_config).build(ctx, normalized, w.shared);
+                    for (const auto & copy : {std::make_pair(residual.tensor, residual_), std::make_pair(shared.tensor, shared_)})
                         ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml,
                             ggml_reshape_2d(ctx.ggml, copy.first, copy.first->ne[0], steps),
                             ggml_reshape_2d(ctx.ggml, copy.second, copy.second->ne[0], steps)));
-                    staged_moe_->build_inputs(ctx, graph, inputs.experts, inputs.routing);
+                    const auto call = weights.experts->add_call(w.expert,
+                        {steps, h, h, 32, GGML_TYPE_I32, 32}, workspace_);
+                    weights.experts->build_inputs(call, *prepared_, id,
+                        ggml_reshape_2d(ctx.ggml, normalized.tensor, h, steps));
+                    const auto finish = prepared_->add_graph("finish_" + std::to_string(layer), small_nodes);
+                    auto * reduced = ggml_round_bf16(ctx.ggml, weights.experts->build_result(call, *prepared_));
+                    auto * ffn_output = ggml_round_bf16(ctx.ggml, ggml_add(ctx.ggml, reduced, shared_));
+                    auto combined = core::wrap_tensor(ggml_reshape_3d(ctx.ggml, ffn_output, h, steps, 1), shape);
+                    combined = modules::Bf16RoundModule{}.build(ctx,
+                        modules::AddModule{}.build(ctx, core::wrap_tensor(residual_, shape), combined));
+                    ggml_build_forward_expand(prepared_->graph(finish), ggml_cpy(ctx.ggml, combined.tensor, x_));
+                    sequence.emplace_back(id); sequence.emplace_back(call); sequence.emplace_back(finish);
                 }
-                attention_graphs_.push_back(id);
-                if (routed) staged_layers_.push_back(staged_moe_->add_layer(modules::MoeModule(w.ffn_config.experts),
-                    w.ffn.experts, *w.disk_store, w.disk_group));
+                if (!routed) sequence.emplace_back(id);
             }
-            finish_ = prepared_->add_graph("finish", small_nodes);
-            auto * reduced = modules::MoeModule::combine(ctx, staged_moe_->output(), staged_moe_->routing_weights());
-            const auto & ffn_weights = weights.layers.at(config.dense_layers);
-            auto * ffn_output = modules::MoeFeedForwardModule(ffn_weights.ffn_config).finish(ctx, reduced, shared_, ffn_weights.ffn);
-            auto combined = core::wrap_tensor(ggml_reshape_3d(ctx.ggml, ffn_output, h, steps, 1), shape);
-            combined = modules::Bf16RoundModule{}.build(ctx,
-                modules::AddModule{}.build(ctx, core::wrap_tensor(residual_, shape), combined));
-            ggml_build_forward_expand(prepared_->graph(finish_), ggml_cpy(ctx.ggml, combined.tensor, x_));
             final_ = prepared_->add_graph("final", small_nodes);
             auto last = modules::SliceModule({1, steps - 1, 1}).build(ctx, x);
             last = modules::Bf16RoundModule{}.build(ctx, modules::RMSNormModule(norm).build(ctx, last, weights.norm));
             logits_ = ggml_round_bf16(ctx.ggml, ggml_mul_mat(ctx.ggml, weights.head.tensor, last.tensor));
             ggml_set_output(logits_);
             ggml_build_forward_expand(prepared_->graph(final_), logits_);
-            workspace_->add(*prepared_);
+            sequence.emplace_back(final_);
+            sequence_ = prepared_->add_sequence(std::move(sequence));
         }
 
-        void prepare() {
-            staged_moe_->prepare();
-        }
+        moe::MoePreparedGraph & graph_owner() { return *prepared_; }
 
         int64_t steps() const { return steps_; }
 
@@ -440,14 +427,7 @@ struct Thinker::Impl {
             ggml_backend_tensor_set(audio_indices_, targets.data(), 0, targets.size() * sizeof(int32_t));
             ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
             ggml_backend_tensor_set(mask_, mask.data(), 0, mask.size() * sizeof(float));
-            prepared_->compute(initial_);
-            for (int64_t layer = 0; layer < config_.layers; ++layer) {
-                prepared_->compute(attention_graphs_[layer]);
-                if (layer < config_.dense_layers) continue;
-                staged_moe_->run(staged_layers_[static_cast<size_t>(layer - config_.dense_layers)]);
-                prepared_->compute(finish_);
-            }
-            prepared_->compute(final_);
+            prepared_->compute(sequence_);
             return core::read_tensor_f32(logits_);
         }
 
@@ -456,11 +436,9 @@ struct Thinker::Impl {
         ThinkerConfig config_;
         int64_t steps_, capacity_;
         std::shared_ptr<core::GraphWorkspace> workspace_;
-        std::unique_ptr<modules::StagedMoeRuntime> staged_moe_;
-        std::unique_ptr<core::PreparedGraph> prepared_;
-        std::vector<size_t> staged_layers_;
-        std::vector<core::PreparedGraph::GraphId> attention_graphs_;
-        core::PreparedGraph::GraphId initial_ = 0, finish_ = 0, final_ = 0;
+        moe::MoePreparedGraph::SequenceId sequence_{0};
+        std::unique_ptr<moe::MoePreparedGraph> prepared_;
+        moe::MoePreparedGraph::GraphId initial_ = 0, final_ = 0;
         ggml_tensor * ids_ = nullptr, * audio_ = nullptr, * audio_indices_ = nullptr, * positions_ = nullptr, * mask_ = nullptr;
         ggml_tensor * x_ = nullptr, * residual_ = nullptr, * shared_ = nullptr, * logits_ = nullptr;
     };
@@ -474,12 +452,9 @@ struct Thinker::Impl {
             const auto remaining = steps % chunk;
             if (remaining > 1)
                 tail = std::make_unique<OffloadPrefill>(execution, weights, config, states, remaining, capacity, workspace);
-            // Backbone graphs always occupy this primary workspace, even when
-            // every expert bank is CPU-staged. Reserve both chunk shapes here;
-            // staged_moe_->prepare() allocates the separate CPU expert workspace.
-            workspace->prepare();
-            full->prepare();
-            if (tail) tail->prepare();
+            std::vector<moe::MoePreparedGraph *> owners{&full->graph_owner()};
+            if (tail) owners.push_back(&tail->graph_owner());
+            moe::MoePreparedGraph::allocate_shared(owners);
             debug::timing_log_scalar("ming3_audio.offload_prefill.workspace_mb", workspace->bytes() / (1024.0 * 1024.0));
         }
         std::unique_ptr<OffloadPrefill> full, tail;
@@ -494,7 +469,7 @@ struct Thinker::Impl {
 
     void reserve(int64_t requested, bool preserve = false) {
         if (execution.backend_type() == core::BackendType::Cuda) requested = ((requested + 255) / 256) * 256;
-        if (requested == capacity || (weights.experts->policy().residency != core::MoeExpertResidency::Staged && requested < capacity)) return;
+        if (requested == capacity || (weights.experts->config().residency != moe::Residency::Staged && requested < capacity)) return;
         const auto previous_steps = valid_steps;
         auto previous_context = std::move(state_context);
         auto previous_states = std::move(states);
@@ -578,7 +553,7 @@ struct Thinker::Impl {
 
     void reset() {
         if (state_buffer) ggml_backend_buffer_clear(state_buffer, 0);
-        if (weights.experts->disk_store()) weights.experts->disk_store()->invalidate_cache();
+        weights.experts->begin_generation();
         valid_steps = 0;
     }
 
@@ -628,7 +603,7 @@ struct Thinker::Impl {
             x = modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(ctx, x, output));
             normalized = modules::Bf16RoundModule{}.build(ctx,
                 modules::RMSNormModule(norm_config).build(ctx, x, w.post_norm));
-            output = build_thinker_mlp(ctx, normalized, w, c, layer >= c.dense_layers);
+            output = build_thinker_mlp(ctx, normalized, w, c, layer >= c.dense_layers, result->prepared, *weights.experts);
             x = modules::Bf16RoundModule{}.build(ctx, modules::AddModule{}.build(ctx, x, output));
         }
         x = modules::SliceModule({1, steps - 1, 1}).build(ctx, x);
@@ -638,26 +613,15 @@ struct Thinker::Impl {
         result->logits = ggml_round_bf16(ctx.ggml, ggml_mul_mat(ctx.ggml, weights.head.tensor, x.tensor));
         ggml_set_output(result->logits);
         ggml_build_forward_expand(graph, result->logits);
-        auto * scheduler = weights.experts->configure_scheduler(result->prepared);
-        if (weights.experts->disk_store() && !weights.experts->has_cpu_layers()) {
-            auto * routing_execution = weights.experts->cpu_execution();
-            for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
-                auto * node = ggml_graph_node(graph, i);
-                const bool routing = core::DiskExpertWeightStore::evaluate(node, true, weights.experts->disk_store());
-                ggml_backend_sched_set_tensor_backend(scheduler, node,
-                    routing ? routing_execution->backend() : execution.backend());
-            }
-        }
         result->prepared.allocate();
         debug::timing_log_scalar("ming3_audio.thinker.graph_buffer_mb",
-            (scheduler ? ggml_backend_sched_get_buffer_size(scheduler, execution.backend())
-                       : result->prepared.workspace_bytes()) / (1024.0 * 1024.0));
+            result->prepared.primary_workspace_bytes() / (1024.0 * 1024.0));
         debug::timing_log_context_reservation("ming3_audio.thinker.graph", ctx.ggml);
         return result;
     }
 
     void prepare_prefill(int64_t steps) {
-        if (!weights.experts->disk_store() || steps <= 1) return;
+        if (!weights.experts->staged() || steps <= 1) return;
         if (valid_steps + steps > capacity) reserve(std::max(capacity * 2, valid_steps + steps), true);
         const auto chunk = std::min<int64_t>(256, capacity);
         const auto remaining = steps % chunk;
@@ -671,7 +635,7 @@ struct Thinker::Impl {
 
     std::vector<float> run(const std::vector<int32_t> & ids, const std::vector<float> & audio, int32_t audio_id) {
         const auto steps = static_cast<int64_t>(ids.size());
-        if (steps > 0 && weights.experts->policy().residency == core::MoeExpertResidency::Staged && valid_steps + steps > capacity) {
+        if (steps > 0 && weights.experts->config().residency == moe::Residency::Staged && valid_steps + steps > capacity) {
             reserve(std::max(capacity * 2, valid_steps + steps), true);
         }
         if (steps <= 0 || valid_steps + steps > capacity) throw std::runtime_error("Ming3 Audio Thinker context capacity exceeded");
@@ -683,7 +647,7 @@ struct Thinker::Impl {
         if (audio.size() != indices.size() * static_cast<size_t>(config.hidden_size)) {
             throw std::runtime_error("Ming3 Audio placeholder count differs from projected audio length");
         }
-        if (weights.experts->disk_store() && steps > 1) {
+        if (weights.experts->staged() && steps > 1) {
             auto * graph = offload_plan && offload_plan->full->steps() == steps ? offload_plan->full.get()
                 : offload_plan && offload_plan->tail && offload_plan->tail->steps() == steps ? offload_plan->tail.get() : nullptr;
             if (!graph) throw std::logic_error("Ming3 Audio prefill shape was not prepared");

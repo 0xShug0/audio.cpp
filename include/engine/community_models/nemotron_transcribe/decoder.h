@@ -2,7 +2,7 @@
 
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
-#include "engine/framework/core/moe_resources.h"
+#include "engine/framework/moe_engine/moe_engine.h"
 
 #include <cstdint>
 #include <functional>
@@ -56,7 +56,7 @@ struct GenerationOptions {
 };
 
 struct DecoderOptions {
-    core::MoeExecutionPolicy moe{core::MoeExpertResidency::Backend, false, 8, 4, {}, 0};
+    moe::EngineConfig moe{moe::Residency::Resident, false, 8, 4, {}, {}};
 };
 
 // Validates scalar options without loading weights or processing audio. Prompt

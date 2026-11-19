@@ -2,17 +2,13 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
-#include "engine/framework/core/disk_expert_weight_store.h"
 #include "engine/framework/core/graph_workspace.h"
-#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/moe_engine/moe_prepared_graph.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
-#include "engine/framework/modules/moe_module.h"
-#include "engine/framework/modules/moe_feed_forward_module.h"
 #include "engine/framework/modules/positional_modules.h"
-#include "engine/framework/modules/staged_moe_runtime.h"
 #include "engine/framework/runtime/errors.h"
 
 #include <ggml-backend.h>
@@ -42,11 +38,10 @@ struct LayerWeights {
     TensorValue attn_norm, ffn_norm;
     TensorValue wq, wk, wv, wo, attn_temp, attn_gate;
     TensorValue ffn_up, ffn_gate, ffn_down;
-    modules::MoeFeedForwardWeights ffn;
+    moe::LayerId expert;
     TensorValue router_down, router_down_b, router_mlp0, router_mlp0_b, router_mlp2, router_mlp2_b, router_mlp4;
     TensorValue router_norm, router_bias, router_eda_scale;  // router_eda_scale is absent on the first MoE layer
     bool has_eda = false;
-    size_t disk_group = 0;
 };
 
 // Persistent graph inputs; one set per prepared graph.
@@ -92,7 +87,7 @@ public:
         }
         ggml_backend_buffer_clear(state_buffer_.get(), 0);
         n_past_ = 0;
-        if (disk_store_) disk_store_->invalidate_cache();
+        experts_->begin_generation();
     }
 
     void prefill(const Zonos2Prompt & prompt, const float * speaker, std::vector<float> & logits) {
@@ -104,7 +99,7 @@ public:
         if ((prompt.speaker_row >= 0) != (speaker != nullptr) || prompt.speaker_row >= prompt.n_rows) {
             throw std::runtime_error("zonos2: a speaker embedding needs exactly one speaker row in the prompt");
         }
-        if (disk_store_) {
+        if (experts_->staged()) {
             auto & graph = offload_graph(prompt.n_rows);
             set_prefill_inputs(graph.inputs, prompt, speaker);
             graph.run();
@@ -135,39 +130,25 @@ public:
 
 private:
     struct ForwardGraph {
-        std::unique_ptr<core::PreparedGraph> prepared;
+        std::unique_ptr<moe::MoePreparedGraph> prepared;
         int rows = 0;
         GraphInputs inputs;
         ggml_tensor * logits = nullptr;
     };
 
     // Expert-cache prefill: the prompt routes more experts than the per-layer cache holds, so every MoE layer runs
-    // through StagedMoeRuntime between per-layer graphs. The residual stream, the FFN output and the EDA router state
+    // through the engine between per-layer graphs. The residual stream, the FFN output and the EDA router state
     // cross graph boundaries through persistent tensors.
     struct OffloadGraph {
         int rows = 0;
         GraphInputs inputs;
         std::shared_ptr<core::GraphWorkspace> workspace;
-        std::map<int, std::unique_ptr<modules::StagedMoeRuntime>> staged;  // by routed top-k
-        std::unique_ptr<core::PreparedGraph> prepared;
-        std::vector<core::PreparedGraph::GraphId> layer_graphs, finish_graphs;
-        std::vector<std::pair<modules::StagedMoeRuntime *, size_t>> staged_layers;  // {nullptr, 0} = dense layer
-        core::PreparedGraph::GraphId final_graph = 0;
+        std::unique_ptr<moe::MoePreparedGraph> prepared;
+        moe::MoePreparedGraph::SequenceId sequence{0};
+        size_t final_graph = 0;
         ggml_tensor * logits = nullptr;
 
-        void run() {
-            prepared->compute(0);
-            uint64_t expert_rows = 0;
-            for (size_t layer = 0; layer < layer_graphs.size(); ++layer) {
-                prepared->compute(layer_graphs[layer]);
-                auto * runtime = staged_layers[layer].first;
-                if (!runtime) continue;
-                expert_rows += runtime->run(staged_layers[layer].second);
-                prepared->compute(finish_graphs[layer]);
-            }
-            prepared->compute(final_graph);
-            debug::timing_log_scalar("zonos2.offload_prefill_expert_rows", expert_rows);
-        }
+        void run() { prepared->compute(sequence); }
     };
 
     static TensorValue matrix(ggml_tensor * x) { return core::wrap_tensor(x, core::TensorShape::from_dims({x->ne[1], x->ne[0]})); }
@@ -190,29 +171,23 @@ private:
         const int D = hp_.n_embd;
         const int64_t q_rows = static_cast<int64_t>(hp_.head_dim) * hp_.n_head;
         const int64_t kv_rows = static_cast<int64_t>(hp_.head_dim) * hp_.n_head_kv;
-        if (options_.pin_experts && !options_.disk_experts) {
+        if (options_.moe.pin_host_weights && options_.moe.residency != moe::Residency::Staged) {
             throw std::runtime_error("zonos2.pin_experts requires zonos2.disk_experts=true");
         }
         int max_top_k = 0;
         for (const auto used : hp_.expert_used) max_top_k = std::max(max_top_k, static_cast<int>(used));
-        if (options_.disk_experts) {
+        if (options_.moe.residency == moe::Residency::Staged) {
             if (max_top_k == 0) throw std::runtime_error("zonos2.disk_experts needs a backbone with MoE layers");
-            if (options_.expert_cache_size < 2 * max_top_k || options_.expert_cache_size > hp_.n_expert) {
+            if (options_.moe.cache_slots < 2 * max_top_k || options_.moe.cache_slots > hp_.n_expert) {
                 throw std::runtime_error("zonos2.expert_cache_size must be between " + std::to_string(2 * max_top_k) +
                                          " and " + std::to_string(hp_.n_expert));
             }
-            if (execution_.backend_type() != core::BackendType::Cpu) {
-                core::BackendConfig host;
-                host.threads = execution_.config().threads;
-                host_execution_ = std::make_unique<core::ExecutionContext>(host);
-            }
-            disk_store_ = std::make_unique<core::DiskExpertWeightStore>(
-                source.source_path(), options_.pin_experts, static_cast<size_t>(options_.disk_expert_read_threads));
         }
         // Every weight lives in the backend's plain buffer, as in Zyphra's runtime: no CPU repacking, so the expert
         // cache runs the same kernels as resident experts.
         store_ = std::make_unique<core::BackendWeightStore>(execution_.backend(), execution_.backend_type(),
                                                             "zonos2.backbone.weights", 16 * 1024 * 1024);
+        experts_ = std::make_unique<moe::MoeEngine>(execution_, *store_, source, options_.moe, "zonos2.backbone.experts");
         auto native = [&](const std::string & name, std::vector<int64_t> shape) {
             consumed_.insert(name);
             return store_->load_tensor(source, name, assets::TensorStorageType::Native, shape);
@@ -257,21 +232,12 @@ private:
             const int64_t hidden = bank[1];
             const std::vector<std::string> names{p + "ffn_up_exps.weight", p + "ffn_gate_exps.weight",
                                                  p + "ffn_down_exps.weight"};
-            if (disk_store_) {
-                for (const auto & name : names) consumed_.insert(name);
-                if (source.require_metadata(names[1]).shape != bank ||
-                    source.require_metadata(names[2]).shape != std::vector<int64_t>{hp_.n_expert, D, hidden}) {
-                    throw std::runtime_error("zonos2: backbone GGUF: " + p + " expert banks have inconsistent shapes");
-                }
-                w.disk_group = disk_store_->add_group(names, execution_.backend(), options_.expert_cache_size);
-                w.ffn.experts.up = disk_store_->tensor(w.disk_group, 0).tensor;
-                w.ffn.experts.gate = disk_store_->tensor(w.disk_group, 1).tensor;
-                w.ffn.experts.down = disk_store_->tensor(w.disk_group, 2).tensor;
-            } else {
-                w.ffn.experts.up = native(names[0], {hp_.n_expert, hidden, D}).tensor;
-                w.ffn.experts.gate = native(names[1], {hp_.n_expert, hidden, D}).tensor;
-                w.ffn.experts.down = native(names[2], {hp_.n_expert, D, hidden}).tensor;
-            }
+            moe::LayerBindings bindings;
+            bindings.experts = {
+                {names[0], names[0], {hp_.n_expert, hidden, D}, assets::TensorStorageType::Native, moe::ProjectionRole::Up},
+                {names[1], names[1], {hp_.n_expert, hidden, D}, assets::TensorStorageType::Native, moe::ProjectionRole::Gate},
+                {names[2], names[2], {hp_.n_expert, D, hidden}, assets::TensorStorageType::Native, moe::ProjectionRole::Down}};
+            for (const auto & name : names) consumed_.insert(name);
             const auto router_shape = source.require_metadata(p + "router_down.weight").shape;  // {router_dim, D}
             if (router_shape.size() != 2 || router_shape[1] != D || router_shape[0] <= 0) {
                 throw std::runtime_error("zonos2: backbone GGUF: " + p + "router_down.weight has an invalid shape");
@@ -289,6 +255,12 @@ private:
             w.router_bias = f32(p + "router_bias", {hp_.n_expert});
             w.has_eda = source.has_tensor(p + "router_eda_scale");
             if (w.has_eda) w.router_eda_scale = f32(p + "router_eda_scale", {rd});
+            bindings.router = w.router_mlp4; bindings.selection_bias = w.router_bias;
+            moe::LayerMath math;
+            math.routing.experts = hp_.n_expert; math.routing.selected = w.top_k;
+            math.routing.scoring = moe::Scoring::Softmax; math.routing.normalization = moe::Normalization::None;
+            math.routing.contiguous_ids = experts_->staged();
+            w.expert = experts_->register_layer(std::move(bindings), math);
             layers_.push_back(std::move(w));
         }
         for (const auto & tensor : source.tensors()) {
@@ -297,9 +269,10 @@ private:
             }
         }
         store_->upload();
+        experts_->finalize_weights();
         assets_->backbone->release_storage();
-        if (disk_store_) {
-            const auto stats = disk_store_->statistics();
+        if (experts_->staged()) {
+            const auto stats = experts_->statistics();
             debug::timing_log_scalar("zonos2.expert_cache_mb", stats.buffer_bytes / (1024.0 * 1024.0));
             debug::timing_log_scalar("zonos2.host_experts_mb", stats.host_buffer_bytes / (1024.0 * 1024.0));
         }
@@ -321,7 +294,7 @@ private:
         debug::timing_log_scalar("zonos2.kv_cache_mb", ggml_backend_buffer_get_size(state_buffer_.get()) / (1024.0 * 1024.0));
     }
 
-    GraphInputs make_inputs(core::PreparedGraph & prepared, int rows, bool prefill) const {
+    GraphInputs make_inputs(moe::MoePreparedGraph & prepared, int rows, bool prefill) const {
         auto * g = prepared.persistent_build_context().ggml;
         GraphInputs in;
         in.ids = ggml_new_tensor_2d(g, GGML_TYPE_I32, rows, hp_.n_codebooks + 1);
@@ -438,7 +411,7 @@ private:
     // The EDA router: down projection (+ the previous MoE layer's state * eda_scale), which becomes the next state,
     // then RMSNorm and two erf-GELU layers. The framework routing tail ranks softmax(router_mlp4 . h) + router_bias
     // and weighs the selected experts by their softmax probabilities, unnormalized.
-    modules::MoeRouting route(core::ModuleBuildContext & ctx, const LayerWeights & w, ggml_tensor * x,
+    moe::Routing route(core::ModuleBuildContext & ctx, const LayerWeights & w, ggml_tensor * x,
                               ggml_tensor *& router_state) const {
         auto * g = ctx.ggml;
         auto * rh = linear(ctx, x, w.router_down, &w.router_down_b);
@@ -447,19 +420,13 @@ private:
         auto * h = rms_weighted(ctx, rh, w.router_norm);
         h = ggml_gelu_erf(g, linear(ctx, h, w.router_mlp0, &w.router_mlp0_b));
         h = ggml_gelu_erf(g, linear(ctx, h, w.router_mlp2, &w.router_mlp2_b));
-        modules::MoeRoutingConfig config;
-        config.experts = hp_.n_expert;
-        config.selected = w.top_k;
-        config.scoring = modules::MoeScoring::Softmax;
-        config.normalization = modules::MoeNormalization::None;
-        config.contiguous_ids = disk_store_ != nullptr;
-        return modules::MoeModule::build_routing(ctx, h, w.router_mlp4.tensor, w.router_bias.tensor, config);
+        return experts_->route(ctx, w.expert, h);
     }
 
-    ggml_tensor * moe(core::ModuleBuildContext & ctx, ggml_tensor * x, const LayerWeights & w, ggml_tensor *& router_state) const {
+    ggml_tensor * moe(moe::MoePreparedGraph & graph, core::ModuleBuildContext & ctx,
+        ggml_tensor * x, const LayerWeights & w, ggml_tensor *& router_state) const {
         const auto routing = route(ctx, w, x, router_state);
-        auto * bank_ids = disk_store_ ? disk_store_->route(ctx, routing.ids, w.disk_group) : nullptr;
-        return modules::MoeFeedForwardModule({}).build(ctx, x, w.ffn, bank_ids, &routing);
+        return experts_->build(graph, w.expert, x, &routing);
     }
 
     // output_norm, the 9 x 1026 head and the logit softcap over the last row.
@@ -475,18 +442,11 @@ private:
         return logits;
     }
 
-    void configure_expert_scheduler(core::PreparedGraph & prepared) {
-        std::vector<ggml_backend_t> backends{execution_.backend()};
-        if (host_execution_) backends.push_back(host_execution_->backend());
-        auto * scheduler = prepared.create_scheduler(std::move(backends));
-        ggml_backend_sched_set_eval_callback(scheduler, core::DiskExpertWeightStore::evaluate, disk_store_.get());
-    }
-
     std::unique_ptr<ForwardGraph> build_forward(int rows, bool prefill) {
         auto out = std::make_unique<ForwardGraph>();
         out->rows = rows;
         const size_t metadata = ggml_graph_overhead_custom(kGraphNodes, false) + kGraphNodes * ggml_tensor_overhead();
-        out->prepared = std::make_unique<core::PreparedGraph>(execution_, core::PreparedGraphConfig{
+        out->prepared = std::make_unique<moe::MoePreparedGraph>(execution_, core::PreparedGraphConfig{
             prefill ? "zonos2.prefill" : "zonos2.decode", metadata, kGraphNodes, 64 * ggml_tensor_overhead()});
         out->inputs = make_inputs(*out->prepared, rows, prefill);
         out->prepared->allocate_persistent();
@@ -503,12 +463,11 @@ private:
             auto * attn = attention(ctx, graph, w, layer, rms_weighted(ctx, residual, w.attn_norm), out->inputs, rows, prefill);
             residual = ggml_add(g, attn, residual);
             auto * input = rms_weighted(ctx, residual, w.ffn_norm);
-            x = w.top_k == 0 ? dense_ffn(ctx, w, input) : moe(ctx, input, w, router_state);
+            x = w.top_k == 0 ? dense_ffn(ctx, w, input) : moe(*out->prepared, ctx, input, w, router_state);
         }
         out->logits = head(ctx, ggml_add(g, x, residual), rows);
         ggml_set_output(out->logits);
         ggml_build_forward_expand(graph, out->logits);
-        if (disk_store_) configure_expert_scheduler(*out->prepared);
         out->prepared->allocate();
         return out;
     }
@@ -541,29 +500,12 @@ private:
         auto out = std::make_unique<OffloadGraph>();
         out->rows = T;
         const int D = hp_.n_embd;
-        int64_t bucket = std::min<int64_t>(T, 32);
-        while ((bucket & (bucket - 1)) != 0) ++bucket;
         out->workspace = std::make_shared<core::GraphWorkspace>(execution_.backend());
-        auto staged_for = [&](int top_k) -> modules::StagedMoeRuntime & {
-            auto & slot = out->staged[top_k];
-            if (!slot) {
-                modules::StagedMoeConfig config;
-                config.hidden_size = D;
-                config.tokens = T;
-                config.selected = top_k;
-                config.experts = hp_.n_expert;
-                config.cache_slots = options_.expert_cache_size;
-                for (int64_t count = 1; count <= bucket; count *= 2) config.rows_per_expert.push_back(count);
-                config.scatter_index_type = GGML_TYPE_I32;
-                slot = std::make_unique<modules::StagedMoeRuntime>(execution_, std::move(config), out->workspace);
-            }
-            return *slot;
-        };
         const size_t nodes = 2048;
         const size_t graphs = static_cast<size_t>(2 * hp_.n_layer + 2);
-        out->prepared = std::make_unique<core::PreparedGraph>(execution_, core::PreparedGraphConfig{
+        out->prepared = std::make_unique<moe::MoePreparedGraph>(execution_, core::PreparedGraphConfig{
             "zonos2.offload_prefill", graphs * (ggml_graph_overhead_custom(nodes, false) + 1024 * ggml_tensor_overhead()),
-            nodes, 4 * 1024 * 1024});
+            nodes, 4 * 1024 * 1024}, out->workspace);
         out->inputs = make_inputs(*out->prepared, T, true);
         auto * persistent = out->prepared->persistent_build_context().ggml;
         auto * residual_state = ggml_new_tensor_2d(persistent, GGML_TYPE_F32, D, T);  // residual stream
@@ -574,6 +516,7 @@ private:
         auto & ctx = out->prepared->build_context();
         auto * g = ctx.ggml;
         ggml_build_forward_expand(out->prepared->graph(0), ggml_cpy(g, embed(ctx, out->inputs, T), ffn_state));
+        std::vector<moe::MoePreparedGraph::Step> sequence{size_t{0}};
         bool has_router_state = false;
         for (int layer = 0; layer < hp_.n_layer; ++layer) {
             const auto & w = layers_[static_cast<size_t>(layer)];
@@ -583,38 +526,31 @@ private:
             auto * attn = attention(ctx, graph, w, layer, rms_weighted(ctx, residual, w.attn_norm), out->inputs, T, true);
             residual = ggml_add(g, attn, residual);
             auto * input = rms_weighted(ctx, residual, w.ffn_norm);
-            out->layer_graphs.push_back(id);
             if (w.top_k == 0) {
                 ggml_build_forward_expand(graph, ggml_cpy(g, dense_ffn(ctx, w, input), ffn_state));
                 ggml_build_forward_expand(graph, ggml_cpy(g, residual, residual_state));
-                out->finish_graphs.push_back(0);
-                out->staged_layers.emplace_back(nullptr, 0);
+                sequence.emplace_back(id);
                 continue;
             }
             ggml_tensor * state = has_router_state ? router_state : nullptr;
             const auto routing = route(ctx, w, input, state);
             has_router_state = true;
             ggml_build_forward_expand(graph, ggml_cpy(g, state, router_state));
-            auto & staged = staged_for(w.top_k);
-            const auto inputs = modules::MoeFeedForwardModule({}).build_inputs(ctx, input, w.ffn, &routing);
-            staged.build_inputs(ctx, graph, inputs.experts, inputs.routing);
+            const auto call = experts_->add_call(w.expert, {T, D, D, 32, GGML_TYPE_I32}, out->workspace);
+            experts_->build_inputs(call, *out->prepared, id, input, &routing);
             ggml_build_forward_expand(graph, ggml_cpy(g, residual, residual_state));
-            const auto index = staged.add_layer(modules::MoeModule({modules::MoeActivation::SwiGlu}),
-                                                w.ffn.experts, *disk_store_,
-                                                w.disk_group);
-            out->staged_layers.emplace_back(&staged, index);
             const auto finish = out->prepared->add_graph("finish_" + std::to_string(layer), nodes);
-            auto * combined = modules::MoeModule::combine(ctx, staged.output(), staged.routing_weights());
+            auto * combined = experts_->build_result(call, *out->prepared);
             ggml_build_forward_expand(out->prepared->graph(finish), ggml_cpy(g, combined, ffn_state));
-            out->finish_graphs.push_back(finish);
+            sequence.emplace_back(id); sequence.emplace_back(call); sequence.emplace_back(finish);
         }
         out->final_graph = out->prepared->add_graph("final", nodes);
         out->logits = head(ctx, ggml_add(g, ffn_state, residual_state), T);
         ggml_set_output(out->logits);
         ggml_build_forward_expand(out->prepared->graph(out->final_graph), out->logits);
-        out->workspace->add(*out->prepared);
-        out->workspace->prepare();
-        for (auto & entry : out->staged) entry.second->prepare();
+        sequence.emplace_back(out->final_graph);
+        out->sequence = out->prepared->add_sequence(std::move(sequence));
+        out->prepared->allocate();
         return out;
     }
 
@@ -668,9 +604,8 @@ private:
     const Zonos2Hparams & hp_;
     core::ExecutionContext & execution_;
     Zonos2BackboneOptions options_;
-    std::unique_ptr<core::ExecutionContext> host_execution_;
-    std::unique_ptr<core::DiskExpertWeightStore> disk_store_;
     std::unique_ptr<core::BackendWeightStore> store_;
+    std::unique_ptr<moe::MoeEngine> experts_;
     std::set<std::string> consumed_;
     std::vector<TensorValue> audio_embd_;
     TensorValue text_embd_, spk_lda_, spk_lda_b_, spk_proj_, spk_proj_b_, output_norm_, output_;

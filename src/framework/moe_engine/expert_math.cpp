@@ -1,20 +1,12 @@
-#include "engine/framework/modules/moe_module.h"
-#include "engine/framework/core/prepared_graph.h"
-
+#include "moe_engine_internal.h"
 #include <cmath>
 #include <limits>
 #include <stdexcept>
 
-namespace engine::modules {
-
-MoeModule::MoeModule(MoeExpertConfig experts) : experts_(experts) {
-    if (experts.fused_swiglu && (experts.activation != MoeActivation::SwiGlu || experts.round_activation))
-        throw std::invalid_argument("MoE fused SwiGLU cannot preserve an intermediate activation rounding boundary");
-}
-
-MoeRouting MoeModule::build_routing(core::ModuleBuildContext & ctx, ggml_tensor * input,
-    ggml_tensor * router, ggml_tensor * selection_bias, const MoeRoutingConfig & c) {
-    if (c.experts <= 0 || c.selected <= 0 || c.selected > c.experts || router->ne[1] != c.experts ||
+namespace engine::moe::detail {
+Routing build_routing(core::ModuleBuildContext & ctx, ggml_tensor * input,
+    ggml_tensor * router, ggml_tensor * selection_bias, const RoutingConfig & c) {
+    if (!input || !router || router->ne[0] != input->ne[0] || c.experts <= 0 || c.selected <= 0 || c.selected > c.experts || router->ne[1] != c.experts ||
         c.groups <= 0 || c.experts % c.groups || c.selected_groups <= 0 || c.selected_groups > c.groups ||
         (c.groups > 1 && (c.group_top_k <= 0 || c.group_top_k > c.experts / c.groups ||
             c.selected > c.selected_groups * (c.experts / c.groups))) ||
@@ -25,8 +17,8 @@ MoeRouting MoeModule::build_routing(core::ModuleBuildContext & ctx, ggml_tensor 
     auto * logits = ggml_mul_mat(g, router, input);
     if (c.precision != GGML_PREC_DEFAULT) ggml_mul_mat_set_prec(logits, c.precision);
     // SelectedSoftmax ranks the raw logits; its weights are the softmax of the selected logits below.
-    auto * scores = c.scoring == MoeScoring::Softmax ? ggml_soft_max(g, logits)
-        : c.scoring == MoeScoring::Sigmoid           ? ggml_sigmoid(g, logits)
+    auto * scores = c.scoring == Scoring::Softmax ? ggml_soft_max(g, logits)
+        : c.scoring == Scoring::Sigmoid           ? ggml_sigmoid(g, logits)
                                                      : logits;
     auto * selection = selection_bias ? ggml_add(g, scores, selection_bias) : scores;
     if (c.groups > 1) {
@@ -45,12 +37,12 @@ MoeRouting MoeModule::build_routing(core::ModuleBuildContext & ctx, ggml_tensor 
     if (c.contiguous_ids && !ggml_is_contiguous(ids)) ids = ggml_cont(g, ids);
     auto * weights = ggml_get_rows(g, ggml_reshape_3d(g, scores, 1, c.experts, tokens), ids);
     weights = ggml_reshape_2d(g, weights, c.selected, tokens);
-    if (c.scoring == MoeScoring::SelectedSoftmax) weights = ggml_soft_max(g, weights);
-    if (c.normalization != MoeNormalization::None) {
+    if (c.scoring == Scoring::SelectedSoftmax) weights = ggml_soft_max(g, weights);
+    if (c.normalization != Normalization::None) {
         auto * denominator = ggml_sum_rows(g, weights);
-        if (c.normalization == MoeNormalization::Clamp)
+        if (c.normalization == Normalization::Clamp)
             denominator = ggml_clamp(g, denominator, c.denominator_epsilon, std::numeric_limits<float>::infinity());
-        else if (c.normalization == MoeNormalization::AddEpsilon)
+        else if (c.normalization == Normalization::AddEpsilon)
             denominator = ggml_scale_bias(g, denominator, 1.0F, c.denominator_epsilon);
         weights = ggml_div(g, weights, denominator);
     }
@@ -58,45 +50,45 @@ MoeRouting MoeModule::build_routing(core::ModuleBuildContext & ctx, ggml_tensor 
     return {ids, weights};
 }
 
-ggml_tensor * MoeModule::build_experts(core::ModuleBuildContext & ctx, ggml_tensor * input,
-    ggml_tensor * ids, const MoeExpertWeights & weights, ggml_tensor ** first_op) const {
+ggml_tensor * build_experts(core::ModuleBuildContext & ctx, ggml_tensor * input,
+    ggml_tensor * ids, const ExpertWeights & weights, const ExpertMath & experts, ggml_tensor ** first_op) {
     auto * g = ctx.ggml;
-    if (!weights.up || !weights.down || (experts_.activation == MoeActivation::SwiGlu && !weights.gate) ||
+    if (!weights.up || !weights.down || (experts.activation == ExpertActivation::SwiGlu && !weights.gate) ||
         weights.up->ne[0] < input->ne[0] || weights.down->ne[0] < weights.up->ne[1])
         throw std::invalid_argument("invalid MoE expert projection shapes");
     if (weights.up->ne[0] > input->ne[0])
         input = ggml_pad(g, input, static_cast<int>(weights.up->ne[0] - input->ne[0]), 0, 0, 0);
     ggml_tensor * activated;
-    if (experts_.activation == MoeActivation::SwiGlu) {
+    if (experts.activation == ExpertActivation::SwiGlu) {
         auto * gate = ggml_mul_mat_id(g, weights.gate, input, ids);
         if (first_op) *first_op = gate;
         auto * up = ggml_mul_mat_id(g, weights.up, input, ids);
-        if (experts_.round_projections) {
+        if (experts.round_projections) {
             gate = ggml_round_bf16(g, gate);
             up = ggml_round_bf16(g, up);
         }
-        if (experts_.fused_swiglu) activated = ggml_swiglu_split(g, gate, up);
+        if (experts.fused_swiglu) activated = ggml_swiglu_split(g, gate, up);
         else {
             gate = ggml_silu(g, gate);
-            if (experts_.round_activation) gate = ggml_round_bf16(g, gate);
+            if (experts.round_activation) gate = ggml_round_bf16(g, gate);
             activated = ggml_mul(g, gate, up);
         }
     } else {
         auto * up = ggml_mul_mat_id(g, weights.up, input, ids);
         if (first_op) *first_op = up;
-        if (experts_.round_projections) up = ggml_round_bf16(g, up);
+        if (experts.round_projections) up = ggml_round_bf16(g, up);
         activated = ggml_relu(g, up);
-        if (experts_.round_activation) activated = ggml_round_bf16(g, activated);
+        if (experts.round_activation) activated = ggml_round_bf16(g, activated);
         activated = ggml_sqr(g, activated);
     }
-    if (experts_.round_product) activated = ggml_round_bf16(g, activated);
+    if (experts.round_product) activated = ggml_round_bf16(g, activated);
     if (weights.down->ne[0] > activated->ne[0])
         activated = ggml_pad(g, activated, static_cast<int>(weights.down->ne[0] - activated->ne[0]), 0, 0, 0);
     auto * output = ggml_mul_mat_id(g, weights.down, activated, ids);
-    return experts_.round_output ? ggml_round_bf16(g, output) : output;
+    return experts.round_output ? ggml_round_bf16(g, output) : output;
 }
 
-ggml_tensor * MoeModule::combine(core::ModuleBuildContext & ctx, ggml_tensor * outputs, ggml_tensor * weights) {
+ggml_tensor * combine(core::ModuleBuildContext & ctx, ggml_tensor * outputs, ggml_tensor * weights) {
     const auto h = outputs->ne[0], k = outputs->ne[1], tokens = outputs->ne[2];
     auto * g = ctx.ggml;
     auto * scaled = ggml_mul(g, outputs, ggml_reshape_3d(g, weights, 1, k, tokens));
@@ -104,14 +96,5 @@ ggml_tensor * MoeModule::combine(core::ModuleBuildContext & ctx, ggml_tensor * o
     return ggml_reshape_2d(g, ggml_sum_rows(g, reduced), h, tokens);
 }
 
-ggml_tensor * MoeModule::build(core::ModuleBuildContext & ctx, ggml_tensor * input,
-    const MoeRouting & routing, const MoeExpertWeights & weights, ggml_tensor * bank_ids) const {
-    auto * rows = ggml_reshape_3d(ctx.ggml, input, input->ne[0], 1, input->ne[1]);
-    ggml_tensor * first = nullptr;
-    const bool record = bank_ids && ctx.region_owner;
-    auto * outputs = build_experts(ctx, rows, bank_ids ? bank_ids : routing.ids, weights, record ? &first : nullptr);
-    if (record) record_region(ctx, first, outputs, weights, bank_ids);
-    return combine(ctx, outputs, routing.weights);
-}
 
-} // namespace engine::modules
+} // namespace engine::moe::detail

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <mutex>
+
 #include "engine/community_models/zonos3/assets.h"
 #include "engine/community_models/zonos3/backbone.h"
 #include "engine/community_models/zonos3/tokenizer.h"
@@ -39,6 +41,7 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    std::mutex request_mutex_;
     struct Request;
     runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
     void reset_stream_state() override {}

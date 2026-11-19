@@ -210,3 +210,7 @@ or prolonged generation on the full meeting examples. Both
 preserve source precision for the audio encoder, Talker, VAE and speaker
 encoder, and keep routers F32. TTS-only memory usage therefore does not shrink
 with these Thinker quantizations.
+
+### MoE engine policies
+
+The routed backbone accepts independent placement and cache-eviction policies through `moe_policy` and stage-scoped `moe_policy_params.placement.*` / `moe_policy_params.eviction.*`. See [shared controls and policy parameters](../usage.md#independent-moe-policies). Omitted policies preserve the model's existing residency and CPU-layer defaults. Active policies require staged experts; shared/dense branches and model state remain on their existing paths.

@@ -1,3 +1,4 @@
+#include "engine/framework/runtime/moe_options.h"
 #include "engine/community_models/fish_drama3/generator.h"
 
 #include "engine/framework/debug/profiler.h"
@@ -132,10 +133,10 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     debug::trace_log_scalar("fish_drama3.kv_cache_alignment", backbone_config.kv_cache_alignment);
     auto moe_defaults = backbone_config.moe;
     moe_defaults.cpu_layers = {0, 1, 2, 3};
-    backbone_config.moe = core::resolve_moe_execution_policy(options.options, "fish_drama3",
+    backbone_config.moe = runtime::resolve_moe_options(options.options, "fish_drama3",
         std::move(moe_defaults), static_cast<size_t>(backbone_config.layers));
     if (backbone_config.moe.pin_host_weights &&
-        backbone_config.moe.residency != core::MoeExpertResidency::Staged)
+        backbone_config.moe.residency != moe::Residency::Staged)
         throw std::runtime_error("fish_drama3.pin_experts requires fish_drama3.disk_experts=true");
     const auto backbone_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.backbone_prefill_cache_mb"}).value_or(256);
     if (backbone_prefill_cache_mb < 0 || backbone_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 backbone_prefill_cache_mb must be between 0 and 4096");
@@ -143,7 +144,7 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     backbone_config.profile_prefill_cache = profile_first_audio_;
     backbone_ = std::make_unique<Drama3BackboneDecoderRuntime>(assets_->model_weights, backbone_config, execution,
         64 * 1024 * 1024, 8 * 1024 * 1024, assets::TensorStorageType::Native);
-    disk_experts_ = backbone_config.moe.residency == core::MoeExpertResidency::Staged;
+    disk_experts_ = backbone_config.moe.residency == moe::Residency::Staged;
     decoder_ = backbone_->create_decode_session(cache_steps_);
     const auto tower_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.tower_prefill_cache_mb"}).value_or(256);
     if (tower_prefill_cache_mb < 0 || tower_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 tower_prefill_cache_mb must be between 0 and 4096");

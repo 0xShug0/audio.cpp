@@ -227,26 +227,28 @@ option. Availability depends on the build and device; see [HIP](build/HIP.md).
 
 ### Shared MoE session controls
 
-Drama 3, Ming3 Audio (Thinker), and Nemotron Transcribe (decoder) accept these
+Drama 3, Ming3 Audio (Thinker), Nemotron Transcribe (decoder), Zonos2 and Zonos3 accept these
 canonical session options. Each CLI flag is equivalent to
 `--session-option <key>=<value>`; boolean flags take `true` or `false`.
-Explicit `moe_cpu_share=0` remains accepted as disabled on sessions without MoE
-resources; positive shares require a supported MoE execution path.
+An explicit zero share is disabled. Active placement policies require staged expert storage on a supported MoE path.
 
 | Session key | CLI flag | Meaning |
 |---|---|---|
 | `moe_disk_experts` | `--moe-disk-experts` | Stage native expert banks through bounded caches instead of keeping full banks resident. |
 | `moe_pin_experts` | `--moe-pin-experts` | Retain complete staged expert banks in pinned host RAM; requires backend support. |
-| `moe_expert_cache_size` | `--moe-expert-cache-size` | Slots per staged layer; at least top-k and at most the expert count. |
+| `moe_expert_cache_size` | `--moe-expert-cache-size` | Slots per staged layer; at least top-k (twice top-k for Zonos2/3) and at most the expert count. |
 | `moe_disk_expert_read_threads` | `--moe-disk-expert-read-threads` | Host staging readers, 1–64; parallel reads require OpenMP or Apple dispatch. |
 | `moe_cpu_expert_layers` | `--moe-cpu-expert-layers` | First N routed MoE layers execute on CPU. |
-| `moe_cpu_share` | `--moe-cpu-share` | Fractional share of eligible staged GPU cache misses assigned to CPU, 0–1. |
+| `moe_cpu_share` | `--moe-cpu-share` | Compatibility spelling for `placement_cpu_share` with the specified share, 0–1. |
+| `moe_policy` | `--moe-policy` | Independent placement and eviction selection, separated by a comma. |
 
 | Model | Disk | Pin | Cache slots | Read threads | CPU layers | CPU share |
 |---|---|---|---|---|---|---|
 | [Drama 3](models/fish_drama3.md) | false | false | 32 | 1 | 4 | 0 |
 | [Ming3 Audio](models/ming3_audio.md) | false | true (false on Metal) | 8 | 1 | 0 | 0 |
 | [Nemotron Transcribe](models/nemotron_transcribe.md) | false | false | 8 | 4 | 0 | 0 |
+| [Zonos2](models/zonos2.md) | false | false | 8 | 1 | 0 | 0 |
+| [Zonos3](models/zonos3.md) | false | false | 16 | 1 | 0 | 0 |
 
 The CPU-layer count selects MoE ordinals `0..N-1`, not backbone indices;
 dense-only layers do not count. CPU-selected layers take precedence over
@@ -259,7 +261,7 @@ rejects `pin=true` without staging for both `moe_pin_experts` and
 
 Legacy aliases are `<family>.disk_experts`, `<family>.pin_experts`,
 `<family>.expert_cache_size`, and `<family>.disk_expert_read_threads`, where
-family is `fish_drama3`, `ming3_audio`, or `nemotron_transcribe`.
+family is `fish_drama3`, `ming3_audio`, `nemotron_transcribe`, `zonos2` or `zonos3`.
 `fish_drama3.cpu_expert_layers` is also a legacy alias. For Ming3 Audio
 and Nemotron, use the shared `moe_cpu_expert_layers` key.
 Supplying a canonical key and its prefixed alias is an error, even if their
@@ -284,6 +286,38 @@ model's `session_options`, not at the top level or in request options:
 }
 ```
 
+### Independent MoE policies
+
+Select one placement policy, one eviction policy, or both. An omitted stage retains its default behavior. Placement and eviction parameters are scoped independently:
+
+```bash
+--moe-disk-experts true \
+--moe-policy placement_cpu_share,cache_frequency_aware \
+--session-option moe_policy_params.placement.share=0.5 \
+--session-option moe_policy_params.eviction.decay_steps=128
+```
+
+Use the same keys in a server model's `session_options`:
+
+```json
+"session_options": {
+  "moe_disk_experts": true,
+  "moe_policy": "placement_cpu_share,cache_frequency_aware",
+  "moe_policy_params.placement.share": "0.5",
+  "moe_policy_params.eviction.decay_steps": "128"
+}
+```
+
+| Stage | Policy | Parameters |
+|---|---|---|
+| Placement | `default` | Existing GPU staging; no CPU miss sharing. |
+| Placement | `placement_cpu_share` | `share`: fraction in `[0,1]`, default `0`. GPU hits and vacant-slot fills stay on GPU. |
+| Placement | `placement_cost_aware` | Positive initial estimates `cpu_ms_per_row` (default `0.02`), `gpu_ms_per_row` (`0.002`) and `upload_bytes_per_ms` (`10000000`); successful phase measurements update shape-specific estimates. |
+| Eviction | `default` | Least-recently-used eligible slots. |
+| Eviction | `cache_frequency_aware` | `decay_steps`: positive logical-access interval, default `128`; lower-frequency eligible experts are evicted first. |
+
+Active placement policies and non-default eviction policies require staged storage. Whole-layer CPU placement overrides fractional placement. Cache policies choose only among slots whose queued consumers have completed; the engine controls batch capacity and synchronization. Duplicate stage selections and unknown parameters are errors. Do not combine `moe_cpu_share` with an explicit placement selection; use its scoped `share` parameter instead. Policy selection does not change precision or weight format. These policies are experimental and can change generation output; validate task quality before deployment.
+
 ### Experimental hybrid MoE execution
 
 `--moe-cpu-share 0.5` lets eligible GPU sessions compute half of subsequent
@@ -294,14 +328,7 @@ expert-cache misses on CPU. It is a common model session option, equivalent to
 `"moe_cpu_share": 0.5` inside the selected model's `session_options` object.
 It is not a top-level server setting or a backend option.
 
-Enable `moe_disk_experts=true` first. Shared `MoeModule`
-and `StagedMoeRuntime` paths participate through the session-owned build context.
-Graph builders composing a new `ModuleBuildContext` must copy
-`PreparedGraph::build_context()` to retain its explicit region recorder; raw
-GGML contexts are not discovered through a global registry. Resident
-expert banks and CPU-only execution keep their ordinary paths. The cache fills
-first, hits execute on GPU before new uploads, and the fractional share carries
-per prepared expert binding until cache invalidation.
+Enable `moe_disk_experts=true` first. The session-owned MoE engine handles routing, expert staging and CPU/GPU execution; models retain their architecture-specific shared branches and state. Resident expert banks keep direct graph execution. The cache fills first, hits execute on GPU before new uploads, and CPU-share selection ranks experts by assignment count. Fractional carry is tracked separately for each layer's prepared execution program and resets on cache invalidation.
 Native host weights are borrowed without expanding the complete bank to F32;
 CPU threads follow `--threads` or the server's `threads` setting.
 

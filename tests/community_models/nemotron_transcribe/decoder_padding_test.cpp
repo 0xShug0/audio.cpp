@@ -191,7 +191,7 @@ int main() {
             NemotronHDecoderRuntime dequantized(source, execution, padded, assets::TensorStorageType::F32);
             const auto quant_result = quantized.generate({1, 2}, audio, 1, {3}, options);
             DecoderOptions offload;
-            offload.moe.residency = core::MoeExpertResidency::Staged;
+            offload.moe.residency = engine::moe::Residency::Staged;
             offload.moe.cache_slots = padded.experts_per_token;
             offload.moe.read_threads = 1;
             NemotronHDecoderRuntime cached(source, execution, padded, assets::TensorStorageType::Native, offload);

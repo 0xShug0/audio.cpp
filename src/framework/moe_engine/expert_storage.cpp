@@ -1,9 +1,8 @@
-#include "engine/framework/core/disk_expert_weight_store.h"
+#include "moe_engine_internal.h"
 
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/binary.h"
-#include "engine/framework/core/prepared_graph.h"
 
 #include <ggml-alloc.h>
 #include <gguf.h>
@@ -13,23 +12,20 @@
 #include <fstream>
 #include <map>
 #include <stdexcept>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #if defined(__APPLE__) && !defined(_OPENMP)
 #include <dispatch/dispatch.h>
 #endif
 
-namespace engine::core {
+namespace engine::moe::detail {
+using core::TensorValue;
+using core::TensorShape;
+using core::wrap_tensor;
 
-namespace {
-struct ExpertRoutes {
-    std::unordered_map<ggml_tensor *, DiskExpertWeightStore::Route> bindings;
-};
-}
-
-class DiskExpertWeightStore::Impl {
+class ExpertStorage::Impl {
 public:
     struct BufferDeleter { void operator()(ggml_backend_buffer_t buffer) const { ggml_backend_buffer_free(buffer); } };
     struct ContextDeleter { void operator()(ggml_context * ctx) const { ggml_free(ctx); } };
@@ -40,6 +36,7 @@ public:
         size_t offset, expert_bytes;
         const std::byte * host_data = nullptr;
     };
+    struct Miss { int32_t id; size_t slot; };
     struct Group {
         std::unique_ptr<ggml_context, ContextDeleter> context;
         ggml_backend_buffer_t buffer = nullptr;
@@ -49,6 +46,11 @@ public:
         std::vector<ggml_tensor *> tensors;
         std::vector<int32_t> expert_ids;
         std::vector<uint64_t> last_used;
+        std::unique_ptr<EvictionPolicy> eviction;
+        std::vector<EvictionCandidate> candidates;
+        std::vector<uint8_t> required;
+        std::vector<int32_t> planned_ids, mapped_ids;
+        std::vector<Miss> misses;
         std::unique_ptr<ggml_context, ContextDeleter> host_context;
         std::vector<ggml_tensor *> host_tensors;
         std::vector<std::unique_ptr<ggml_backend_buffer, BufferDeleter>> host_views;
@@ -66,10 +68,11 @@ public:
         std::byte * data() { return buffer ? static_cast<std::byte *>(ggml_backend_buffer_get_base(buffer)) : bytes.data(); }
     };
 
-    Impl(DiskExpertWeightStore & owner, const std::filesystem::path & path, bool pin, size_t threads,
-        ExecutionContext * cpu_execution, ggml_backend_t host_buffer_backend)
-        : owner(owner), file(path, std::ios::binary), pin_experts(pin), read_threads(threads),
-          cpu_execution(cpu_execution), host_buffer_backend(host_buffer_backend) {
+    Impl(const std::filesystem::path & path, bool pin, size_t threads,
+        ggml_backend_t host_buffer_backend,
+        std::function<std::unique_ptr<EvictionPolicy>(size_t)> eviction)
+        : eviction_factory(std::move(eviction)), file(path, std::ios::binary), pin_experts(pin), read_threads(threads),
+          host_buffer_backend(host_buffer_backend) {
         if (read_threads < 1 || read_threads > 64)
             throw std::invalid_argument("disk expert read_threads must be between 1 and 64");
 #if !defined(_OPENMP) && !defined(__APPLE__)
@@ -110,30 +113,40 @@ public:
         mapped_file = io::read_binary_blob(path, true);
     }
 
-    std::vector<int32_t> stage(std::vector<int32_t> ids, size_t index) {
+    const std::vector<int32_t> & stage(const std::vector<int32_t> & ids, size_t index) {
         const auto stage_started = std::chrono::steady_clock::now();
         auto & group = *groups.at(index);
-        const std::unordered_set<int32_t> required(ids.begin(), ids.end());
-        if (required.size() > group.expert_ids.size()) throw std::runtime_error("routed experts exceed disk expert cache capacity");
-        for (const auto id : required) {
-            if (id < 0 || id >= group.projections.front().experts) throw std::runtime_error("disk expert routing ID out of range");
+        auto & required = group.required;
+        std::fill(required.begin(), required.end(), uint8_t{0});
+        size_t unique = 0;
+        for (auto id : ids) {
+            if (id < 0 || static_cast<size_t>(id) >= required.size()) throw std::runtime_error("MoE expert routing ID out of range");
+            if (!required[static_cast<size_t>(id)]) { required[static_cast<size_t>(id)] = 1; ++unique; }
         }
+        if (unique > group.expert_ids.size()) throw std::runtime_error("routed experts exceed MoE cache capacity");
         ++clock;
-        struct Miss { int32_t id; size_t slot; };
-        std::vector<Miss> misses;
-        auto planned_ids = group.expert_ids;
-        for (const auto id : required) {
+        auto & misses = group.misses; misses.clear();
+        auto & planned_ids = group.planned_ids;
+        std::copy(group.expert_ids.begin(), group.expert_ids.end(), planned_ids.begin());
+        // Preserve the established cache-slot assignment order. Slot indices
+        // participate in indexed expert execution, so changing their assignment
+        // can change floating-point results even with identical logical routes.
+        const std::unordered_set<int32_t> requested(ids.begin(), ids.end());
+        for (const auto id : requested) {
             const auto found = std::find(planned_ids.begin(), planned_ids.end(), id);
             size_t slot;
             if (found != planned_ids.end()) {
                 slot = static_cast<size_t>(found - planned_ids.begin());
                 ++stats.cache_hits;
             } else {
-                slot = planned_ids.size();
-                for (size_t candidate = 0; candidate < planned_ids.size(); ++candidate) {
-                    if (required.count(planned_ids[candidate])) continue;
-                    if (slot == planned_ids.size() || group.last_used[candidate] < group.last_used[slot]) slot = candidate;
-                }
+                group.candidates.clear();
+                for (size_t candidate = 0; candidate < planned_ids.size(); ++candidate)
+                    if (planned_ids[candidate] < 0 || !required[static_cast<size_t>(planned_ids[candidate])])
+                        group.candidates.push_back({candidate, planned_ids[candidate], group.last_used[candidate]});
+                slot = group.eviction->select({group.candidates, {index, cache_epoch, group.expert_ids}});
+                if (std::none_of(group.candidates.begin(), group.candidates.end(),
+                    [slot](const auto & candidate) { return candidate.slot == slot; }))
+                    throw std::logic_error("MoE eviction selected a protected or invalid cache slot");
                 planned_ids[slot] = id;
                 misses.push_back({id, slot});
                 // This slot must not remain a hit if a later read/upload fails.
@@ -213,34 +226,35 @@ public:
         stats.upload_ms += debug::elapsed_ms(started);
         for (const auto & miss : misses) group.expert_ids[miss.slot] = miss.id;
         stats.expert_loads += misses.size();
-        for (auto & id : ids) id = static_cast<int32_t>(
-            std::find(group.expert_ids.begin(), group.expert_ids.end(), id) - group.expert_ids.begin());
+        auto & mapped = group.mapped_ids; mapped.clear();
+        for (auto id : ids) {
+            const auto found = std::find(group.expert_ids.begin(), group.expert_ids.end(), id);
+            mapped.push_back(static_cast<int32_t>(found - group.expert_ids.begin()));
+        }
         stats.stage_ms += debug::elapsed_ms(stage_started);
-        return ids;
+        return mapped;
     }
 
-    DiskExpertWeightStore & owner;
+    std::function<std::unique_ptr<EvictionPolicy>(size_t)> eviction_factory;
     std::ifstream file;
     io::BinaryBlob mapped_file;
     bool pin_experts;
     size_t read_threads;
-    ExecutionContext * cpu_execution;
     ggml_backend_t host_buffer_backend;
     std::map<std::string, Projection> projections;
     std::vector<std::unique_ptr<Group>> groups;
-    std::map<std::string, size_t> routes;
     std::map<ggml_backend_t, std::unique_ptr<Staging>> host_staging;
     uint64_t clock = 0;
     uint64_t cache_epoch = 0;
     Statistics stats;
 };
 
-DiskExpertWeightStore::DiskExpertWeightStore(const std::filesystem::path & path, bool pin_experts, size_t read_threads,
-    ExecutionContext * cpu_execution, ggml_backend_t host_buffer_backend)
-    : impl_(std::make_unique<Impl>(*this, path, pin_experts, read_threads, cpu_execution, host_buffer_backend)) {}
+ExpertStorage::ExpertStorage(const std::filesystem::path & path, bool pin_experts, size_t read_threads,
+    ggml_backend_t host_buffer_backend,
+    std::function<std::unique_ptr<EvictionPolicy>(size_t)> eviction)
+    : impl_(std::make_unique<Impl>(path, pin_experts, read_threads, host_buffer_backend, std::move(eviction))) {}
 
-ExecutionContext * DiskExpertWeightStore::cpu_execution() const noexcept { return impl_->cpu_execution; }
-DiskExpertWeightStore::~DiskExpertWeightStore() {
+ExpertStorage::~ExpertStorage() {
     debug::timing_log_scalar("disk_experts.bytes_read", impl_->stats.bytes_read);
     debug::timing_log_scalar("disk_experts.expert_loads", impl_->stats.expert_loads);
     debug::timing_log_scalar("disk_experts.cache_hits", impl_->stats.cache_hits);
@@ -251,7 +265,7 @@ DiskExpertWeightStore::~DiskExpertWeightStore() {
     debug::timing_log_scalar("disk_experts.stage_ms", impl_->stats.stage_ms);
 }
 
-size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, ggml_backend_t backend, int64_t slots) {
+size_t ExpertStorage::add_group(const std::vector<std::string> & names, ggml_backend_t backend, int64_t slots) {
     if (names.empty() || !backend || slots <= 0) throw std::runtime_error("disk expert group requires projections, backend and positive capacity");
     auto group = std::make_unique<Impl::Group>();
     group->backend = backend;
@@ -276,6 +290,12 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     ggml_backend_buffer_clear(group->buffer, 0);
     group->expert_ids.assign(static_cast<size_t>(slots), -1);
     group->last_used.assign(static_cast<size_t>(slots), 0);
+    group->candidates.reserve(static_cast<size_t>(slots));
+    group->required.resize(static_cast<size_t>(group->projections.front().experts));
+    group->planned_ids.resize(static_cast<size_t>(slots));
+    group->mapped_ids.reserve(static_cast<size_t>(slots));
+    group->misses.reserve(static_cast<size_t>(slots));
+    group->eviction = impl_->eviction_factory(static_cast<size_t>(group->projections.front().experts));
     auto stats = impl_->stats;
     std::unique_ptr<Impl::Staging> replacement_staging;
     const auto staging = impl_->host_staging.find(backend);
@@ -328,14 +348,11 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     // Allocate publication nodes and vector capacity before changing live state.
     // The default map allocators match, so node insertion allocates nothing;
     // string/pointer comparison and the reserved unique_ptr moves cannot throw.
-    decltype(impl_->routes) prepared_routes;
-    prepared_routes.emplace("disk_experts.route." + std::to_string(index), index);
     decltype(impl_->host_staging) prepared_staging;
     if (replacement_staging && staging == impl_->host_staging.end())
         prepared_staging.emplace(backend, std::move(replacement_staging));
     impl_->groups.reserve(index + 1);
 
-    impl_->routes.insert(prepared_routes.extract(prepared_routes.begin()));
     if (!prepared_staging.empty())
         impl_->host_staging.insert(prepared_staging.extract(prepared_staging.begin()));
     else if (replacement_staging)
@@ -345,16 +362,16 @@ size_t DiskExpertWeightStore::add_group(const std::vector<std::string> & names, 
     return index;
 }
 
-ggml_backend_t DiskExpertWeightStore::group_backend(size_t group) const {
+ggml_backend_t ExpertStorage::group_backend(size_t group) const {
     return impl_->groups.at(group)->backend;
 }
 
-TensorValue DiskExpertWeightStore::tensor(size_t group, size_t projection) const {
+TensorValue ExpertStorage::tensor(size_t group, size_t projection) const {
     auto * tensor = impl_->groups.at(group)->tensors.at(projection);
     return wrap_tensor(tensor, TensorShape::from_dims({tensor->ne[2], tensor->ne[1], tensor->ne[0]}), tensor->type);
 }
 
-TensorValue DiskExpertWeightStore::host_tensor(size_t index, const ggml_tensor * device_tensor) {
+TensorValue ExpertStorage::host_tensor(size_t index, const ggml_tensor * device_tensor) {
     auto & group = *impl_->groups.at(index);
     const auto found = std::find(group.tensors.begin(), group.tensors.end(), device_tensor);
     if (found == group.tensors.end()) throw std::invalid_argument("expert tensor does not belong to this cache group");
@@ -388,64 +405,44 @@ TensorValue DiskExpertWeightStore::host_tensor(size_t index, const ggml_tensor *
     return wrap_tensor(tensor, TensorShape::from_dims({tensor->ne[2], tensor->ne[1], tensor->ne[0]}), tensor->type);
 }
 
-const std::vector<int32_t> & DiskExpertWeightStore::cached_experts(size_t group) const {
+const std::vector<int32_t> & ExpertStorage::cached_experts(size_t group) const {
     return impl_->groups.at(group)->expert_ids;
 }
 
-uint64_t DiskExpertWeightStore::cache_epoch() const {
+uint64_t ExpertStorage::cache_epoch() const {
     return impl_->cache_epoch;
 }
 
-ggml_tensor * DiskExpertWeightStore::route(ModuleBuildContext & ctx, ggml_tensor * ids, size_t group) const {
-    if (ids->type != GGML_TYPE_I32) throw std::runtime_error("disk expert routing requires I32 IDs");
-    if (group >= impl_->groups.size()) throw std::out_of_range("disk expert group not found");
-    auto * routed = ggml_dup(ctx.ggml, ids);
-    ggml_set_name(routed, ("disk_experts.route." + std::to_string(group)).c_str());
-    ggml_set_output(routed);
-    if (auto * owner = ctx.region_owner)
-        owner->region_state<ExpertRoutes>()->bindings.emplace(routed, Route{&impl_->owner, group});
-    return routed;
-}
-
-std::optional<DiskExpertWeightStore::Route> DiskExpertWeightStore::find_route(ModuleBuildContext & ctx, ggml_tensor * ids) {
-    auto * owner = ctx.region_owner;
-    if (!owner) return std::nullopt;
-    const auto routes = owner->region_state<ExpertRoutes>();
-    const auto found = routes->bindings.find(ids);
-    if (found == routes->bindings.end()) return std::nullopt;
-    return found->second;
-}
-
-std::vector<int32_t> DiskExpertWeightStore::stage(size_t group, const std::vector<int32_t> & expert_ids) {
+const std::vector<int32_t> & ExpertStorage::stage(size_t group, const std::vector<int32_t> & expert_ids) {
     return impl_->stage(expert_ids, group);
 }
 
-void DiskExpertWeightStore::invalidate_cache() {
+void ExpertStorage::invalidate_cache() {
     ++impl_->cache_epoch;
     for (auto & group : impl_->groups) {
         std::fill(group->expert_ids.begin(), group->expert_ids.end(), -1);
         std::fill(group->last_used.begin(), group->last_used.end(), 0);
     }
     impl_->clock = 0;
+    event({PolicyEvent::CacheInvalidated, 0, impl_->cache_epoch});
 }
 
-bool DiskExpertWeightStore::evaluate(ggml_tensor * tensor, bool ask, void * store) {
-    auto & self = *static_cast<DiskExpertWeightStore *>(store);
-    const auto found = self.impl_->routes.find(ggml_get_name(tensor));
-    if (found == self.impl_->routes.end()) return false;
-    if (!ask) {
-        auto started = std::chrono::steady_clock::now();
-        std::vector<int32_t> ids(static_cast<size_t>(ggml_nelements(tensor)));
-        ggml_backend_tensor_get(tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
-        self.impl_->stats.stage_ms += debug::elapsed_ms(started);
-        ids = self.impl_->stage(std::move(ids), found->second);
-        started = std::chrono::steady_clock::now();
-        ggml_backend_tensor_set(tensor, ids.data(), 0, ids.size() * sizeof(int32_t));
-        self.impl_->stats.stage_ms += debug::elapsed_ms(started);
-    }
-    return true;
+ExpertStorage::Statistics ExpertStorage::statistics() const noexcept { return impl_->stats; }
+
+size_t ExpertStorage::expert_bytes(size_t group) const {
+    size_t bytes = 0;
+    for (const auto & projection : impl_->groups.at(group)->projections) bytes += projection.expert_bytes;
+    return bytes;
 }
-
-DiskExpertWeightStore::Statistics DiskExpertWeightStore::statistics() const noexcept { return impl_->stats; }
-
-}  // namespace engine::core
+void ExpertStorage::accessed(size_t group, int32_t expert, size_t assignments) {
+    auto & entry = *impl_->groups.at(group);
+    entry.eviction->accessed({expert, assignments}, {group, impl_->cache_epoch, entry.expert_ids});
+}
+void ExpertStorage::event(size_t group, const PolicyNotification & notification) {
+    auto & entry = *impl_->groups.at(group);
+    entry.eviction->event(notification, {group, impl_->cache_epoch, entry.expert_ids});
+}
+void ExpertStorage::event(const PolicyNotification & notification) {
+    for (size_t group = 0; group < impl_->groups.size(); ++group) event(group, notification);
+}
+} // namespace engine::moe::detail

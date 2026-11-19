@@ -241,7 +241,7 @@ void invalid_config_is_rejected_before_tensor_access(core::ExecutionContext & ex
     }
     auto weights = std::make_shared<TestWeights>(c);
     DecoderOptions options;
-    options.moe.residency = core::MoeExpertResidency::Staged;
+    options.moe.residency = engine::moe::Residency::Staged;
     options.moe.cache_slots = c.experts_per_token;
     bool rejected = false;
     try { NemotronHDecoderRuntime runtime(weights, execution, c, assets::TensorStorageType::Native, options); }
