@@ -4,7 +4,9 @@
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/io/yaml.h"
+#include "engine/framework/text/utf8.h"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <stdexcept>
@@ -17,6 +19,7 @@ struct PocketTTSDescriptor {
     bool pad_with_spaces_for_short_inputs = false;
     bool remove_semicolons = false;
     bool capitalize_first_letter = true;
+    std::vector<std::pair<std::string, std::string>> replace_characters;
     bool insert_bos_before_voice = false;
     std::optional<int> model_recommended_frames_after_eos;
     int sample_rate = 24000;
@@ -51,6 +54,19 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
         io::yaml::optional_bool(parsed, "pad_with_spaces_for_short_inputs", false);
     descriptor.remove_semicolons = io::yaml::optional_bool(parsed, "remove_semicolons", false);
     descriptor.capitalize_first_letter = io::yaml::optional_bool(parsed, "capitalize_first_letter", true);
+    // The reference builds str.maketrans(replace_characters), which takes single characters only.
+    const std::string replace_prefix = "replace_characters.";
+    for (const auto & [key, value] : parsed.scalars) {
+        if (key.rfind(replace_prefix, 0) != 0) {
+            continue;
+        }
+        const std::string character = key.substr(replace_prefix.size());
+        if (engine::text::utf8_codepoint_count(character, "PocketTTS replace_characters key") != 1) {
+            throw std::runtime_error("PocketTTS replace_characters keys must be single characters: " + character);
+        }
+        descriptor.replace_characters.emplace_back(character, value);
+    }
+    std::sort(descriptor.replace_characters.begin(), descriptor.replace_characters.end());
     descriptor.insert_bos_before_voice = io::yaml::optional_bool(parsed, "flow_lm.insert_bos_before_voice", false);
     descriptor.model_recommended_frames_after_eos = io::yaml::optional_int(parsed, "model_recommended_frames_after_eos");
     descriptor.sample_rate = io::yaml::require_int(parsed, "mimi.sample_rate");
@@ -137,6 +153,7 @@ PocketTTSModelConfig make_model_config(const PocketTTSDescriptor & descriptor) {
     config.pad_with_spaces_for_short_inputs = descriptor.pad_with_spaces_for_short_inputs;
     config.remove_semicolons = descriptor.remove_semicolons;
     config.capitalize_first_letter = descriptor.capitalize_first_letter;
+    config.replace_characters = descriptor.replace_characters;
     config.insert_bos_before_voice = descriptor.insert_bos_before_voice;
     config.model_recommended_frames_after_eos = descriptor.model_recommended_frames_after_eos;
     return config;

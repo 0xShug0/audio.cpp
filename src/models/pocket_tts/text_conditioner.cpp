@@ -120,16 +120,88 @@ std::string strip_ascii_whitespace(std::string text) {
     return text;
 }
 
+// The characters Python's str.split() separates on (str.isspace()), so the collapse below also
+// folds the no-break spaces French text puts before ":" and inside guillemets.
+bool is_python_whitespace(uint32_t value) {
+    return (value >= 0x09 && value <= 0x0D) || (value >= 0x1C && value <= 0x20) || value == 0x85 ||
+        value == 0xA0 || value == 0x1680 || (value >= 0x2000 && value <= 0x200A) || value == 0x2028 ||
+        value == 0x2029 || value == 0x202F || value == 0x205F || value == 0x3000;
+}
+
+// The reference's replace_characters step (pocket_tts prepare_text_prompt):
+//     text = " ".join(text.translate(str.maketrans(replace_characters)).split())
+//     text = re.sub(r"([.!?…])\s*[,;:]", r"\1", text)
+// Each character is replaced once, in a single pass. Deleted quotes leave '"Hi?", she said' as
+// 'Hi?, she said', which reads as a sentence end followed by a stray comma; the second step keeps
+// only the sentence mark.
+std::string translate_replace_characters(
+    const std::string & text,
+    const std::vector<std::pair<std::string, std::string>> & replace_characters) {
+    std::string translated;
+    translated.reserve(text.size());
+    for (size_t pos = 0; pos < text.size();) {
+        const size_t length = decode_utf8_at(text, pos).length;
+        const std::string character = text.substr(pos, length);
+        const auto replacement = std::find_if(
+            replace_characters.begin(), replace_characters.end(), [&](const auto & entry) {
+                return entry.first == character;
+            });
+        translated += replacement == replace_characters.end() ? character : replacement->second;
+        pos += length;
+    }
+
+    std::string collapsed;
+    collapsed.reserve(translated.size());
+    bool pending_space = false;
+    for (size_t pos = 0; pos < translated.size();) {
+        const CodePoint code_point = decode_utf8_at(translated, pos);
+        if (is_python_whitespace(code_point.value)) {
+            pending_space = !collapsed.empty();
+        } else {
+            if (pending_space) {
+                collapsed.push_back(' ');
+                pending_space = false;
+            }
+            collapsed.append(translated, pos, code_point.length);
+        }
+        pos += code_point.length;
+    }
+
+    std::string out;
+    out.reserve(collapsed.size());
+    for (size_t pos = 0; pos < collapsed.size();) {
+        const CodePoint code_point = decode_utf8_at(collapsed, pos);
+        out.append(collapsed, pos, code_point.length);
+        pos += code_point.length;
+        const uint32_t mark = code_point.value;
+        if (mark == '.' || mark == '!' || mark == '?' || mark == 0x2026) {
+            size_t next = pos;
+            while (next < collapsed.size() && collapsed[next] == ' ') {
+                ++next;
+            }
+            if (next < collapsed.size() &&
+                (collapsed[next] == ',' || collapsed[next] == ';' || collapsed[next] == ':')) {
+                pos = next + 1;
+            }
+        }
+    }
+    return out;
+}
+
 std::string prepare_pocket_tts_text(
     std::string text,
     bool pad_with_spaces_for_short_inputs,
     bool remove_semicolons,
-    bool capitalize_first_letter = true) {
+    bool capitalize_first_letter = true,
+    const std::vector<std::pair<std::string, std::string>> & replace_characters = {}) {
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) {
         text.erase(text.begin());
     }
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) {
         text.pop_back();
+    }
+    if (!replace_characters.empty()) {
+        text = translate_replace_characters(text, replace_characters);
     }
     if (text.empty()) {
         throw std::runtime_error("PocketTTS text prompt cannot be empty");
@@ -308,7 +380,8 @@ TextConditioningResult TextConditioner::prepare(
             text,
             manifest.model_config.pad_with_spaces_for_short_inputs,
             manifest.model_config.remove_semicolons,
-            manifest.model_config.capitalize_first_letter);
+            manifest.model_config.capitalize_first_letter,
+            manifest.model_config.replace_characters);
         if (manifest.tokenizer_pieces.empty()) {
             throw std::runtime_error("PocketTTS tokenizer pieces are not loaded");
         }
@@ -318,6 +391,13 @@ TextConditioningResult TextConditioner::prepare(
     });
     engine::debug::timing_log_scalar("pocket_tts.text.prepare_ms", prepare_ms);
     return result;
+}
+
+std::string TextConditioner::apply_replace_characters(
+    const models::pocket_tts::PocketTTSAssets & manifest,
+    const std::string & text) const {
+    const auto & replace_characters = manifest.model_config.replace_characters;
+    return replace_characters.empty() ? text : translate_replace_characters(text, replace_characters);
 }
 
 std::vector<std::string> TextConditioner::split_into_sentence_chunks(
@@ -337,7 +417,8 @@ std::vector<std::string> TextConditioner::split_into_sentence_chunks(
         text,
         manifest.model_config.pad_with_spaces_for_short_inputs,
         manifest.model_config.remove_semicolons,
-        manifest.model_config.capitalize_first_letter));
+        manifest.model_config.capitalize_first_letter,
+        manifest.model_config.replace_characters));
     const std::vector<int32_t> tokens = tokenizers::tokenize_sentencepiece(pieces, prepared);
     const std::vector<TextSegment> sentences = segments_from_boundaries(
         pieces,
