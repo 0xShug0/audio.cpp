@@ -1,4 +1,33 @@
 {
+  "voxmel_tts": [
+    {"name": "guidance_scale", "type": "number", "label": "Text guidance", "default": 3.5, "minimum": 0, "step": 0.1},
+    {"name": "speaker_guidance_scale", "type": "number", "label": "Speaker guidance", "default": 3, "minimum": 0, "step": 0.1},
+    {"name": "num_inference_steps", "type": "number", "label": "Inference steps", "default": 32, "minimum": 1, "maximum": 256, "step": 1},
+    {"name": "max_duration_sec", "type": "number", "label": "Maximum chunk duration (seconds)", "default": 30, "minimum": 0.3, "step": 0.1}
+  ],
+  "tiny_voca": [
+    {"name": "speed", "type": "number", "label": "Speaking speed", "default": 1, "minimum": 0.25, "maximum": 4, "step": 0.05},
+    {"name": "semitone_shift", "type": "number", "label": "Pitch shift (semitones)", "default": 0, "minimum": -24, "maximum": 24, "step": 1},
+    {"name": "pitch_range", "type": "number", "label": "Pitch range", "default": 1, "minimum": 0, "maximum": 3, "step": 0.1}
+  ],
+  "soulx-singer-svs": [
+    {"name": "num_steps", "type": "number", "label": "Denoising steps", "default": 32, "minimum": 1, "step": 1},
+    {"name": "guidance_scale", "type": "number", "label": "Guidance scale", "default": 3, "minimum": 0, "step": 0.1},
+    {"name": "control", "type": "choice", "label": "Melody control", "default": "melody", "choices": ["melody", "score"]}
+  ],
+  "soulx-singer-svc": [
+    {"name": "num_steps", "type": "number", "label": "Denoising steps", "default": 32, "minimum": 1, "step": 1},
+    {"name": "guidance_scale", "type": "number", "label": "Guidance scale", "default": 3, "minimum": 0, "step": 0.1},
+    {"name": "pitch_shift", "type": "number", "label": "Pitch shift (semitones)", "default": 0, "minimum": -24, "maximum": 24, "step": 1},
+    {"name": "auto_pitch_shift", "type": "bool", "label": "Match reference pitch", "default": false},
+    {"name": "seed", "type": "number", "label": "Seed", "default": 2026, "minimum": -1, "step": 1}
+  ],
+  "rosvot": [
+    {"name": "output_format", "type": "choice", "label": "Output format", "default": "midi", "choices": ["midi", "json"]},
+    {"name": "note_boundary_threshold", "type": "number", "label": "Note boundary threshold", "default": 0.85, "minimum": 0, "maximum": 1, "step": 0.01},
+    {"name": "word_boundary_threshold", "type": "number", "label": "Word boundary threshold", "default": 0.5, "minimum": 0, "maximum": 1, "step": 0.01},
+    {"name": "word_durations_file", "type": "text", "label": "Word durations JSON path", "info": "Optional server-side file containing word durations in seconds."}
+  ],
   "m5_tts": [
     {"name": "temperature", "type": "number", "label": "Temperature", "info": "Audio-token sampling temperature.", "default": 0.9, "minimum": 0, "step": 0.1},
     {"name": "top_k", "type": "number", "label": "Top k", "info": "Top-k audio-token sampling cutoff.", "default": 10, "minimum": 1, "step": 1},
