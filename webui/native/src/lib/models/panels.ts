@@ -1,3 +1,4 @@
+import SoulXSingerPanel from './soulx_singer/SoulXSingerPanel.svelte';
 import AuKPanel from './auk/AuKPanel.svelte';
 import Lfm2AudioPanel from './lfm2_audio/Lfm2AudioPanel.svelte';
 import LiveAvatarPanel from './liveavatar/LiveAvatarPanel.svelte';
@@ -22,6 +23,13 @@ export interface GenericControlReplacements {
 }
 
 export const modelStudioPanels = {
+  soulx_singer: {
+    component: SoulXSingerPanel,
+    tasks: ['gen'],
+    requestMode: 'panel',
+    blocksRunWhileUploading: false,
+    replacesGenericControls: { text: true, genSource: true, language: true, voice: true, duration: true }
+  },
   lfm_d1_omni: {
     component: D1OmniPanel,
     requestMode: 'panel',

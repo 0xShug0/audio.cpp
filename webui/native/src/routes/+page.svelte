@@ -369,6 +369,7 @@
     reuse: 'RE-USE', realtime_reuse: 'Real-time RE-USE',
     haas_asr: 'Haas Japanese ASR', lfm_d1_omni: 'd1-Omni audio decisions',
     nemotron_transcribe: 'Nemotron 3.5 Transcribe', phonon2_asr: 'Phonon-2 ASR',
+    voxmel_tts: 'VoxMel', tiny_voca: 'tiny-voca', soulx_singer: 'SoulX-Singer', rosvot: 'ROSVOT',
     m5_tts: 'M5-TTS', pocket_tts_small: 'PocketTTS Small', underdog_bark3: 'Underdog Bark 3',
     magenta_realtime_2: 'Magenta RealTime 2', soulx_flashhead: 'SoulX-FlashHead', sidon: 'Sidon', smart_turn: 'Smart Turn',
     gigaam_asr: 'GigaAM ASR',
@@ -405,6 +406,7 @@
     canary_asr: 0, cohere_asr: 256, moss_transcribe_diarize: 5120
   };
   const asrLanguages: Record<string, string[]> = {
+    tiny_voca: ['en'],
     m5_tts: ['zh', 'yue', 'zh-Sichuan', 'en', 'de', 'fr', 'ja', 'ko'],
     canary_asr: ['en', 'de', 'es', 'fr'],
     cohere_asr: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'el', 'ar', 'ja', 'zh', 'vi', 'ko'],
@@ -552,7 +554,7 @@
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
   $: supportsTextOnlyTts = (
-    selected?.family === 'm5_tts' || selected?.family === 'breeze_tts' ||
+    selected?.family === 'm5_tts' || selected?.family === 'voxmel_tts' || selected?.family === 'breeze_tts' ||
     selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' || selected?.family === 'kugelaudio' || selected?.family === 'voxtral_tts' ||
     (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
@@ -574,7 +576,7 @@
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
   $: referenceTextRequired = (requiresRequestOption(selected, 'reference_text') &&
     !(allowsQuickStartVoice && quickStartVoice)) ||
-    (Boolean(voiceFile) && isQwenBase) || (selected?.family === 'm5_tts' && selected?.task === 'clon');
+    (Boolean(voiceFile) && isQwenBase) || (['m5_tts', 'voxmel_tts'].includes(selected?.family) && selected?.task === 'clon');
   // A model with built-in voices also lists the server's voices (presets), but
   // not the embedded demo wavs, which such a model cannot clone.
   $: quickStartVoices = usesBuiltInVoiceSelector
@@ -1475,7 +1477,7 @@
 
   async function stagedPath(file: File | null): Promise<string | undefined> {
     if (!file) return undefined;
-    const targetSampleRate = selected.task === 'sep' || selected.family === 'apollo'
+    const targetSampleRate = selected.family === 'rosvot' ? 24000 : selected.task === 'sep' || selected.family === 'apollo'
       ? 44100
       : ['asr', 'vad', 'diar', 'align', 'midi', 'wake', 'cls'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
@@ -2138,8 +2140,8 @@
         const effectiveChunkBudget = Math.max(40, chunkBudget);
         if (selected.family === 'voxcpm2') options.text_chunk_size = effectiveChunkBudget;
         // Keep model-owned voice conditioning across chunks inside one request.
-        if (['ming3_tts', 'zonos2', 'zonos3', 'm5_tts'].includes(selected.family) && longText) options.text_chunk_size = effectiveChunkBudget;
-        const chunks = longText && selected.task !== 'vdes' && !['moss_ttsd', 'ming3_tts', 'zonos2', 'zonos3', 'm5_tts'].includes(selected.family)
+        if (['ming3_tts', 'zonos2', 'zonos3', 'm5_tts', 'voxmel_tts', 'tiny_voca'].includes(selected.family) && longText) options.text_chunk_size = effectiveChunkBudget;
+        const chunks = longText && selected.task !== 'vdes' && !['moss_ttsd', 'ming3_tts', 'zonos2', 'zonos3', 'm5_tts', 'voxmel_tts', 'tiny_voca'].includes(selected.family)
           ? splitTtsChunks(text, effectiveChunkBudget)
           : [text];
         const audioChunks: Blob[] = [];

@@ -1,7 +1,7 @@
 {
   "name": "audiocpp-native-webui",
   "private": true,
-  "version": "0.9.5",
+  "version": "0.9.6",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
