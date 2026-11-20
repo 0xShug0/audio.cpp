@@ -151,6 +151,7 @@ through request options `language`, `max_tokens`, `audio_chunk_mode`, and
 |---|---|---:|---|
 | `return_timestamps` | bool | `false` | Offline only: run the configured forced aligner after ASR. Streaming rejects true, even with an aligner configured. CLI `--words-out` enables this automatically; server requests must enable it explicitly or through `default_request_options`. |
 | `clamp_timestamps_to_audio` | bool | `false` | Opt-in guard for `--words-out`: keep repaired forced-aligner word spans inside each local audio chunk. Default preserves existing timestamp repair behavior. |
+| `trim_chunk_overlap` | bool | `false` | With `return_timestamps=true` and `preserve_punctuation=true`, trim punctuated text to retained aligned words at overlapping fixed-chunk boundaries. Does not change ASR generation or word timestamps. Disabled preserves the existing full chunk transcripts. |
 | `preserve_punctuation` | bool | `false` | Preserve ASR punctuation in timestamped, chunked transcript text instead of rebuilding text from aligned words. Legacy `qwen3_asr.preserve_punctuation` remains accepted. |
 
 ## Session Options (use with `--session-option`)

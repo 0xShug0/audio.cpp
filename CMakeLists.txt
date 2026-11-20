@@ -2333,6 +2333,8 @@ audiocpp_add_model(qwen3_asr
         engine::models::qwen3_asr::make_qwen3_asr_loader
     DEPENDS
         qwen3_forced_aligner
+    OBJECT_LIBRARIES
+        utf8proc_vendor
 )
 
 audiocpp_add_model(confucius4_r2t2
@@ -2353,6 +2355,7 @@ audiocpp_add_model(confucius4_r2t2
 
 audiocpp_add_model(qwen3_forced_aligner
     SOURCES
+        src/models/qwen3_forced_aligner/nagisa_segmenter.cpp
         src/models/qwen3_forced_aligner/processor.cpp
         src/models/qwen3_forced_aligner/session.cpp
         src/models/qwen3_forced_aligner/loader.cpp
@@ -2362,6 +2365,8 @@ audiocpp_add_model(qwen3_forced_aligner
         engine::models::qwen3_forced_aligner::make_qwen3_forced_aligner_loader
     DEPENDS
         qwen3_asr
+    OBJECT_LIBRARIES
+        utf8proc_vendor
 )
 
 audiocpp_add_model(mms_forced_aligner
@@ -5764,8 +5769,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         if (qwen3_forced_aligner IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(qwen3_forced_aligner_processor_test tests/unittests/test_qwen3_forced_aligner_processor.cpp)
         target_sources(qwen3_forced_aligner_processor_test PRIVATE
+            src/models/qwen3_asr/postprocess.cpp
             src/models/qwen3_asr/tokenizer_text.cpp
+            src/models/qwen3_forced_aligner/nagisa_segmenter.cpp
             src/models/qwen3_forced_aligner/processor.cpp)
+        target_link_libraries(qwen3_forced_aligner_processor_test PRIVATE utf8proc_vendor)
         target_include_directories(qwen3_forced_aligner_processor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         add_test(
             NAME qwen3_forced_aligner_processor_test

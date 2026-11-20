@@ -6,9 +6,12 @@
 #include "engine/models/qwen3_asr/types.h"
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace engine::models::qwen3_forced_aligner {
+
+class NagisaSegmenter;
 
 std::vector<std::string> tokenize_alignable_words(
     const std::string & text,
@@ -29,10 +32,12 @@ public:
     Qwen3ForcedAlignProcessor(
         const engine::models::qwen3_asr::Qwen3ASRAssets & assets,
         const engine::models::qwen3_asr::Qwen3ASRTextTokenizer & tokenizer);
+    ~Qwen3ForcedAlignProcessor();
+
+    std::vector<std::string> tokenize_words(const std::string & text, const std::string & language) const;
 
     ForcedAlignPrompt build_prompt(
-        const std::string & text,
-        const std::string & language,
+        std::vector<std::string> words,
         int64_t audio_feature_tokens) const;
 
     std::vector<engine::runtime::WordTimestamp> parse_timestamps(
@@ -45,6 +50,8 @@ public:
 private:
     const engine::models::qwen3_asr::Qwen3ASRAssets & assets_;
     const engine::models::qwen3_asr::Qwen3ASRTextTokenizer & tokenizer_;
+    mutable std::unique_ptr<NagisaSegmenter> japanese_segmenter_;
+    mutable std::unique_ptr<std::unordered_set<std::string>> korean_dictionary_;
 };
 
 }  // namespace engine::models::qwen3_forced_aligner

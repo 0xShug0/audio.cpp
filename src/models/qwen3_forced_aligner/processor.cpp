@@ -1,9 +1,15 @@
 #include "engine/models/qwen3_forced_aligner/processor.h"
+#include "engine/models/qwen3_forced_aligner/nagisa_segmenter.h"
+#include "engine/framework/debug/trace.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
+
+#include <utf8proc.h>
 
 namespace engine::models::qwen3_forced_aligner {
 namespace {
@@ -282,11 +288,92 @@ Qwen3ForcedAlignProcessor::Qwen3ForcedAlignProcessor(
     : assets_(assets),
       tokenizer_(tokenizer) {}
 
-ForcedAlignPrompt Qwen3ForcedAlignProcessor::build_prompt(
+Qwen3ForcedAlignProcessor::~Qwen3ForcedAlignProcessor() = default;
+
+std::vector<std::string> Qwen3ForcedAlignProcessor::tokenize_words(
     const std::string & text,
-    const std::string & language,
+    const std::string & language) const {
+    std::vector<std::string> words;
+    // The upstream Japanese/Korean tokenizers retain Unicode letters/numbers
+    // and apostrophes. Do not use the legacy broad codepoint ranges here:
+    // those also retain Japanese punctuation and omit Hangul jamo.
+    const auto append_word = [&](const std::string & word) {
+        std::string cleaned;
+        for (const auto & ch : utf8_chars(word)) {
+            const auto category = utf8proc_category(static_cast<int32_t>(ch.codepoint));
+            if (ch.codepoint == '\'' ||
+                (category >= UTF8PROC_CATEGORY_LU && category <= UTF8PROC_CATEGORY_LO) ||
+                (category >= UTF8PROC_CATEGORY_ND && category <= UTF8PROC_CATEGORY_NO)) {
+                cleaned += ch.text;
+            }
+        }
+        if (!cleaned.empty()) words.push_back(std::move(cleaned));
+    };
+    const auto normalized_language = lower_ascii(language);
+    if (((normalized_language == "ja" || normalized_language == "japanese") &&
+         (!assets_.resources.has_file("nagisa_config") || !assets_.resources.has_tensor_source("nagisa_weights"))) ||
+        ((normalized_language == "ko" || normalized_language == "korean") &&
+         !assets_.resources.has_file("korean_dictionary"))) {
+        debug::log_message(debug::LogLevel::Warning, "qwen3_forced_aligner",
+            "Tokenizer assets for " + language + " are missing; using legacy word segmentation with reduced timestamp accuracy. "
+            "Download the updated Qwen3-ForcedAligner-0.6B GGUF from audio-cpp/audio.cpp-gguf, "
+            "or repack your GGUF with the tokenizer assets as described in docs/models/qwen3_forced_aligner.md");
+        return tokenize_alignable_words(text, language);
+    }
+    if (normalized_language == "ja" || normalized_language == "japanese") {
+        if (!japanese_segmenter_) {
+            japanese_segmenter_ = std::make_unique<NagisaSegmenter>(assets_.resources);
+        }
+        for (const auto & word : japanese_segmenter_->segment(text)) {
+            append_word(word);
+        }
+    } else if (normalized_language == "ko" || normalized_language == "korean") {
+        if (!korean_dictionary_) {
+            std::ifstream file(assets_.resources.require_file("korean_dictionary"));
+            if (!file) throw std::runtime_error("Cannot open Korean alignment dictionary");
+            auto dictionary = std::make_unique<std::unordered_set<std::string>>();
+            std::string line, word;
+            while (std::getline(file, line)) {
+                std::istringstream fields(line);
+                if (fields >> word) dictionary->insert(word);
+            }
+            if (dictionary->empty()) throw std::runtime_error("Korean alignment dictionary is empty");
+            korean_dictionary_ = std::move(dictionary);
+        }
+        // Upstream LTokenizer with scores=1, default_score=0, tolerance=0:
+        // longest dictionary prefix of at least two codepoints, otherwise the
+        // whole whitespace-delimited token. Clean L and R only after splitting.
+        std::string token;
+        auto flush = [&] {
+            if (token.empty()) return;
+            const auto chars = utf8_chars(token);
+            size_t split = token.size();
+            std::string prefix = token;
+            for (size_t length = chars.size(); length >= 2; --length) {
+                if (korean_dictionary_->count(prefix)) { split = prefix.size(); break; }
+                prefix.resize(prefix.size() - chars[length - 1].text.size());
+            }
+            for (const auto & part : {token.substr(0, split), token.substr(split)}) {
+                append_word(part);
+            }
+            token.clear();
+        };
+        for (const auto & ch : utf8_chars(text)) {
+            const auto cp = ch.codepoint;
+            const auto category = utf8proc_category(static_cast<int32_t>(cp));
+            if (category == UTF8PROC_CATEGORY_ZS || category == UTF8PROC_CATEGORY_ZL || category == UTF8PROC_CATEGORY_ZP || cp == 0x85 || (cp >= 9 && cp <= 13) || (cp >= 0x1c && cp <= 0x1f)) flush();
+            else token += ch.text;
+        }
+        flush();
+    } else {
+        words = tokenize_alignable_words(text, language);
+    }
+    return words;
+}
+
+ForcedAlignPrompt Qwen3ForcedAlignProcessor::build_prompt(
+    std::vector<std::string> words,
     int64_t audio_feature_tokens) const {
-    auto words = tokenize_alignable_words(text, language);
     if (words.empty()) {
         throw std::runtime_error("Qwen3 forced aligner requires non-empty normalized text");
     }

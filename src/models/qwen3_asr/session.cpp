@@ -419,6 +419,9 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
     }
     runtime::TaskResult merged;
     std::ostringstream text;
+    const auto trim_option = runtime::find_option(request.options, {"trim_chunk_overlap"});
+    const bool trim_overlap = trim_option && runtime::parse_bool_option(*trim_option, "trim_chunk_overlap") &&
+        request_return_timestamps(request) && request_preserve_punctuation(request);
     std::vector<runtime::TaskResult> batch_results;
     for (size_t chunk_index = 0; chunk_index < chunks.size(); ++chunk_index) {
         const auto & chunk = chunks[chunk_index];
@@ -432,6 +435,20 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
             batch_results = run_batch(batch.data(), batch.size());
         }
         auto item = std::move(batch_results[chunk_index % perf_.offline_batch_size]);
+        const size_t merged_before = merged.word_timestamps.size();
+        engine::audio::append_chunk_word_timestamps(
+            merged.word_timestamps,
+            item.word_timestamps,
+            chunk.source_span,
+            chunk.keep_span);
+        if (trim_overlap && item.text_output.has_value() &&
+            (chunk.source_span.start_sample != chunk.keep_span.start_sample ||
+             chunk.source_span.end_sample != chunk.keep_span.end_sample)) {
+            item.text_output->text = trim_chunk_text(
+                item.text_output->text, item.word_timestamps,
+                merged.word_timestamps.empty() ? nullptr : merged.word_timestamps.data() + merged_before,
+                merged.word_timestamps.size() - merged_before, chunk.source_span.start_sample);
+        }
         if (item.text_output.has_value() && !item.text_output->text.empty()) {
             if (text.tellp() > 0) {
                 text << ' ';
@@ -443,12 +460,6 @@ runtime::TaskResult Qwen3ASRSession::run(const runtime::TaskRequest & request) {
                 merged.text_output->language = item.text_output->language;
             }
         }
-        const size_t merged_before = merged.word_timestamps.size();
-        engine::audio::append_chunk_word_timestamps(
-            merged.word_timestamps,
-            item.word_timestamps,
-            chunk.source_span,
-            chunk.keep_span);
         log_chunk_word_diagnostics(
             static_cast<int64_t>(chunk_index),
             static_cast<int64_t>(chunks.size()),
