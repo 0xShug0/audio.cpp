@@ -52,9 +52,13 @@ audiocpp_gguf --family qwen3_forced_aligner \
   --input nagisa=models/Qwen3-ForcedAligner-0.6B/nagisa.safetensors \
   --root models/Qwen3-ForcedAligner-0.6B \
   --model-spec model_specs/qwen3_forced_aligner.json --type f16 \
-  --keep-type "nagisa.*=f32" \
+  --keep-type "nagisa/*=f32" \
   --output qwen3-forced-aligner-0.6b-f16.gguf
 ```
+To update an existing GGUF without changing any of its tensor types or payloads,
+use that GGUF as the first `--input`, add the same `nagisa=...` input and use
+`--type native` instead of `--type f16`. This preserves mixed Q8/BF16 packages;
+do not build their replacements through an intermediate F16 package.
 Older GGUFs still run using the previous Japanese/Korean word segmentation,
 with a warning that timestamp accuracy is reduced. Download the updated GGUF
 or repack it with these resources to use the upstream word boundaries.
