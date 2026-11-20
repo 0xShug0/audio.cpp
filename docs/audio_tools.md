@@ -30,6 +30,7 @@
 | Tone Color VC | `tone_color_vc` | `vc` | [Tone Color VC](models/tone_color_vc.md) |
 | UniverSR | `universr` | `s2s` audio/speech super-resolution | [UniverSR](models/universr.md) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
+| Voice Isolator | `voice_isolator` | Offline / streaming `s2s` voice isolation | [Voice Isolator](models/voice_isolator.md) |
 
 This page covers voice conversion, codec, audio enhancement, Foley generation,
 audio-to-symbolic, and source-separation families. These models do not share one
