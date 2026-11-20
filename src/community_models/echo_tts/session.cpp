@@ -172,7 +172,7 @@ bool echo_debug_enabled() {
     return enabled;
 }
 constexpr size_t kDefaultDitWeightContextBytes = 8ull * 1024ull * 1024ull;
-constexpr size_t kDefaultCodecGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultCodecGraphArenaBytes = 64ull * 1024ull * 1024ull;
 constexpr size_t kDefaultCodecWeightContextBytes = 8ull * 1024ull * 1024ull;
 
 EchoPcaState load_pca_state(
