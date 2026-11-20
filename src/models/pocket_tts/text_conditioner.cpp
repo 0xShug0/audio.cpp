@@ -71,17 +71,6 @@ std::string encode_utf8(uint32_t value) {
     return out;
 }
 
-// The reference works on Python str, where "é".isalnum() is true. Testing the last BYTE of
-// a UTF-8 string instead left every sentence ending in an accented letter without its
-// final period ("C'est réglé"). Covers ASCII plus the Latin-1 Supplement and Latin
-// Extended-A/B letters used by every Pocket TTS language; other scripts keep the byte rule.
-bool is_letter_or_digit(uint32_t value) {
-    if (value < 0x80) {
-        return std::isalnum(static_cast<int>(value)) != 0;
-    }
-    return value >= 0x00C0 && value <= 0x024F && value != 0x00D7 && value != 0x00F7;
-}
-
 // Uppercase of a lowercase Latin letter, or 0 when it has no single-code-point uppercase:
 // the reference capitalizes the first letter with str.upper(), which turns "état" into
 // "État" where a byte-wise toupper() left it lowercase.
@@ -228,13 +217,42 @@ std::string prepare_pocket_tts_text(
             text.replace(0, first.length, encode_utf8(upper));
         }
     }
-    size_t last_start = text.size() - 1;
-    while (last_start > 0 && (static_cast<unsigned char>(text[last_start]) & 0xC0) == 0x80) {
-        --last_start;
+    // The reference's _ensure_terminal_punctuation, as PocketTTS Small does it: past any closing
+    // quotes or brackets, a sentence mark is kept, a trailing ",;:-" or dash becomes a period, and
+    // anything else gets a period after the closers.
+    size_t core_end = text.size();
+    uint32_t terminal = 0;
+    while (core_end > 0) {
+        size_t start = core_end - 1;
+        while (start > 0 && (static_cast<unsigned char>(text[start]) & 0xC0) == 0x80) {
+            --start;
+        }
+        terminal = decode_utf8_at(text, start).value;
+        if (terminal != '"' && terminal != '\'' && terminal != ')' && terminal != ']' && terminal != 0x201D &&
+            terminal != 0x2019 && terminal != 0x00BB && terminal != ' ') {
+            break;
+        }
+        core_end = start;
     }
-    const CodePoint last = decode_utf8_at(text, last_start);
-    if (last_start + last.length == text.size() && is_letter_or_digit(last.value)) {
-        text.push_back('.');
+    if (core_end > 0 && terminal != '.' && terminal != '!' && terminal != '?' && terminal != 0x2026) {
+        size_t weak_end = core_end;
+        while (weak_end > 0) {
+            size_t start = weak_end - 1;
+            while (start > 0 && (static_cast<unsigned char>(text[start]) & 0xC0) == 0x80) {
+                --start;
+            }
+            const uint32_t value = decode_utf8_at(text, start).value;
+            if (value != ',' && value != ';' && value != ':' && value != '-' && value != 0x2013 && value != 0x2014 &&
+                value != ' ') {
+                break;
+            }
+            weak_end = start;
+        }
+        if (weak_end < core_end) {
+            text = text.substr(0, weak_end) + "." + strip_ascii_whitespace(text.substr(core_end));
+        } else {
+            text.push_back('.');
+        }
     }
     if (pad_with_spaces_for_short_inputs) {
         int words = 0;
