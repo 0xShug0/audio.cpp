@@ -29,7 +29,7 @@ audio.cpp is built for real end-to-end execution rather than one-off model demos
 
 ## Features
 
-⭐ **149 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
+⭐ **150 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
 
 ⭐ **Built-in WebUI.** Generate and clone voices in Studio, compare models in Arena, manage models and voice libraries, and assemble narration with reusable speakers and passage editing in the TTS app.
 
@@ -133,6 +133,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **vieneu_v3_turbo** (C)<br>Bảo [@pnnbao97](https://github.com/pnnbao97)<br>[@phuocnguyen90](https://github.com/phuocnguyen90) | TTS, Clone | vi, en | [VieNeu-TTS v3 Turbo](docs/models/vieneu_v3_turbo.md) | GGUF |
 | **voxcpm1** (C)<br>[@jasonchen31](https://github.com/jasonchen31) | TTS, Clone | zh, en, ja, ko | [VoxCPM1](docs/models/voxcpm1.md) | GGUF Q8, Stream, LoRA |
 | **voxcpm2** | TTS, Clone, Design, Ctrl | ar, da, de, el, en, es, fi, fr, he, hi, id, it, ja, km, ko, lo, ms, my, nl, no, pl, pt, ru, sv, sw, th, tl, tr, vi, zh | [VoxCPM2-2B](docs/tts.md#voxcpm2)<br>VocalRender-Pro | GGUF 16/Q8, Stream, LoRA |
+| **voxmel_tts** | TTS, Clone | en, zh | [VoxMel 0.6B](docs/models/voxmel_tts.md) | GGUF F16/Q8 |
 | **voxtral_tts** | TTS | en, fr, es, de, it, pt, nl, ar, hi | [Voxtral-4B-TTS-2603](docs/models/voxtral_tts.md) | GGUF BF16/Q8, Stream |
 | **xtts_v2** (C)<br>[@whoreson](https://github.com/whoreson) | TTS, Clone | en, es, fr, de, it, pt, pl, tr, ru, nl, cs, ar, zh-cn, hu, ko, ja, hi | [Coqui XTTS v2](docs/community_models/xtts_v2.md) | GGUF original/Q8_0/Q4_K_M |
 | **zipvoice** (C)<br>Community | TTS, Clone | zh, en | [ZipVoice](docs/models/zipvoice.md) | GGUF F32, Stream |

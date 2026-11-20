@@ -55,6 +55,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
 | VoxCPM1 | `voxcpm1` | `tts`, `clon` | [VoxCPM1](#voxcpm1) |
 | VoxCPM2 | `voxcpm2` | `tts`, `clon`, `vdes` | [VoxCPM2](#voxcpm2) |
+| VoxMel | `voxmel_tts` | `tts`, `clon` | [VoxMel](models/voxmel_tts.md) |
 | Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
 | XTTS v2 | `xtts_v2` | `tts` | [XTTS v2](community_models/xtts_v2.md) |
 | ZONOS2 | `zonos2` | `tts`, `clon` | [ZONOS2](models/zonos2.md) |

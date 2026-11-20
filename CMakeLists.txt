@@ -2802,6 +2802,18 @@ audiocpp_add_model(soprano_tts
         engine::community_models::soprano_tts::make_soprano_tts_loader
 )
 
+audiocpp_add_model(voxmel_tts
+    SOURCES
+        src/models/voxmel_tts/assets.cpp
+        src/models/voxmel_tts/ar.cpp
+        src/models/voxmel_tts/runtime.cpp
+        src/models/voxmel_tts/session.cpp
+    INCLUDES
+        engine/models/voxmel_tts/session.h
+    LOADERS
+        engine::models::voxmel_tts::make_voxmel_tts_loader
+)
+
 audiocpp_add_model(m5_tts
     SOURCES
         src/models/m5_tts/ar.cpp
@@ -4000,6 +4012,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(tiny_voca_dizione_probe PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src/community_models/tiny_voca/dizione)
         target_link_libraries(tiny_voca_dizione_probe PRIVATE engine_runtime ggml)
+    endif()
+
+    if (ENGINE_BUILD_MODEL_TESTS AND voxmel_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_executable(voxmel_tts_components tests/voxmel_tts/components.cpp app/cli/args.cpp)
+        target_link_libraries(voxmel_tts_components PRIVATE engine_runtime ggml)
+        target_include_directories(voxmel_tts_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND m5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
