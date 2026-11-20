@@ -166,6 +166,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `vietneu_tts` | [pnnbao-ump/VieNeu-TTS-v3-Turbo](https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxcpm1` | [openbmb/VoxCPM-0.5B](https://huggingface.co/openbmb/VoxCPM-0.5B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxcpm2` | [openbmb/VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) | Apache-2.0 | Yes | | 2026-09-21 |
+| `voxmel_tts` | [VoxDance-Lab/VoxMel-0.6B](https://huggingface.co/VoxDance-Lab/VoxMel-0.6B) | Apache-2.0 | Yes | Includes MIT-licensed Vocos. | 2026-11-20 |
 | `voxtral_realtime` | [mistralai/Voxtral-Mini-4B-Realtime-2602](https://huggingface.co/mistralai/Voxtral-Mini-4B-Realtime-2602) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxtral_tts` | [mistralai/Voxtral-4B-TTS-2603](https://huggingface.co/mistralai/Voxtral-4B-TTS-2603) | CC-BY-NC-4.0 | No | Includes the upstream preset voice embeddings, which share the model's non-commercial license. | 2026-10-07 |
 | `whistle_asr` | [Cactus-Compute/whistle](https://huggingface.co/Cactus-Compute/whistle/tree/b358ddadd89b7a713b5aa131f23032d3cca1b251) | Apache-2.0 | Yes | Pinned release includes the tokenizer, mel filterbank, and Hadamard permutations; the converter embeds its LICENSE. Independent asset provenance remains unverified. No reference code is bundled; see [provenance](../tools/community_models/whistle_asr/PROVENANCE.md). | 2026-10-06 |
