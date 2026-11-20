@@ -36,13 +36,13 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kDefaultLmWeightContextBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultLmPrefillGraphArenaBytes = 1024ull * 1024ull * 1024ull;
-constexpr size_t kDefaultLmDecodeGraphArenaBytes = 1024ull * 1024ull * 1024ull;
-constexpr size_t kDefaultCodecWeightContextBytes = 256ull * 1024ull * 1024ull;
-constexpr size_t kDefaultGlobalGraphArenaBytes = 256ull * 1024ull * 1024ull;
-constexpr size_t kDefaultWaveGraphArenaBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultCodecConstantContextBytes = 256ull * 1024ull * 1024ull;
+constexpr size_t kDefaultLmWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDefaultLmPrefillGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultLmDecodeGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultCodecWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDefaultGlobalGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultWaveGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultCodecConstantContextBytes = 16ull * 1024ull * 1024ull;
 constexpr int64_t kMioTTSTokenRateHz = 25;
 constexpr int64_t kMioCodecWaveHeadBins = 394;
 constexpr double kBestOfNTokenRateHz = 25.0;

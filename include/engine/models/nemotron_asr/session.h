@@ -49,9 +49,9 @@ protected:
     std::shared_ptr<const model_spec::ModelContract> contract_;
     std::shared_ptr<const NemotronASRAssets> assets_;
     std::shared_ptr<const NemotronWeights> weights_;
-    size_t weight_context_bytes_ = 3072ull * 1024ull * 1024ull;
-    size_t encoder_graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
-    size_t decoder_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
+    size_t weight_context_bytes_ = 8ull * 1024ull * 1024ull;
+    size_t encoder_graph_arena_bytes_ = 128ull * 1024ull * 1024ull;
+    size_t decoder_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
     bool mem_saver_ = false;
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;

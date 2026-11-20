@@ -1254,7 +1254,7 @@ VibeVoiceDecoderPrefillOutput VibeVoiceQwen2WeightsRuntime::prefill_embeddings(
             1,
             steps,
             0,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     return prefill_graph_->run(embeddings);
 }
@@ -1282,7 +1282,7 @@ VibeVoiceDecoderPrefillOutput VibeVoiceQwen2WeightsRuntime::prefill_prompt(
             1,
             steps,
             speech_tokens,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     return prefill_graph_->run_prompt(input_ids, speech_features, speech_positions);
 }
@@ -1395,7 +1395,7 @@ VibeVoiceDecoderResult VibeVoiceQwen2WeightsRuntime::cached_step(
     state.suffix_graph_.reset();
     if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
         state.graph_.reset();
-        const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+        const size_t graph_arena_bytes = 32ull * 1024ull * 1024ull;
         state.graph_ = std::make_unique<VibeVoiceQwen2CachedStepGraph>(
             *this,
             *state.cache_,
@@ -1440,7 +1440,7 @@ void VibeVoiceQwen2WeightsRuntime::append_cached_step(
     state.suffix_graph_.reset();
     if (state.graph_ == nullptr || !state.graph_->can_decode(*this, required_capacity)) {
         state.graph_.reset();
-        const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+        const size_t graph_arena_bytes = 32ull * 1024ull * 1024ull;
         state.graph_ = std::make_unique<VibeVoiceQwen2CachedStepGraph>(
             *this,
             *state.cache_,
@@ -1489,7 +1489,7 @@ VibeVoiceDecoderResult VibeVoiceQwen2WeightsRuntime::cached_suffix(
     state.graph_.reset();
     if (state.suffix_graph_ == nullptr || !state.suffix_graph_->can_decode(*this, steps, required_capacity)) {
         state.suffix_graph_.reset();
-        const size_t graph_arena_bytes = 1536ull * 1024ull * 1024ull;
+        const size_t graph_arena_bytes = 32ull * 1024ull * 1024ull;
         state.suffix_graph_ = std::make_unique<VibeVoiceQwen2CachedSuffixGraph>(
             *this,
             steps,

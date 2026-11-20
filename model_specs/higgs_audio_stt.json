@@ -88,33 +88,34 @@
       {
         "name": "audio_encoder_graph_arena_mb",
         "type": "int",
-        "description": "Audio encoder graph arena size in MiB; default 512.",
+        "description": "Audio encoder graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 32
       },
       {
         "name": "text_decoder_prefill_graph_arena_mb",
         "type": "int",
-        "description": "Text decoder prefill graph arena size in MiB; default 512.",
+        "description": "Text decoder prefill graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 32
       },
       {
         "name": "text_decoder_decode_graph_arena_mb",
         "type": "int",
-        "description": "Text decoder cached-step graph arena size in MiB; default 256.",
+        "description": "Text decoder cached-step graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 32
       },
       {
         "name": "text_decoder_weight_context_mb",
         "type": "int",
-        "description": "Text decoder weight context in MiB; omitted uses 4096 on 64-bit builds or 1024 on 32-bit builds.",
+        "description": "Text decoder weight context in MiB; default 8.",
         "required": false,
-        "min": 1
+        "min": 1,
+        "default": 8
       }
     ],
     "load": []

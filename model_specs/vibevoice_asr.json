@@ -138,7 +138,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 8
       },
       {
         "name": "connector_weight_context_mb",
@@ -146,14 +146,15 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 128
+        "default": 8
       },
       {
         "name": "decoder_weight_context_mb",
         "type": "int",
-        "description": "Decoder weight context in MiB; 4096 on 64-bit builds, 1024 on 32-bit builds.",
+        "description": "Decoder weight context in MiB; default 8.",
         "required": false,
-        "min": 1
+        "min": 1,
+        "default": 8
       },
       {
         "name": "max_history_steps",

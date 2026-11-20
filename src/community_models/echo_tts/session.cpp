@@ -171,13 +171,9 @@ bool echo_debug_enabled() {
     }();
     return enabled;
 }
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-constexpr size_t kDefaultDitWeightContextBytes = 1024ull * 1024ull * 1024ull;
-#else
-constexpr size_t kDefaultDitWeightContextBytes = 6144ull * 1024ull * 1024ull;
-#endif
-constexpr size_t kDefaultCodecGraphArenaBytes = 1024ull * 1024ull * 1024ull;
-constexpr size_t kDefaultCodecWeightContextBytes = 2048ull * 1024ull * 1024ull;
+constexpr size_t kDefaultDitWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDefaultCodecGraphArenaBytes = 64ull * 1024ull * 1024ull;
+constexpr size_t kDefaultCodecWeightContextBytes = 8ull * 1024ull * 1024ull;
 
 EchoPcaState load_pca_state(
     const assets::TensorSource & source,

@@ -21,9 +21,9 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kDefaultWeightContextBytes = 3072ull * 1024ull * 1024ull;
-constexpr size_t kDefaultEncoderGraphArenaBytes = 1024ull * 1024ull * 1024ull;
-constexpr size_t kDefaultDecoderGraphArenaBytes = 256ull * 1024ull * 1024ull;
+constexpr size_t kDefaultWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDefaultEncoderGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultDecoderGraphArenaBytes = 32ull * 1024ull * 1024ull;
 constexpr float kDefaultCenterDurationSec = 2.0f;
 constexpr float kDefaultLeftContextSec = 10.0f;
 constexpr float kDefaultRightContextSec = 2.0f;

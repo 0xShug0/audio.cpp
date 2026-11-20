@@ -1,4 +1,5 @@
 #include "engine/models/controlfoley/flow_denoiser.h"
+#include "engine/framework/debug/trace.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
@@ -965,6 +966,7 @@ std::unique_ptr<ConditionGraph> build_condition_graph(
     ggml_build_forward_expand(out->graph, out->timbre_out.tensor);
     ggml_build_forward_expand(out->graph, out->clip_cond.tensor);
     ggml_build_forward_expand(out->graph, out->text_cond.tensor);
+    debug::timing_log_context_reservation("controlfoley.condition.graph", out->context.get());
     out->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()));
     if (out->gallocr == nullptr || !ggml_gallocr_reserve(out->gallocr, out->graph) ||
         !ggml_gallocr_alloc_graph(out->gallocr, out->graph)) {
@@ -1091,6 +1093,7 @@ std::unique_ptr<FlowGraph> build_flow_graph(
     ggml_build_forward_expand(out->graph, out->flow.tensor);
     ggml_build_forward_expand(out->graph, out->multimodal.tensor);
     ggml_build_forward_expand(out->graph, out->hidden.tensor);
+    debug::timing_log_context_reservation("controlfoley.flow.graph", out->context.get());
     out->gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend()));
     if (out->gallocr == nullptr || !ggml_gallocr_reserve(out->gallocr, out->graph) ||
         !ggml_gallocr_alloc_graph(out->gallocr, out->graph)) {

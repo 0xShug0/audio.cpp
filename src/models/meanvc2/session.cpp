@@ -15,8 +15,8 @@ namespace {
 
 constexpr const char * kFamily = "meanvc2";
 constexpr int64_t kInputChunkSamples = 2560;
-constexpr size_t kWeightContextBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kGraphContextBytes = 256ull * 1024ull * 1024ull;
+constexpr size_t kWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kGraphContextBytes = 32ull * 1024ull * 1024ull;
 constexpr int64_t kSpeakerDim = 256;
 constexpr int64_t kMelDim = 80;
 constexpr int64_t kVcConditionFrames = 16;

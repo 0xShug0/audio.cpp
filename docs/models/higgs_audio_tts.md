@@ -111,10 +111,10 @@ The mode is fixed for the session and applies to offline and streaming generatio
 | `higgs_audio_tts.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Shared AR and codec weight storage type. |
 | `higgs_audio_tts.ar_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Autoregressive decoder weight storage override. |
 | `higgs_audio_tts.codec_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | Audio codec weight storage override. |
-| `higgs_audio_tts.ar_weight_context_mb` | integer MiB >= 1 | not set | AR weight context size. |
-| `higgs_audio_tts.codec_weight_context_mb` | integer MiB >= 1 | `1536` | Codec weight context size. |
-| `higgs_audio_tts.ar_decode_graph_arena_mb` | integer MiB >= 1 | `512` | AR decode graph arena size. |
-| `higgs_audio_tts.codec_decode_graph_arena_mb` | integer MiB >= 1 | `128` | Codec decode graph arena size. |
-| `higgs_audio_tts.codec_encode_graph_arena_mb` | integer MiB >= 1 | `256` | Reference-audio codec encode graph arena size. |
+| `higgs_audio_tts.ar_weight_context_mb` | integer MiB >= 1 | `8` | AR weight context size. |
+| `higgs_audio_tts.codec_weight_context_mb` | integer MiB >= 1 | `8` | Codec weight context size. |
+| `higgs_audio_tts.ar_decode_graph_arena_mb` | integer MiB >= 1 | `32` | AR decode graph arena size. |
+| `higgs_audio_tts.codec_decode_graph_arena_mb` | integer MiB >= 1 | `32` | Codec decode graph arena size. |
+| `higgs_audio_tts.codec_encode_graph_arena_mb` | integer MiB >= 1 | `32` | Reference-audio codec encode graph arena size. |
 | `higgs_audio_tts.reference_cache_slots` | integer >= 0 | `1` | Encoded reference-audio cache slots; `0` disables reuse. |
 | `higgs_audio_tts.attention` | `auto`, `flash`, `eager` | `auto` | Attention kernel. `auto` uses flash except on Volta/Turing GPUs (e.g. V100), where it falls back to eager to avoid missing MMA kernels. |

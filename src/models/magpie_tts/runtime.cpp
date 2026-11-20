@@ -735,7 +735,7 @@ struct MagpieTTSRuntime::Impl {
                 throw std::runtime_error("MagpieTTS decoder cross-cache conditioning shape mismatch");
             }
 
-            ggml_init_params params{64ull * 1024ull * 1024ull, nullptr, true};
+            ggml_init_params params{32ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
                 throw std::runtime_error("MagpieTTS failed to create decoder cross-cache graph context");
@@ -826,7 +826,7 @@ struct MagpieTTSRuntime::Impl {
             const int64_t hidden = config.embedding_dim;
             const int64_t stacked = config.audio_codebooks * config.frame_stacking_factor;
             const int64_t head_dim = hidden / config.local_heads;
-            ggml_init_params params{256ull * 1024ull * 1024ull, nullptr, true};
+            ggml_init_params params{64ull * 1024ull * 1024ull, nullptr, true};
             ctx_.reset(ggml_init(params));
             if (ctx_ == nullptr) {
                 throw std::runtime_error("MagpieTTS failed to create local transformer graph context");
@@ -874,6 +874,7 @@ struct MagpieTTSRuntime::Impl {
                 ggml_build_forward_expand(graph, logits.tensor);
                 graphs_[static_cast<size_t>(codebook)] = graph;
             }
+            debug::timing_log_context_reservation("magpie_tts.local_transformer.graph", ctx_.get());
             buffer_ = ggml_backend_alloc_ctx_tensors(ctx_.get(), owner_.backend);
             if (buffer_ == nullptr) {
                 throw std::runtime_error("MagpieTTS failed to allocate local transformer graph");

@@ -145,9 +145,9 @@ checkpoint or session setting, or leaves the optional value unset as described.
 | `parakeet_tdt.matmul_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | Model/session default | Encoder and decoder matmul weight storage type; defaults to weight_type, which defaults to native. Q8_0 measured 1.79x faster on the tested CPU and changed roughly 8 percent of transcripts without moving aggregate word error rate. |
 | `parakeet_tdt.conv_weight_type` | `native`, `f32`, `f16` | `native` | Convolution weight storage type; default native. |
 | `parakeet_tdt.perf_mode` | `off`, `flash_attention` | `off` | Encoder attention implementation. Default off uses the validated relative-attention path; flash_attention enables the fused implementation, which was numerically validated but slower on the tested hardware. |
-| `parakeet_tdt.weight_context_mb` | `int` | `3072` | Weight context arena size in MiB; default 3072. Declared range: minimum 1. |
-| `parakeet_tdt.encoder_graph_arena_mb` | `int` | `1024` | Encoder graph arena size in MiB; default 1024. Declared range: minimum 1. |
-| `parakeet_tdt.decoder_graph_arena_mb` | `int` | `256` | Decoder graph arena size in MiB; default 256. Declared range: minimum 1. |
+| `parakeet_tdt.weight_context_mb` | `int` | `8` | Weight context arena size in MiB; default 8. Declared range: minimum 1. |
+| `parakeet_tdt.encoder_graph_arena_mb` | `int` | `32` | Encoder graph arena size in MiB; default 32. Declared range: minimum 1. |
+| `parakeet_tdt.decoder_graph_arena_mb` | `int` | `32` | Decoder graph arena size in MiB; default 32. Declared range: minimum 1. |
 | `parakeet_tdt.audio_chunk_duration_sec` | `float` | `2` | Center-region duration for buffered streaming in seconds; default 2. Fixed context windows are re-encoded rather than cache-aware. Also sizes offline fixed/long_form windows. Declared range: minimum 0.001. |
 | `parakeet_tdt.left_context_sec` | `float` | `10` | Past context included when re-encoding each buffered-streaming window in seconds; default 10. Also applies to offline fixed/long_form windows. Declared range: minimum 0. |
 | `parakeet_tdt.right_context_sec` | `float` | `2` | Future lookahead included when re-encoding each buffered-streaming window in seconds; default 2 and adds equivalent partial-result latency. Also applies to offline fixed/long_form windows. Declared range: minimum 0. |

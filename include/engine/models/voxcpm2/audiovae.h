@@ -19,9 +19,9 @@ class ExecutionContext;
 namespace engine::models::voxcpm2 {
 
 struct VoxCPM2AudioVAEDecoderConfig {
-  size_t weight_context_bytes = 768ull * 1024ull * 1024ull;
-  size_t graph_context_bytes = 1024ull * 1024ull * 1024ull;
-  size_t encoder_graph_context_bytes = 1024ull * 1024ull * 1024ull;
+  size_t weight_context_bytes = 8ull * 1024ull * 1024ull;
+  size_t graph_context_bytes = 32ull * 1024ull * 1024ull;
+  size_t encoder_graph_context_bytes = 32ull * 1024ull * 1024ull;
   int64_t latent_frame_capacity = 0;
   int64_t encoder_sample_capacity = 240000;
   engine::assets::TensorStorageType weight_storage_type =

@@ -28,7 +28,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kConnectorWeightContextBytes = 1400ull * 1024ull * 1024ull;
+constexpr size_t kConnectorWeightContextBytes = 8ull * 1024ull * 1024ull;
 constexpr float kRmsNormEps = 1.0e-6F;
 constexpr double kPi = 3.14159265358979323846264338327950288;
 
@@ -444,7 +444,7 @@ private:
     void build() {
         const auto build_start = Clock::now();
         const auto & config = assets_->config;
-        ggml_init_params params{512ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{32ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("DramaBox prompt connector ggml context initialization failed");

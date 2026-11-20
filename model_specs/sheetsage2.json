@@ -62,18 +62,18 @@
       {
         "name": "weight_context_mb",
         "type": "int",
-        "description": "Weight context arena size in MiB; default 1024.",
+        "description": "Weight context arena size in MiB; default 8.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 8
       },
       {
         "name": "decoder_graph_arena_mb",
         "type": "int",
-        "description": "Encoder/decoder graph arena size in MiB; default 1536.",
+        "description": "Base graph metadata arena size in MiB; default 64. The encoder reserves eight times this value.",
         "required": false,
         "min": 1,
-        "default": 1536
+        "default": 64
       }
     ],
     "load": []

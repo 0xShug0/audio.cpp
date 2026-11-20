@@ -21,14 +21,10 @@ namespace {
 using Clock = std::chrono::steady_clock;
 
 constexpr const char * kFamily = "higgs_audio_stt";
-constexpr size_t kDefaultAudioEncoderGraphArenaBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultTextDecoderPrefillGraphArenaBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kDefaultTextDecoderDecodeGraphArenaBytes = 256ull * 1024ull * 1024ull;
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-constexpr size_t kDefaultTextDecoderWeightContextBytes = 1024ull * 1024ull * 1024ull;
-#else
-constexpr size_t kDefaultTextDecoderWeightContextBytes = 4096ull * 1024ull * 1024ull;
-#endif
+constexpr size_t kDefaultAudioEncoderGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultTextDecoderPrefillGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultTextDecoderDecodeGraphArenaBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kDefaultTextDecoderWeightContextBytes = 8ull * 1024ull * 1024ull;
 
 std::shared_ptr<const HiggsAudioSTTAssets> require_assets(std::shared_ptr<const HiggsAudioSTTAssets> assets) {
     if (assets == nullptr) {

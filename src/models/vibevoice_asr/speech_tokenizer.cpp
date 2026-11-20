@@ -1868,7 +1868,7 @@ std::vector<VibeVoiceTokenizerLatents> VibeVoiceTokenizerWeightsRuntime::encode_
             backend_type_,
             threads_,
             *acoustic_encoder_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     auto encoded = acoustic_encoder_graph_->run(padded);
     return encoded;
@@ -1900,7 +1900,7 @@ VibeVoiceTokenizerLatents VibeVoiceTokenizerWeightsRuntime::encode_semantic(cons
             backend_type_,
             threads_,
             *semantic_encoder_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     auto encoded = semantic_encoder_graph_->run(waveform);
     return std::move(encoded.front());
@@ -1925,7 +1925,7 @@ runtime::AudioBuffer VibeVoiceTokenizerWeightsRuntime::decode_acoustic(const Vib
             backend_type_,
             threads_,
             *acoustic_decoder_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     auto samples = acoustic_decoder_graph_->run(latents);
     return runtime::AudioBuffer{kTokenizerSampleRate, 1, std::move(samples)};
@@ -1968,7 +1968,7 @@ VibeVoiceTokenizerLatents VibeVoiceTokenizerWeightsRuntime::encode_acoustic_stre
             backend_type_,
             threads_,
             *acoustic_streaming_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     return acoustic_streaming_graph_->run_acoustic_encoder(waveform, state);
 }
@@ -2010,7 +2010,7 @@ VibeVoiceTokenizerLatents VibeVoiceTokenizerWeightsRuntime::encode_semantic_stre
             backend_type_,
             threads_,
             *semantic_streaming_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     return semantic_streaming_graph_->run_semantic_encoder(waveform, state);
 }
@@ -2068,7 +2068,7 @@ std::vector<VibeVoiceTokenizerLatents> VibeVoiceTokenizerWeightsRuntime::encode_
             backend_type_,
             threads_,
             *semantic_streaming_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     return semantic_streaming_graph_->run_semantic_encoder_batch(waveforms, states);
 }
@@ -2104,7 +2104,7 @@ runtime::AudioBuffer VibeVoiceTokenizerWeightsRuntime::decode_acoustic_streaming
             backend_type_,
             threads_,
             *acoustic_streaming_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     return acoustic_streaming_graph_->run_acoustic_decoder(latents, state);
 }
@@ -2154,7 +2154,7 @@ std::vector<runtime::AudioBuffer> VibeVoiceTokenizerWeightsRuntime::decode_acous
             backend_type_,
             threads_,
             *acoustic_streaming_constants_,
-            1024ull * 1024ull * 1024ull);
+            32ull * 1024ull * 1024ull);
     }
     return acoustic_streaming_graph_->run_acoustic_decoder_batch(latents, states);
 }

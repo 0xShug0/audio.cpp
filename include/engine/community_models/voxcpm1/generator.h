@@ -17,12 +17,12 @@ namespace engine::community_models::voxcpm1 {
 struct VoxCPM1Assets;
 
 struct VoxCPM1FeatureGeneratorConfig {
-  size_t weight_context_bytes = 3ull * 1024ull * 1024ull * 1024ull;
-  size_t text_embedding_graph_context_bytes = 64ull * 1024ull * 1024ull;
-  size_t lm_step_graph_context_bytes = 1024ull * 1024ull * 1024ull;
-  size_t projection_graph_context_bytes = 256ull * 1024ull * 1024ull;
-  size_t local_encoder_graph_context_bytes = 512ull * 1024ull * 1024ull;
-  size_t dit_graph_context_bytes = 1024ull * 1024ull * 1024ull;
+  size_t weight_context_bytes = 8ull * 1024ull * 1024ull;
+  size_t text_embedding_graph_context_bytes = 32ull * 1024ull * 1024ull;
+  size_t lm_step_graph_context_bytes = 32ull * 1024ull * 1024ull;
+  size_t projection_graph_context_bytes = 32ull * 1024ull * 1024ull;
+  size_t local_encoder_graph_context_bytes = 32ull * 1024ull * 1024ull;
+  size_t dit_graph_context_bytes = 32ull * 1024ull * 1024ull;
   size_t prompt_cache_slots = 1;
   bool mem_saver = false;
   engine::assets::TensorStorageType weight_storage_type =

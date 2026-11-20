@@ -777,11 +777,11 @@ ZipVoiceZipformerFlowDecoderGraph build_fm_decoder_graph(
     bool cuda_backend,
     ggml_backend_t backend) {
     (void)cuda_backend;
-    const size_t ctx_bytes = 512ULL * 1024ULL * 1024ULL;
+    const size_t ctx_bytes = 32ULL * 1024ULL * 1024ULL;
     ggml_context * ctx = ggml_init({ctx_bytes, nullptr, true});
     // leaves + constants get their own context and backend buffer so the
     // graph arena (gallocr) never aliases them (see skill: gallocr aliasing)
-    ggml_context * tensor_ctx = ggml_init({64ULL * 1024ULL * 1024ULL, nullptr, true});
+    ggml_context * tensor_ctx = ggml_init({16ULL * 1024ULL * 1024ULL, nullptr, true});
     ZipVoiceZipformerFlowDecoderGraph g;
     g.ctx = ctx;
     g.tensor_ctx = tensor_ctx;
@@ -846,7 +846,7 @@ ZipVoiceZipformerTextEncoderGraph build_text_encoder_graph(
     bool cuda_backend,
     ggml_backend_t backend) {
     (void)cuda_backend;
-    const size_t ctx_bytes = 256ULL * 1024ULL * 1024ULL;
+    const size_t ctx_bytes = 32ULL * 1024ULL * 1024ULL;
     ggml_context * ctx = ggml_init({ctx_bytes, nullptr, true});
     ggml_context * tensor_ctx = ggml_init({16ULL * 1024ULL * 1024ULL, nullptr, true});
     ZipVoiceZipformerTextEncoderGraph g;

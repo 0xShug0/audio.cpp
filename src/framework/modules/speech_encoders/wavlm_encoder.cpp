@@ -3,6 +3,7 @@
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -779,7 +780,7 @@ private:
         const auto build_start = Clock::now();
         release_graph();
         ggml_init_params params{
-            1536ull * 1024ull * 1024ull,
+            32ull * 1024ull * 1024ull,
             nullptr,
             true,
         };
@@ -838,6 +839,7 @@ private:
             ggml_set_output(output.tensor);
             ggml_build_forward_expand(graph_, output.tensor);
         }
+        engine::debug::timing_log_context_reservation("framework.wavlm.graph", ggml_);
         allocator_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(weights_->execution_context->backend()));
         if (allocator_ == nullptr || !ggml_gallocr_reserve(allocator_, graph_) ||
             !ggml_gallocr_alloc_graph(allocator_, graph_)) {
@@ -961,7 +963,7 @@ WavlmEncoderComponent WavlmEncoderComponent::load_from_tensor_source(
         weights->execution_context->backend(),
         weights->execution_context->backend_type(),
         "framework.wavlm.weights",
-        512ull * 1024ull * 1024ull);
+        8ull * 1024ull * 1024ull);
 
     const auto & config_ref = weights->config;
     load_tensor_alias(*weights, source, "feature_extractor.conv_layers.0.conv.weight", "feature_extractor.conv_layers.0.0.weight", {config_ref.conv_dim[0], 1, config_ref.conv_kernel[0]});

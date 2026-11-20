@@ -31,12 +31,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-constexpr size_t kDitWeightContextBytes = 1024ull * 1024ull * 1024ull;
-#else
-constexpr size_t kDitWeightContextBytes = 8500ull * 1024ull * 1024ull;
-#endif
-constexpr size_t kDitGraphContextBytes = 768ull * 1024ull * 1024ull;
+constexpr size_t kDitWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kDitGraphContextBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kDitGraphNodeCapacity = 32768;
 constexpr float kNormEps = 1.0e-6F;
 constexpr double kPi = 3.14159265358979323846264338327950288;

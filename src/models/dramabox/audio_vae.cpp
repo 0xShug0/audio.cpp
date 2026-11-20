@@ -28,8 +28,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kVaeDecoderWeightContextBytes = 900ull * 1024ull * 1024ull;
-constexpr size_t kVaeGraphContextBytes = 384ull * 1024ull * 1024ull;
+constexpr size_t kVaeDecoderWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kVaeGraphContextBytes = 32ull * 1024ull * 1024ull;
 constexpr size_t kVaeGraphNodeCapacity = 65536;
 constexpr float kPixelNormEps = 1.0e-6F;
 
@@ -584,7 +584,7 @@ private:
         const auto build_start = Clock::now();
         const auto & config = assets_->config.audio_vae;
         latent_frames_ = std::max<int64_t>(1, (mel_frames_ + 3) / 4);
-        ggml_init_params params{2ull * 1024ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{32ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("DramaBox audio VAE encoder ggml context initialization failed");
