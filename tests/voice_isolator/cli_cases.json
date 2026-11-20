@@ -1,0 +1,62 @@
+{
+  "cases": [
+    {
+      "id": "voice_isolator_offline",
+      "family": "voice_isolator",
+      "model": "voice-isolator",
+      "task": "s2s",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "request1",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "request2",
+          "audio": "assets/resources/sample.wav"
+        }
+      ]
+    },
+    {
+      "id": "voice_isolator_long",
+      "family": "voice_isolator",
+      "model": "voice-isolator",
+      "task": "s2s",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "warmup",
+          "audio": "assets/resources/sample.wav"
+        },
+        {
+          "id": "long",
+          "audio": "assets/resources/speech.wav"
+        }
+      ]
+    },
+    {
+      "id": "voice_isolator_streaming",
+      "family": "voice_isolator",
+      "model": "voice-isolator",
+      "task": "s2s",
+      "mode": "streaming",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "request1",
+          "audio": "assets/resources/sample.wav"
+        }
+      ]
+    }
+  ]
+}
