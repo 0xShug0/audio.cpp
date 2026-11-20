@@ -214,7 +214,8 @@ public:
     Impl(const ModelAssets & assets, core::ExecutionContext & e, assets::TensorStorageType storage,
         core::AttentionPreference preference, size_t index)
         : a(assets), execution(e), tier(index),
-          flash(core::resolve_flash_attention(e.backend(), a.tier_hidden / a.tier_heads, preference)),
+          flash(a.tier_windows.at(tier) != 0 &&
+              core::resolve_flash_attention(e.backend(), a.tier_hidden / a.tier_heads, preference)),
           store(e.backend(), e.backend_type(), "voxmel_tts.tier" + std::to_string(tier) + ".weights", 1024 * 1024) {
         const auto p = "up_tiers." + std::to_string(tier);
         const auto & source = *a.model;
@@ -240,6 +241,26 @@ public:
         store.upload();
     }
 
+    TensorValue build_pointwise_block(core::ModuleBuildContext & ctx, const TensorValue & input,
+        const modules::TransformerEncoderBlockWeights & block) const {
+        // A zero-width window admits only the current position: softmax has
+        // exactly one element, so attention is V. Keep the original V weights
+        // and biases; Q/K and the attention graph are unnecessary on every backend.
+        const auto value_weight = modules::SliceModule({0, 2 * a.tier_hidden, a.tier_hidden}).build(
+            ctx, block.self_attention.qkv_weight.value());
+        const auto value_bias = modules::SliceModule({0, 2 * a.tier_hidden, a.tier_hidden}).build(
+            ctx, block.self_attention.qkv_bias.value());
+        const modules::LayerNormModule layer_norm({a.tier_hidden, 1e-5f, true, true});
+        const modules::LinearModule projection({a.tier_hidden, a.tier_hidden, true});
+        const modules::ResidualAddModule residual;
+        auto value = projection.build(ctx, layer_norm.build(ctx, input, block.norm1), {value_weight, value_bias});
+        value = projection.build(ctx, value, {block.self_attention.out_weight, block.self_attention.out_bias});
+        auto h = residual.build(ctx, input, value);
+        auto ff = modules::FeedForwardModule({a.tier_hidden, 4 * a.tier_hidden, true}).build(
+            ctx, layer_norm.build(ctx, h, block.norm2), block.feed_forward);
+        return residual.build(ctx, h, ff);
+    }
+
     std::vector<float> condition(const std::vector<float> & known) {
         const int64_t channels = a.mels / 2;
         const int64_t frames = static_cast<int64_t>(known.size()) / channels;
@@ -257,14 +278,16 @@ public:
             next.owner->allocate_persistent();
             auto h = modules::LinearModule({channels, a.tier_hidden, true}).build(ctx, next.known, input);
             h = modules::AddModule().build(ctx, h, next.positions);
-            if (a.tier_windows.at(tier) == 0)
-                h = core::reshape_tensor(ctx, h, TensorShape::from_dims({frames, 1, a.tier_hidden}));
+            const bool pointwise = a.tier_windows.at(tier) == 0;
             modules::TransformerEncoderBlockConfig config;
             config.hidden_size = a.tier_hidden; config.intermediate_size = 4 * a.tier_hidden;
             config.num_heads = a.tier_heads; config.eps = 1e-5f;
             config.use_packed_qkv = true; config.use_flash_attention = flash;
             config.attention_precision = GGML_PREC_F32;
-            for (const auto & block : blocks) h = modules::TransformerEncoderBlockModule(config).build(ctx, h, block);
+            for (const auto & block : blocks) {
+                h = pointwise ? build_pointwise_block(ctx, h, block)
+                    : modules::TransformerEncoderBlockModule(config).build(ctx, h, block);
+            }
             next.output = modules::LayerNormModule({a.tier_hidden, 1e-5f, true, true}).build(ctx, h, norm);
             ggml_set_output(next.output.tensor);
             ggml_build_forward_expand(next.owner->graph(), next.output.tensor);
