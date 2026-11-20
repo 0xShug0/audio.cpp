@@ -2497,6 +2497,51 @@ static void ggml_compute_forward_gelu_erf(
     }
 }
 
+// ggml_compute_forward_gelu_erf_approx
+
+static void ggml_compute_forward_gelu_erf_approx(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    if (src0->type != GGML_TYPE_F32) {
+        // only F32 has a vectorized kernel
+        ggml_compute_forward_gelu_erf(params, dst);
+        return;
+    }
+
+    assert(ggml_is_contiguous_rows(src0));
+    assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int nc = src0->ne[0];
+    const int nr = ggml_nrows(src0);
+
+    // rows per thread
+    const int dr = (nr + nth - 1)/nth;
+
+    // row range for this thread
+    const int ir0 = dr*ith;
+    const int ir1 = MIN(ir0 + dr, nr);
+
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
+        ggml_vec_gelu_erf_approx_f32(nc,
+                (float *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (float *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
+    }
+}
+
 // ggml_compute_forward_gelu_quick
 
 static void ggml_compute_forward_gelu_quick_f32(
@@ -10239,6 +10284,10 @@ void ggml_compute_forward_unary(
         case GGML_UNARY_OP_GELU_ERF:
             {
                 ggml_compute_forward_gelu_erf(params, dst);
+            } break;
+        case GGML_UNARY_OP_GELU_ERF_APPROX:
+            {
+                ggml_compute_forward_gelu_erf_approx(params, dst);
             } break;
         case GGML_UNARY_OP_GELU_QUICK:
             {

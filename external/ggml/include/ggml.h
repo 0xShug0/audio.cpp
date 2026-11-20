@@ -655,6 +655,7 @@ extern "C" {
         GGML_UNARY_OP_ROUND_BF16,
 
         GGML_UNARY_OP_RSQRT,
+        GGML_UNARY_OP_GELU_ERF_APPROX,
 
         GGML_UNARY_OP_COUNT,
     };
@@ -1300,6 +1301,16 @@ extern "C" {
             struct ggml_tensor  * a);
 
     GGML_API struct ggml_tensor * ggml_gelu_erf_inplace(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
+
+    // GELU (erf) with a vectorized erf: faster than ggml_gelu_erf on the CPU, with
+    // results that can differ from it in the last bits. CPU backend only.
+    GGML_API struct ggml_tensor * ggml_gelu_erf_approx(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
+
+    GGML_API struct ggml_tensor * ggml_gelu_erf_approx_inplace(
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
 
