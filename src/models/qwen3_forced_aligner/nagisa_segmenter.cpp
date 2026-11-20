@@ -35,7 +35,7 @@ struct NagisaSegmenter::Impl {
 
     explicit Impl(const assets::ResourceBundle & resources) {
         if (!resources.has_file("nagisa_config") || !resources.has_tensor_source("nagisa_weights")) {
-            throw std::runtime_error("Japanese alignment requires nagisa.json and nagisa.safetensors; export them with tools/models/export_qwen3_aligner_tokenizers.py into the model directory");
+            throw std::runtime_error("Japanese alignment tokenizer assets are missing (nagisa.json and Nagisa weights). Download the updated Qwen3-ForcedAligner-0.6B GGUF from audio-cpp/audio.cpp-gguf, or repack your GGUF with the tokenizer assets as described in docs/models/qwen3_forced_aligner.md");
         }
         const auto config = resources.parse_json("nagisa_config");
         window = config.require("window_size").as_i64();

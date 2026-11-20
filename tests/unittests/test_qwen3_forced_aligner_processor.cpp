@@ -90,19 +90,19 @@ void test_language_specific_word_segmentation() {
     const auto assets = aligner_assets(20);
     const auto dictionary = assets->resources.require_file("vocab").parent_path() / "korean_dict_jieba.dict";
     std::ofstream(dictionary) << "가나다 10 x\n가나다라 10 x\n한국어 10 x\n가 10 x\n";
-    assets->resources.add_file("korean_dictionary", dictionary);
     engine::models::qwen3_asr::Qwen3ASRTextTokenizer tokenizer(assets);
     engine::models::qwen3_forced_aligner::Qwen3ForcedAlignProcessor processor(*assets, tokenizer);
+    engine::test::require(processor.tokenize_words("한국어를 말합니다", "ko") ==
+        std::vector<std::string>{"한국어를", "말합니다"}, "old packages retain legacy Korean segmentation");
+    assets->resources.add_file("korean_dictionary", dictionary);
     for (const std::string language : {"ko", "Korean"}) {
         const auto words = processor.tokenize_words("한국어를,　가나다라마 모르는말 가나 가", language);
         engine::test::require(words == std::vector<std::string>{"한국어", "를", "가나다라", "마", "모르는말", "가나", "가"},
                               "Korean longest-prefix selection, remainder, unknown and short tokens");
     }
     for (const std::string language : {"ja", "Japanese"}) {
-        bool rejected = false;
-        try { processor.tokenize_words("というおじいさんから", language); }
-        catch (const std::runtime_error & e) { rejected = std::string(e.what()).find("nagisa.json") != std::string::npos; }
-        engine::test::require(rejected, "Japanese must not silently use the Chinese-style splitter without Nagisa assets");
+        engine::test::require(processor.tokenize_words("というおじいさんから", language) ==
+            std::vector<std::string>{"というおじいさんから"}, "old packages retain legacy Japanese segmentation");
     }
     engine::test::require(processor.tokenize_words("Some call me nature.", "English") ==
                               std::vector<std::string>{"Some", "call", "me", "nature"}, "English word boundaries unchanged");

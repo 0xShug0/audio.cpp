@@ -55,9 +55,11 @@ audiocpp_gguf --family qwen3_forced_aligner \
   --keep-type "nagisa.*=f32" \
   --output qwen3-forced-aligner-0.6b-f16.gguf
 ```
-Older GGUFs must be converted again to include these resources. Japanese/Korean
-alignment reports a missing-resource error rather than silently using another
-language's word splitter. Other languages do not require these assets.
+Older GGUFs still run using the previous Japanese/Korean word segmentation,
+with a warning that timestamp accuracy is reduced. Download the updated GGUF
+or repack it with these resources to use the upstream word boundaries.
+Present but invalid tokenizer assets remain an error. Other languages do not
+require these assets.
 
 Nagisa's POS tagger is unnecessary for word boundaries and is not exported.
 See the [Nagisa license](../../tests/qwen3_forced_aligner/LICENSE.nagisa) and

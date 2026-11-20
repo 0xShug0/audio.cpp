@@ -1,5 +1,6 @@
 #include "engine/models/qwen3_forced_aligner/processor.h"
 #include "engine/models/qwen3_forced_aligner/nagisa_segmenter.h"
+#include "engine/framework/debug/trace.h"
 
 #include <algorithm>
 #include <cmath>
@@ -309,6 +310,16 @@ std::vector<std::string> Qwen3ForcedAlignProcessor::tokenize_words(
         if (!cleaned.empty()) words.push_back(std::move(cleaned));
     };
     const auto normalized_language = lower_ascii(language);
+    if (((normalized_language == "ja" || normalized_language == "japanese") &&
+         (!assets_.resources.has_file("nagisa_config") || !assets_.resources.has_tensor_source("nagisa_weights"))) ||
+        ((normalized_language == "ko" || normalized_language == "korean") &&
+         !assets_.resources.has_file("korean_dictionary"))) {
+        debug::log_message(debug::LogLevel::Warning, "qwen3_forced_aligner",
+            "Tokenizer assets for " + language + " are missing; using legacy word segmentation with reduced timestamp accuracy. "
+            "Download the updated Qwen3-ForcedAligner-0.6B GGUF from audio-cpp/audio.cpp-gguf, "
+            "or repack your GGUF with the tokenizer assets as described in docs/models/qwen3_forced_aligner.md");
+        return tokenize_alignable_words(text, language);
+    }
     if (normalized_language == "ja" || normalized_language == "japanese") {
         if (!japanese_segmenter_) {
             japanese_segmenter_ = std::make_unique<NagisaSegmenter>(assets_.resources);
@@ -318,9 +329,6 @@ std::vector<std::string> Qwen3ForcedAlignProcessor::tokenize_words(
         }
     } else if (normalized_language == "ko" || normalized_language == "korean") {
         if (!korean_dictionary_) {
-            if (!assets_.resources.has_file("korean_dictionary")) {
-                throw std::runtime_error("Korean alignment requires korean_dict_jieba.dict from official qwen-asr in the model package");
-            }
             std::ifstream file(assets_.resources.require_file("korean_dictionary"));
             if (!file) throw std::runtime_error("Cannot open Korean alignment dictionary");
             auto dictionary = std::make_unique<std::unordered_set<std::string>>();
