@@ -251,16 +251,16 @@ KokoroWeights::WeightNormConvTranspose1dWeights load_weight_norm_conv_transpose1
             {groups == in_channels ? in_channels : out_channels});
     }
     if (groups == in_channels && in_channels == out_channels && grouped_out_channels == 1) {
-        std::vector<float> dense(static_cast<size_t>(in_channels * out_channels * kernel), 0.0f);
+        // Depthwise convolution reads taps in the opposite order to transposed convolution.
+        std::vector<float> reversed = normalized;
         for (int64_t channel = 0; channel < in_channels; ++channel) {
-            const float * src = normalized.data() + static_cast<ptrdiff_t>(channel * kernel);
-            float * dst = dense.data() + static_cast<ptrdiff_t>((channel * out_channels + channel) * kernel);
-            std::memcpy(dst, src, static_cast<size_t>(kernel) * sizeof(float));
+            auto begin = reversed.begin() + channel * kernel;
+            std::reverse(begin, begin + kernel);
         }
-        conv.dense_weight = store.make_from_f32(
-            engine::core::TensorShape::from_dims({in_channels, out_channels, kernel}),
+        conv.depthwise_weight = store.make_from_f32(
+            engine::core::TensorShape::from_dims({in_channels, 1, 1, kernel}),
             storage_type,
-            std::move(dense));
+            std::move(reversed));
     }
     if (groups == 1 && output_padding == 0 && kernel == stride * 2 && padding > 0 && padding < stride) {
         auto phase_conv = std::make_shared<KokoroWeights::Conv1dWeights>();

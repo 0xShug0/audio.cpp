@@ -75,7 +75,7 @@ struct KokoroWeights {
 
     struct WeightNormConvTranspose1dWeights {
         engine::core::TensorValue weight;
-        engine::core::TensorValue dense_weight;
+        engine::core::TensorValue depthwise_weight;
         std::optional<engine::core::TensorValue> bias;
         std::shared_ptr<Conv1dWeights> phase_shuffle_conv;
         int64_t in_channels = 0;
