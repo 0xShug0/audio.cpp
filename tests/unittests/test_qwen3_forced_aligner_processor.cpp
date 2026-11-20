@@ -1,6 +1,8 @@
 #include "engine/models/qwen3_forced_aligner/processor.h"
 #include "engine/models/qwen3_asr/assets.h"
 #include "engine/models/qwen3_asr/tokenizer_text.h"
+#include "engine/models/qwen3_asr/postprocess.h"
+#include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/json.h"
 
@@ -108,6 +110,42 @@ void test_language_specific_word_segmentation() {
                               std::vector<std::string>{"你", "好", "world"}, "Chinese word boundaries unchanged");
 }
 
+void test_punctuated_overlap_text() {
+    using engine::runtime::WordTimestamp;
+    const auto trim_chunk_text = [](const std::string & text, const std::vector<WordTimestamp> & words,
+                                   engine::runtime::TimeSpan source, engine::runtime::TimeSpan keep) {
+        std::vector<WordTimestamp> retained;
+        engine::audio::append_chunk_word_timestamps(retained, words, source, keep);
+        return engine::models::qwen3_asr::trim_chunk_text(
+            text, words, retained.data(), retained.size(), source.start_sample);
+    };
+    const std::vector<WordTimestamp> repeated{
+        {{0, 10}, "おられたそうです"}, {{10, 20}, "おられたそうです"},
+        {{20, 30}, "次です"}};
+    const std::string text = "おられたそうです。おられたそうです。次です。";
+    engine::test::require(trim_chunk_text(text, repeated, {100, 130}, {110, 120}) ==
+        "おられたそうです。", "select by time, retaining a legitimate repeated phrase");
+    engine::test::require(trim_chunk_text(text, repeated, {100, 130}, {100, 120}) ==
+        "おられたそうです。おられたそうです。", "keep both genuine repetitions in the keep window");
+    engine::test::require(trim_chunk_text(text, repeated, {100, 130}, {100, 130}) == text,
+        "full keep window preserves original punctuation and text");
+    engine::test::require(trim_chunk_text(text, {{{0, 5}, "おられたそうです"}}, {100, 130}, {110, 120}).empty(),
+        "no retained words produces no overlap text");
+    engine::test::require(trim_chunk_text("Old. Twenty-two, café! Next.",
+        {{{0, 10}, "Old"}, {{10, 20}, "Twentytwo"}, {{20, 30}, "café"}, {{30, 40}, "Next"}},
+        {0, 40}, {10, 30}) == "Twenty-two, café!", "preserve internal hyphens, accents and punctuation");
+    engine::test::require(trim_chunk_text("前。ＡＢＣ、ｶﾞ！後。",
+        {{{0, 10}, "前"}, {{10, 20}, "ABC"}, {{20, 30}, "ガ"}, {{30, 40}, "後"}},
+        {0, 40}, {10, 30}) == "ＡＢＣ、ｶﾞ！", "map Nagisa normalization back to original text");
+    engine::test::require(trim_chunk_text("Old. ﷺ! Next.",
+        {{{0, 10}, "Old"}, {{10, 20}, "صلىاللهعليهوسلم"}, {{20, 30}, "Next"}},
+        {0, 30}, {10, 20}) == "ﷺ!", "grow the reusable buffer for long compatibility decompositions");
+    bool rejected = false;
+    try { trim_chunk_text("Hello.", {{{0, 10}, "different"}}, {0, 20}, {0, 10}); }
+    catch (const std::runtime_error &) { rejected = true; }
+    engine::test::require(rejected, "unmappable alignment must fail explicitly, without silently returning duplicated text");
+}
+
 // Optional real-tokenizer comparison against external upstream-generated cases.
 // Checkpoints and large fixture collections stay outside the code repository.
 void test_upstream_segmentation_cases(const std::filesystem::path & directory, const std::filesystem::path & cases_path) {
@@ -145,6 +183,7 @@ int main(int argc, char ** argv) {
         test_punctuation_only_text_has_no_alignable_words();
         test_word_text_has_alignable_words();
         test_language_specific_word_segmentation();
+        test_punctuated_overlap_text();
         test_spans_are_in_the_input_audio_sample_domain();
         test_zero_length_span_repair_and_clamping_use_the_input_rate();
         if (!directory.empty() || !cases.empty()) {

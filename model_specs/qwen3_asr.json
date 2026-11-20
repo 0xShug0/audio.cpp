@@ -101,6 +101,13 @@
         "default": false
       },
       {
+        "name": "trim_chunk_overlap",
+        "type": "bool",
+        "description": "Opt-in trimming of punctuated text to retained aligned words at overlapping chunk boundaries. Only applies with return_timestamps=true and preserve_punctuation=true. Default false preserves complete ASR chunk text.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "preserve_punctuation",
         "type": "bool",
         "description": "Opt-in text output mode for timestamped chunked ASR: preserve ASR punctuation in text_output instead of rebuilding text from aligned words.",
