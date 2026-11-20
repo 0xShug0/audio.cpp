@@ -1433,6 +1433,34 @@ void test_convnext_default_matches_composition() {
     require_allclose(runner.run_f32(actual), runner.run_f32(expected), 0, "ConvNeXt default composition");
 }
 
+void test_gelu_approx_erf_tracks_exact_erf() {
+    using namespace engine;
+    // The lane count leaves a scalar tail on both the AVX2 and AVX-512 paths.
+    std::vector<float> values = {0.0f, -0.0f, 1.0e-40f, -1.0e-40f, 1.0e-6f, -1.0e-6f,
+        1.3119779f, 1.3119781f, -1.3119779f, -1.3119781f, 5.0f, -5.0f, 9.0f, -9.0f, 150.0f, -150.0f};
+    for (int i = -4000; i <= 4000; ++i) values.push_back(static_cast<float>(i) * 0.002f + 0.00037f);
+    values.resize(values.size() / 16 * 16 + 5, 0.75f);
+    CpuModuleRunner runner;
+    const auto input = runner.make_f32(core::TensorShape::from_dims({static_cast<int64_t>(values.size())}));
+    const auto approx = modules::GeluModule({modules::GeluApproximation::ApproxErf}).build(runner.ctx, input);
+    const auto exact = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(runner.ctx, input);
+    runner.allocate_tensors();
+    core::write_tensor_f32(input, values);
+    const auto actual = runner.run_f32(approx);
+    const auto expected = runner.run_f32(exact);
+    for (size_t i = 0; i < values.size(); ++i) {
+        const float reference = 0.5f * values[i] * (1.0f + std::erf(values[i] * 0.70710678f));
+        if (expected[i] != reference) {
+            throw std::runtime_error("exact GELU erf changed at x=" + std::to_string(values[i]));
+        }
+        const float diff = std::fabs(actual[i] - expected[i]);
+        if (!(diff <= 1.0e-6f * std::max(1.0f, std::fabs(values[i])))) {
+            throw std::runtime_error("approximate GELU erf at x=" + std::to_string(values[i]) +
+                " differs from exact by " + std::to_string(diff));
+        }
+    }
+}
+
 void test_prelu_broadcasting() {
     using namespace engine;
     for (size_t axis = 0; axis < 3; ++axis) {
@@ -1599,6 +1627,7 @@ int main(int argc, char ** argv) {
         test_mul_preserved_views();
         test_weighted_statistics_and_scale_bias();
         test_convnext_default_matches_composition();
+        test_gelu_approx_erf_tracks_exact_erf();
         test_prelu_broadcasting();
         test_interpolate_align_corners();
         test_glu_contiguous_gate_opt_in();
