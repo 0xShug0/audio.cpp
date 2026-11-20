@@ -187,10 +187,15 @@
         "chat_template_jinja": "model:chat_template.jinja",
         "vocab": "model:vocab.json",
         "merges": "model:merges.txt",
-        "tokenizer_json": "model:tokenizer.json"
+        "tokenizer_json": "model:tokenizer.json",
+        "nagisa_config": "model:nagisa.json",
+        "korean_dictionary": "model:korean_dict_jieba.dict"
       },
       "tensors": {
         "weights": "weights:"
+      },
+      "optional_tensors": {
+        "nagisa_weights": {"source": "weights:", "prefix": "nagisa"}
       }
     },
     {
@@ -210,10 +215,15 @@
         "chat_template_jinja": "model:chat_template.jinja",
         "vocab": "model:vocab.json",
         "merges": "model:merges.txt",
-        "tokenizer_json": "model:tokenizer.json"
+        "tokenizer_json": "model:tokenizer.json",
+        "nagisa_config": "model:nagisa.json",
+        "korean_dictionary": "model:korean_dict_jieba.dict"
       },
       "tensors": {
         "weights": "model:model.safetensors"
+      },
+      "optional_tensors": {
+        "nagisa_weights": "model:nagisa.safetensors"
       }
     }
   ]

@@ -1,6 +1,8 @@
 #include "engine/models/qwen3_forced_aligner/processor.h"
 #include "engine/models/qwen3_asr/assets.h"
 #include "engine/models/qwen3_asr/tokenizer_text.h"
+#include "engine/framework/debug/trace.h"
+#include "engine/framework/io/json.h"
 
 #include "test_assert.h"
 
@@ -82,14 +84,73 @@ void test_word_text_has_alignable_words() {
         "Chinese words should be alignable");
 }
 
+void test_language_specific_word_segmentation() {
+    const auto assets = aligner_assets(20);
+    const auto dictionary = assets->resources.require_file("vocab").parent_path() / "korean_dict_jieba.dict";
+    std::ofstream(dictionary) << "가나다 10 x\n가나다라 10 x\n한국어 10 x\n가 10 x\n";
+    assets->resources.add_file("korean_dictionary", dictionary);
+    engine::models::qwen3_asr::Qwen3ASRTextTokenizer tokenizer(assets);
+    engine::models::qwen3_forced_aligner::Qwen3ForcedAlignProcessor processor(*assets, tokenizer);
+    for (const std::string language : {"ko", "Korean"}) {
+        const auto words = processor.tokenize_words("한국어를,　가나다라마 모르는말 가나 가", language);
+        engine::test::require(words == std::vector<std::string>{"한국어", "를", "가나다라", "마", "모르는말", "가나", "가"},
+                              "Korean longest-prefix selection, remainder, unknown and short tokens");
+    }
+    for (const std::string language : {"ja", "Japanese"}) {
+        bool rejected = false;
+        try { processor.tokenize_words("というおじいさんから", language); }
+        catch (const std::runtime_error & e) { rejected = std::string(e.what()).find("nagisa.json") != std::string::npos; }
+        engine::test::require(rejected, "Japanese must not silently use the Chinese-style splitter without Nagisa assets");
+    }
+    engine::test::require(processor.tokenize_words("Some call me nature.", "English") ==
+                              std::vector<std::string>{"Some", "call", "me", "nature"}, "English word boundaries unchanged");
+    engine::test::require(processor.tokenize_words("你好。world!", "Chinese") ==
+                              std::vector<std::string>{"你", "好", "world"}, "Chinese word boundaries unchanged");
+}
+
+// Optional real-tokenizer comparison against external upstream-generated cases.
+// Checkpoints and large fixture collections stay outside the code repository.
+void test_upstream_segmentation_cases(const std::filesystem::path & directory, const std::filesystem::path & cases_path) {
+    const auto assets = aligner_assets(20);
+    assets->resources.add_file("nagisa_config", directory / "nagisa.json");
+    assets->resources.add_tensor_source("nagisa_weights", directory / "nagisa.safetensors");
+    assets->resources.add_file("korean_dictionary", directory / "korean_dict_jieba.dict");
+    engine::models::qwen3_asr::Qwen3ASRTextTokenizer tokenizer(assets);
+    engine::models::qwen3_forced_aligner::Qwen3ForcedAlignProcessor processor(*assets, tokenizer);
+    const auto cases = engine::io::json::parse_file(cases_path);
+    size_t index = 0;
+    for (const auto & item : cases.as_array()) {
+        std::vector<std::string> expected;
+        for (const auto & word : item.require("words").as_array()) expected.push_back(word.as_string());
+        const auto words = processor.tokenize_words(item.require("text").as_string(), item.require("language").as_string());
+        engine::test::require(words == expected, "upstream segmentation case " + std::to_string(index));
+        ++index;
+    }
+    std::cout << "Upstream segmentation cases passed: " << index << '\n';
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     try {
+        std::filesystem::path directory, cases;
+        for (int i = 1; i < argc; ++i) {
+            const std::string arg = argv[i];
+            if (i + 1 >= argc) throw std::runtime_error("Missing test argument value");
+            if (arg == "--log") engine::debug::configure_logging({true, std::string(argv[++i])});
+            else if (arg == "--tokenizer-dir") directory = argv[++i];
+            else if (arg == "--cases") cases = argv[++i];
+            else throw std::runtime_error("Unknown test argument: " + arg);
+        }
         test_punctuation_only_text_has_no_alignable_words();
         test_word_text_has_alignable_words();
+        test_language_specific_word_segmentation();
         test_spans_are_in_the_input_audio_sample_domain();
         test_zero_length_span_repair_and_clamping_use_the_input_rate();
+        if (!directory.empty() || !cases.empty()) {
+            if (directory.empty() || cases.empty()) throw std::runtime_error("Both --tokenizer-dir and --cases are required");
+            test_upstream_segmentation_cases(directory, cases);
+        }
         std::cout << "qwen3_forced_aligner_processor_test passed\n";
         return 0;
     } catch (const std::exception & ex) {
