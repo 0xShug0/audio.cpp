@@ -417,6 +417,21 @@ void set_backend_threads(ggml_backend_t backend, int threads) {
     }
 }
 
+bool cpu_backend_has_feature(ggml_backend_t backend, const char * feature) {
+    if (!is_host_backend(backend)) {
+        return false;
+    }
+    // Through the proc address, like the thread count (works with GGML_BACKEND_DL)
+    ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(backend));
+    auto fn = (ggml_backend_get_features_t)ggml_backend_reg_get_proc_address(reg, "ggml_backend_get_features");
+    for (const auto * entry = fn != nullptr ? fn(reg) : nullptr; entry != nullptr && entry->name != nullptr; ++entry) {
+        if (std::strcmp(entry->name, feature) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool is_host_backend(ggml_backend_t backend) {
     if (backend == nullptr) {
         return false;

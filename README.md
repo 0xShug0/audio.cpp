@@ -218,6 +218,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **realtime_reuse** (C) | S2S · Speech enhancement | lang agnostic | [Real-time RE-USE](docs/models/realtime_reuse.md) | GGUF F32, Stream |
 | **reuse** (C) | S2S · Speech restoration | lang agnostic | [RE-USE](docs/models/reuse.md) | GGUF F32/F16/Q8_0 |
 | **rvc** | VC | lang agnostic | [RVC v1 / v2](docs/audio_tools.md#rvc) | GGUF 16 |
+| **voice_isolator** (C)<br>[@Etherll](https://github.com/Etherll) | S2S · Voice isolation | lang agnostic | [Voice Isolator v1 offline / realtime](docs/models/voice_isolator.md) | GGUF F32, Stream |
 | **sam_audio** | S2S · Sound separation | lang agnostic | [SAM Audio Small](docs/models/sam_audio.md)<br>SAM Audio Base<br>SAM Audio Large | GGUF F32/BF16/Q8 |
 | **seed_vc** | VC | lang agnostic | [SeedVC XLS-R + HiFT](docs/models/seed_vc.md)<br>SeedVC Whisper-small + BigVGAN | GGUF 16/Q8 |
 | **sheetsage2** | MIDI | music | [SheetSage2](docs/audio_tools.md#sheetsage2) | GGUF orig |

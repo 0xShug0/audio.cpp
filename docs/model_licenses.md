@@ -164,6 +164,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `vibevoice_asr` | [microsoft/VibeVoice-ASR](https://huggingface.co/microsoft/VibeVoice-ASR) | MIT | Yes | | 2026-09-21 |
 | `vibevoice_asr_streaming` | [microsoft/VibeVoice-ASR-Streaming-7B](https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-7B)<br>[microsoft/VibeVoice-ASR-Streaming-1.5B](https://huggingface.co/microsoft/VibeVoice-ASR-Streaming-1.5B) | MIT | Yes | | 2026-09-21 |
 | `vietneu_tts` | [pnnbao-ump/VieNeu-TTS-v3-Turbo](https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo) | Apache-2.0 | Yes | | 2026-09-21 |
+| `voice_isolator` | [inworld/voice-isolator](https://huggingface.co/inworld/voice-isolator) | Apache-2.0 | Yes | Offline and realtime checkpoints. | 2026-11-20 |
 | `voxcpm1` | [openbmb/VoxCPM-0.5B](https://huggingface.co/openbmb/VoxCPM-0.5B) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxcpm2` | [openbmb/VoxCPM2](https://huggingface.co/openbmb/VoxCPM2) | Apache-2.0 | Yes | | 2026-09-21 |
 | `voxmel_tts` | [VoxDance-Lab/VoxMel-0.6B](https://huggingface.co/VoxDance-Lab/VoxMel-0.6B) | Apache-2.0 | Yes | Includes MIT-licensed Vocos. | 2026-11-20 |

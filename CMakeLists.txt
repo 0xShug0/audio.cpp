@@ -629,6 +629,7 @@ add_library(engine_core OBJECT
     src/framework/modules/streaming_conv_modules.cpp
     src/framework/modules/attention/positional_encoding.cpp
     src/framework/modules/gated_delta_net_module.cpp
+    src/framework/modules/mamba_modules.cpp
     src/framework/modules/feed_forward_modules.cpp
     src/framework/modules/attention/self_attention.cpp
     src/framework/modules/attention/longformer_attention.cpp
@@ -1031,6 +1032,21 @@ audiocpp_add_model(realtime_reuse
         engine/community_models/realtime_reuse/session.h
     LOADERS
         engine::models::realtime_reuse::make_realtime_reuse_loader
+)
+
+audiocpp_add_model(voice_isolator
+    SOURCES
+        src/community_models/voice_isolator/assets.cpp
+        src/community_models/voice_isolator/attention_window.cpp
+        src/community_models/voice_isolator/config.cpp
+        src/community_models/voice_isolator/network.cpp
+        src/community_models/voice_isolator/runtime.cpp
+        src/community_models/voice_isolator/session.cpp
+        src/community_models/voice_isolator/spectral.cpp
+    INCLUDES
+        engine/community_models/voice_isolator/session.h
+    LOADERS
+        engine::models::voice_isolator::make_voice_isolator_loader
 )
 
 audiocpp_add_model(glm_tts
@@ -3873,6 +3889,11 @@ if (ENGINE_BUILD_WARMBENCH)
     add_engine_warmbench(irodori_tts_warm_bench tests/irodori_tts/irodori_tts_warm_bench.cpp)
     add_engine_warmbench(marblenet_vad_warm_bench tests/marblenet_vad/marblenet_vad_warm_bench.cpp)
     add_engine_warmbench(miocodec_warm_bench tests/miocodec/miocodec_warm_bench.cpp)
+    if (voice_isolator IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_warmbench(voice_isolator_warm_bench tests/voice_isolator/voice_isolator_warm_bench.cpp)
+        target_sources(voice_isolator_warm_bench PRIVATE app/cli/args.cpp)
+        target_include_directories(voice_isolator_warm_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
     add_engine_warmbench(mira_tts_warm_bench tests/mira_tts/mira_tts_warm_bench.cpp)
     add_engine_warmbench(muscriptor_warm_bench tests/muscriptor/muscriptor_warm_bench.cpp)
     add_engine_warmbench(moss_tts_nano_warm_bench tests/moss_tts_nano/moss_tts_nano_warm_bench.cpp)
@@ -5436,6 +5457,16 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             add_executable(pocket_tts_small_reference tests/pocket_tts_small/reference.cpp app/cli/args.cpp)
             target_link_libraries(pocket_tts_small_reference PRIVATE engine_runtime ggml)
             target_include_directories(pocket_tts_small_reference PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        endif()
+
+        if (voice_isolator IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(voice_isolator_domain_test tests/voice_isolator/test_domain.cpp)
+            target_include_directories(voice_isolator_domain_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
+            add_test(NAME voice_isolator_domain_test COMMAND voice_isolator_domain_test)
+            add_executable(test_voice_isolator_reference tests/voice_isolator/test_reference.cpp app/cli/args.cpp)
+            target_link_libraries(test_voice_isolator_reference PRIVATE engine_runtime ggml)
+            target_include_directories(test_voice_isolator_reference PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
         endif()
 
         if (realtime_reuse IN_LIST AUDIOCPP_LINKED_MODELS)

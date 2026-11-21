@@ -66,6 +66,9 @@ void set_backend_threads(ggml_backend_t backend, int threads);
 // (AMX and KleidiAI when built, then CPU_REPACK). Their weights are laid out
 // for their own matmul kernels. Empty for other backends.
 std::vector<ggml_backend_buffer_type_t> cpu_extra_buffer_types(ggml_backend_t backend);
+// Whether the CPU kernels behind `backend` were built with `feature`, a name
+// from ggml's CPU feature list such as "AVX512_BF16". False for other backends.
+bool cpu_backend_has_feature(ggml_backend_t backend, const char * feature);
 // Whether `backend` runs ggml_mul_mat(w, F32 x) for a 2-D `type` weight w of
 // [ne0, ne1] (ggml order) held in `buffer_type`; llama.cpp's
 // weight_buft_supported probe.
