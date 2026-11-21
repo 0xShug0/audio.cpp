@@ -15,21 +15,22 @@ Lost in a sea of audio model names, papers, and codebases? Explore **100+ audio 
 
 > [!TIP]
 >
-> **v0.9.5 highlights**
+> **v0.9.6 highlights**
 >
-> **New models and variants:** Generate speech with [Zonos2](docs/models/zonos2.md) and [Zonos3-Mini](docs/models/zonos3.md), sound effects with [MOSS-SoundEffect v2](docs/models/moss_soundeffect.md), and cover songs with [MuLaCover](docs/models/mulacover.md). Speech recognition gains [Kroko XL](docs/models/kroko_asr.md) and Danish [Edda ASR](docs/models/edda_asr.md). [MossFormer2](docs/models/mossformer2.md) now supports speech enhancement and super-resolution alongside separation. Audio8 TTS defaults to the [Realistic 0.6B](docs/models/audio8_tts.md) package, and KugelAudio gains reference-audio voice cloning.
+> **New models:** [SoulX-Singer](docs/models/soulx_singer.md) supports singing synthesis and voice conversion; [Tiny Voca](docs/models/tiny_voca.md) offers compact English TTS; and [Inworld Voice Isolator](docs/models/voice_isolator.md) removes background sound with offline and streaming checkpoints. [M5-TTS](docs/models/m5_tts.md) brings preset voices, voice cloning, and streaming; [VoxMel-TTS](docs/models/voxmel_tts.md) adds speech generation and cloning; [ROSVOT](docs/models/rosvot.md) transcribes singing notes; and [Granite Speech 5.0](docs/models/granite_speech5.md) adds multilingual ASR.
 >
-> **Shared execution improvements:** Reusable DiT and device-denoising runtimes keep sampling on the backend, with explicitly enabled CUDA/Vulkan pointwise fusions. MoE models share expert storage and offloading, including experimental hybrid CPU/GPU expert execution. HeartMuLa memory improvements and OmniVoice native batching further improve existing model paths.
+> **Performance and memory:** Faster Kokoro CPU and PocketTTS inference (and other models). The standalone [MoE engine](docs/usage.md#independent-moe-policies) supports independently selected expert-placement and cache policies.
 >
-> **Intel GPU support:** The new SYCL backend runs validated speech and music models on Intel GPUs. Support varies by model; see the [validation and performance report](docs/reports/sycl_validation.md) for working models and known limitations.
+> **Broader backend coverage:** Expanded [WASM + WebGPU validation](docs/reports/webgpu_browser_validation.md), with new pooling, transposed-convolution, and BF16 matrix-multiplication support. Linux and Windows HIP builds gain rocBLAS compatibility packages.
 >
-
+> **Controls and fixes:** CLI YAML configuration, ACE-Step reference-audio conditioning, Japanese/Korean Qwen3 alignment improvements, opt-in chunk-overlap text trimming, and custom Kokoro phoneme rules.
+>
 
 audio.cpp is built for real end-to-end execution rather than one-off model demos. Its optimized, reusable building blocks support speech generation and recognition, separation, alignment, and multi-model workflows. Shared components make new models easier to integrate and let improvements benefit multiple model families while keeping inference efficient, maintainable, and portable.
 
 ## Features
 
-⭐ **150 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
+⭐ **154 audio model families and 250+ variants.** Run TTS, ASR, music generation, voice cloning, conversion, separation, and more locally through a shared CLI and server API.
 
 ⭐ **Built-in WebUI.** Generate and clone voices in Studio, compare models in Arena, manage models and voice libraries, and assemble narration with reusable speakers and passage editing in the TTS app.
 
@@ -50,9 +51,11 @@ audio.cpp would not be moving this quickly without generous contributors bringin
 ## News
 
 > [!IMPORTANT]
-> **v0.9.5:** New Zonos2/3, Kroko XL, Edda ASR, MOSS-SoundEffect v2, and MuLaCover models; MossFormer2 enhancement and super-resolution; SYCL backend support; shared DiT and MoE execution; and WebUI, model-management, and memory improvements. Thanks to everyone contributing model ports, optimizations, fixes, and validation!
+> **2026-11-21 — Release v0.9.6:** New SoulX-Singer, Tiny Voca, Inworld Voice Isolator, M5-TTS, VoxMel-TTS, ROSVOT, and Granite Speech 5.0 models. This release expands browser WebGPU coverage, improves CPU inference and streaming reuse, reduces metadata memory reservations, and introduces a standalone MoE engine with independent placement and cache policies. CLI YAML configuration and new conditioning and frontend controls round out the release. Thanks to our contributors for the ports, optimizations, fixes, and backend validation!
 
-**2026-11-04 — Release v0.9.4:** **WebGPU support brings audio inference to the browser with WASM**, and the WebUI gains **streaming voice chat with animated SoulX avatars**, cross-language dubbing, and voice-library export, import, and sorting. New models include **Nemotron 3.5 Transcribe** with CPU offload below 7 GB VRAM, **LFM3-Audio, LFM D1-Omni, PocketTTS Small, SoulX-FlashHead, Real-time RE-USE, Magenta RealTime 2, Music Flamingo, Haas, and Underdog Bark 3**, plus Irodori-TTS v4 Large. Experimental AMD kernel selection, new performance controls, and backend fixes improve speed, memory use, and compatibility. This release brings together community model ports, backend optimizations, and fixes shaped by real deployment reports.
+**2026-11-14 — Release v0.9.5:** New Zonos2/3, Kroko XL, Edda ASR, MOSS-SoundEffect v2, and MuLaCover models; MossFormer2 enhancement and super-resolution; SYCL backend support; shared DiT and MoE execution; and WebUI, model-management, and memory improvements. Thanks to everyone contributing model ports, optimizations, fixes, and validation!
+
+2026-11-04 — **Release v0.9.4: WebGPU support brings audio inference to the browser with WASM**, and the WebUI gains streaming voice chat with animated SoulX avatars, cross-language dubbing, and voice-library export, import, and sorting. New models include Nemotron 3.5 Transcribe with CPU offload below 7 GB VRAM, LFM3-Audio, LFM D1-Omni, PocketTTS Small, SoulX-FlashHead, Real-time RE-USE, Magenta RealTime 2, Music Flamingo, Haas, and Underdog Bark 3, plus Irodori-TTS v4 Large. Experimental AMD kernel selection, new performance controls, and backend fixes improve speed, memory use, and compatibility. This release brings together community model ports, backend optimizations, and fixes shaped by real deployment reports.
 
 **2026-10-26 — Release v0.9.3:** New speech models including Drama3, Ming 3.0 TTS/Audio Tiny, XTTS v2, Plapre 3, Gradium Phonon, and Earshot VAD, plus experimental LatentSync lip sync. Highlights include **LoRA across 11 models**, a **TTS workspace**, voice-cloning and dubbing recipes, `perf_mode` presets, lower memory use, and expanded HIP, ARM NEON, and Rockchip NPU support. Thanks to our contributors!
 
