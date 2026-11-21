@@ -617,6 +617,29 @@ Keep `host` at `127.0.0.1` for local access. `0.0.0.0` binds all interfaces;
 clients connect using the server's actual address, not `0.0.0.0`. Do not expose
 model-management and server-file access to an untrusted network.
 
+### Unix-domain sockets
+
+On Linux and macOS, bind HTTP directly to a filesystem socket instead of TCP:
+
+```bash
+umask 077
+build/debug/bin/audiocpp_server --ui --host unix:/tmp/audiocpp.sock --log --log-file server.log
+curl --unix-socket /tmp/audiocpp.sock http://localhost/health
+curl --unix-socket /tmp/audiocpp.sock http://localhost/v1/models
+```
+
+The JSON server configuration accepts the same `"host": "unix:/tmp/audiocpp.sock"`.
+`--port` is ignored for this transport. Both the default server and `--parallel-jobs`
+support it; HTTP routes, streaming and request limits are unchanged. The parent
+directory must already exist, and socket permissions follow the process umask.
+No TCP listener is created. Browsers need an HTTP reverse proxy to access this socket.
+
+Graceful shutdown removes the socket. Startup never removes an existing path:
+a second server or a stale socket produces an explicit bind error. After an
+unclean exit, remove the stale socket only after confirming its server has stopped.
+Unix listeners are not supported by this implementation on Windows. VSOCK and
+Linux abstract-namespace sockets are not included.
+
 ## Voices
 
 ### Configured presets and defaults

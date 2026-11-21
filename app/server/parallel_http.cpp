@@ -1,3 +1,4 @@
+#include "unix_socket_listener.h"
 #include "parallel_http.h"
 
 // Transport framing copied from the legacy listener at 612c5e9f. The new
@@ -999,12 +1000,21 @@ private:
 
 void serve_parallel_http(const std::string & host, int port, IHttpHandler & handler, ShutdownRequested shutdown_requested, uint64_t max_request_body_bytes) {
     SocketRuntime sockets;
-    auto listen_socket = bind_listen_socket(host, port);
-    std::cout << "audiocpp_server listening on http://" << host << ":" << port << "\n";
+    std::optional<UnixSocketListener> unix_listener;
+    UniqueSocket listen_socket;
+    if (host.compare(0, 5, "unix:") == 0) {
+        unix_listener.emplace(host.substr(5));
+        std::cout << "audiocpp_server listening on " << host << "\n";
+    } else {
+        listen_socket = bind_listen_socket(host, port);
+        std::cout << "audiocpp_server listening on http://" << host << ":" << port << "\n";
+    }
+    const SocketHandle listener = unix_listener
+        ? static_cast<SocketHandle>(unix_listener->get()) : listen_socket.get();
     OwnedHttpWorkers workers;
     while (!shutdown_requested()) {
         workers.reap();
-        if (!wait_for_client(listen_socket.get(), 250)) {
+        if (!wait_for_client(listener, 250)) {
             continue;
         }
         sockaddr_in client_addr{};
@@ -1014,7 +1024,7 @@ void serve_parallel_http(const std::string & host, int port, IHttpHandler & hand
         socklen_t client_len = sizeof(client_addr);
 #endif
         const SocketHandle client = accept(
-            listen_socket.get(),
+            listener,
             reinterpret_cast<sockaddr *>(&client_addr),
             &client_len);
         if (client == kInvalidSocket) {
