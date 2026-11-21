@@ -366,7 +366,7 @@
     fish_drama3: 'Fish Audio Drama 3',
     kugelaudio: 'KugelAudio', crisperwhisper: 'CrisperWhisper', index_echo: 'Index-Echo S2TT',
     audio_flamingo: 'Audio Flamingo', owsm: 'OWSM', owsm_ctc: 'OWSM-CTC',
-    reuse: 'RE-USE', realtime_reuse: 'Real-time RE-USE',
+    reuse: 'RE-USE', realtime_reuse: 'Real-time RE-USE', voice_isolator: 'Inworld Voice Isolator',
     haas_asr: 'Haas Japanese ASR', lfm_d1_omni: 'd1-Omni audio decisions',
     nemotron_transcribe: 'Nemotron 3.5 Transcribe', phonon2_asr: 'Phonon-2 ASR',
     voxmel_tts: 'VoxMel', tiny_voca: 'tiny-voca', soulx_singer: 'SoulX-Singer', rosvot: 'ROSVOT',
@@ -599,7 +599,7 @@
   // from another model is not sent.
   $: usesFixedChatPrompt = ['lfm2_audio', 'lfm3_audio'].includes(selected?.family) && selected?.task === 's2s';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
-    !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'sidon'].includes(selected?.family) &&
+    !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon'].includes(selected?.family) &&
     !usesFixedChatPrompt && !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming', 'confucius4_r2t2'].includes(selected?.family);
@@ -2210,8 +2210,8 @@
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !usesFixedChatPrompt && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'sidon', 'mossformer2'].includes(selected.family)) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'sidon'].includes(selected.family)) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !usesFixedChatPrompt && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon', 'mossformer2'].includes(selected.family)) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon'].includes(selected.family)) request.language = language;
         if (selected.task === 'gen') {
           if (usesYue2Request) {
             request.lyrics = lyrics.trim();
@@ -2226,7 +2226,7 @@
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
-          if (!['apollo', 'reuse', 'realtime_reuse', 'sidon', 'mossformer2'].includes(selected.family)) request.seed = resolvedSeed;
+          if (!['apollo', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon', 'mossformer2'].includes(selected.family)) request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
@@ -2910,7 +2910,7 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'realtime_reuse', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'sidon', 'hviske_asr_v6', 'voxtral_tts', 'zonos2', 'zonos3'].includes(selected.family)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'realtime_reuse', 'voice_isolator', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'sidon', 'hviske_asr_v6', 'voxtral_tts', 'zonos2', 'zonos3'].includes(selected.family)}
             <div>
               <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
               {#if ['moss_ttsd', 'moss_voicegen'].includes(selected.family)}
@@ -2924,7 +2924,7 @@
               {/if}
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'sidon', 'mossformer2'].includes(selected.family)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon', 'mossformer2'].includes(selected.family)}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
