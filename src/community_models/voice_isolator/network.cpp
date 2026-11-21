@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -531,7 +532,10 @@ private:
         auto * h = ggml_add(g, ggml_mul(g, x.tensor, w.film_scale.tensor), w.film_shift.tensor);
         h = ggml_norm(g, h, kNormEps);
         h = ggml_add(g, ggml_mul(g, h, w.norm_weight.tensor), w.norm_bias.tensor);
-        h = ggml_gelu_erf(g, ggml_add(g, ggml_mul_mat(g, w.hidden_weight.tensor, h), w.hidden_bias.tensor));
+        h = ggml_add(g, ggml_mul_mat(g, w.hidden_weight.tensor, h), w.hidden_bias.tensor);
+        const auto gelu = ctx_.backend_type == core::BackendType::Cpu
+            ? modules::GeluApproximation::ApproxErf : modules::GeluApproximation::ExactErf;
+        h = modules::GeluModule({gelu}).build(ctx_, time_value(h)).tensor;
         return wrap(ggml_add(g, ggml_mul_mat(g, w.out_weight.tensor, h), w.out_bias.tensor),
             {state_.layout.bands(), frames_, state_.layout.decoder_outputs()});
     }
@@ -552,7 +556,9 @@ private:
         auto * o = ggml_reshape_3d(ctx_.ggml, attended, width, x.tensor->ne[1], x.tensor->ne[2]);
         auto y = add(x, modules::LinearModule({width, width, true}).build(ctx_, core::wrap_tensor(o, x.shape), proj));
         auto normed = modules::LayerNormModule({width, kNormEps}).build(ctx_, y, norm2);
-        return add(y, modules::FeedForwardModule({width, 4 * width, true, modules::GeluApproximation::ExactErf})
+        const auto gelu = ctx_.backend_type == core::BackendType::Cpu
+            ? modules::GeluApproximation::ApproxErf : modules::GeluApproximation::ExactErf;
+        return add(y, modules::FeedForwardModule({width, 4 * width, true, gelu})
             .build(ctx_, normed, ffn));
     }
 
