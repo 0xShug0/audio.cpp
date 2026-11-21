@@ -3,6 +3,7 @@
 #include "engine/models/kokoro_tts/g2p_multilingual.h"
 
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/io/json.h"
 
 #include <algorithm>
 #include <array>
@@ -272,7 +273,8 @@ float resolve_speaking_rate(const std::optional<runtime::VoiceCondition> & voice
 KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
     const std::optional<runtime::Transcript> & text,
     const std::optional<runtime::VoiceCondition> & voice,
-    const KokoroAssets & assets) {
+    const KokoroAssets & assets,
+    const std::unordered_map<std::string, std::string> & options) {
     runtime::Transcript transcript;
     if (text.has_value()) {
         transcript = *text;
@@ -282,6 +284,22 @@ KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
     state.voices = resolve_voice_blend(state.voice_id, assets);
     state.language_code = resolve_language_code(transcript, voice, state.voices.front().first->id);
     state.speaking_rate = resolve_speaking_rate(voice);
+    const auto rules = options.find("phoneme_rules");
+    if (rules != options.end()) {
+        try {
+            const auto entries = io::json::parse(rules->second);
+            for (const auto & entry : entries.as_array()) {
+                state.phoneme_rules.emplace_back(
+                    std::regex(entry.require("pattern").as_string()),
+                    entry.require("replacement").as_string());
+            }
+        } catch (const std::exception & error) {
+            throw std::runtime_error(std::string("Invalid Kokoro phoneme_rules: ") + error.what());
+        }
+        if (!state.phoneme_rules.empty() && state.language_code != "a" && state.language_code != "b") {
+            throw std::runtime_error("Kokoro phoneme_rules requires an English voice");
+        }
+    }
     return state;
 }
 
@@ -299,8 +317,13 @@ KokoroSynthesisInput build_kokoro_synthesis_input(
         // asked to be spoken from phonemes, which reads as the engine ignoring the option.
         throw std::runtime_error("Kokoro supplied phonemes are empty; an override must carry symbols");
     }
-    const std::string phonemes =
+    std::string phonemes =
         supplied ? std::string(*phoneme_override) : phonemize_text(text, state.language_code, assets);
+    if (!supplied) {
+        for (const auto & [pattern, replacement] : state.phoneme_rules) {
+            phonemes = std::regex_replace(phonemes, pattern, replacement);
+        }
+    }
     // Strict for a caller's stream, lenient for our own -- see encode_input_ids_and_count.
     const EncodedInputIds encoded = encode_input_ids_and_count(phonemes, assets, supplied);
     if (encoded.phoneme_count > 510) {
