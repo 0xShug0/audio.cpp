@@ -1254,6 +1254,8 @@ class ggml_webgpu_shader_lib {
         gated_delta_net_pipelines;  // type/S_v/kda
     std::unordered_map<ggml_webgpu_pad_pipeline_key, webgpu_pipeline, ggml_webgpu_pad_pipeline_key_hash>
         pad_pipelines;              // circular/non-circular
+    std::unordered_map<uint32_t, webgpu_pipeline> pool_2d_pipelines; // input type / pooling operation
+    std::unordered_map<ggml_type, webgpu_pipeline> conv_transpose_2d_pipelines; // kernel storage type
     std::unordered_map<ggml_webgpu_binary_pipeline_key, webgpu_pipeline, ggml_webgpu_binary_pipeline_key_hash>
         binary_pipelines;           // type/op/inplace/overlap/src_overlap
     std::unordered_map<ggml_webgpu_add_id_pipeline_key, webgpu_pipeline, ggml_webgpu_add_id_pipeline_key_hash>
@@ -1953,6 +1955,46 @@ class ggml_webgpu_shader_lib {
         return gated_delta_net_pipelines[key];
     }
 
+    webgpu_pipeline get_conv_transpose_2d_pipeline(const ggml_webgpu_shader_lib_context & context) {
+        GGML_ASSERT(context.src0->type == GGML_TYPE_F32 || context.src0->type == GGML_TYPE_F16);
+        auto it = conv_transpose_2d_pipelines.find(context.src0->type);
+        if (it != conv_transpose_2d_pipelines.end()) {
+            return it->second;
+        }
+        std::vector<std::string> defines;
+        if (context.src0->type == GGML_TYPE_F16) defines.push_back("WEIGHT_F16");
+        auto processed = preprocessor.preprocess(wgsl_conv_transpose_2d, defines);
+        auto pipeline = ggml_webgpu_create_pipeline(device, processed,
+            std::string("conv_transpose_2d_") + ggml_type_name(context.src0->type));
+        conv_transpose_2d_pipelines[context.src0->type] = pipeline;
+        return pipeline;
+    }
+
+    webgpu_pipeline get_pool_2d_pipeline(const ggml_webgpu_shader_lib_context & context) {
+        GGML_ASSERT(context.src0->type == GGML_TYPE_F32 || context.src0->type == GGML_TYPE_F16);
+        GGML_ASSERT(ggml_get_op_params_i32(context.dst, 0) == GGML_OP_POOL_MAX ||
+                    ggml_get_op_params_i32(context.dst, 0) == GGML_OP_POOL_AVG);
+        const bool half = context.src0->type == GGML_TYPE_F16;
+        const bool maximum = ggml_get_op_params_i32(context.dst, 0) == GGML_OP_POOL_MAX;
+        const uint32_t key = uint32_t(half) | (uint32_t(maximum) << 1);
+        auto it = pool_2d_pipelines.find(key);
+        if (it != pool_2d_pipelines.end()) {
+            return it->second;
+        }
+        const uint32_t wg_size = std::min(256u, context.max_wg_size);
+        std::vector<std::string> defines = {"WG_SIZE=" + std::to_string(wg_size)};
+        if (half) defines.push_back("SRC_F16");
+        if (maximum) defines.push_back("POOL_MAX");
+        auto processed = preprocessor.preprocess(wgsl_pool_2d, defines);
+        auto decisions = std::make_shared<ggml_webgpu_generic_shader_decisions>();
+        decisions->wg_size = wg_size;
+        auto pipeline = ggml_webgpu_create_pipeline(device, processed,
+            std::string("pool_2d_") + (maximum ? "max_" : "avg_") + (half ? "f16" : "f32"));
+        pipeline.context = decisions;
+        pool_2d_pipelines[key] = pipeline;
+        return pipeline;
+    }
+
     webgpu_pipeline get_pad_pipeline(const ggml_webgpu_shader_lib_context & context) {
         ggml_webgpu_pad_pipeline_key key = {};
         key.reflect                      = context.dst->op == GGML_OP_PAD_REFLECT_1D;
@@ -2222,6 +2264,10 @@ class ggml_webgpu_shader_lib {
 
         // src1 type
         switch (context.src1->type) {
+            case GGML_TYPE_BF16:
+                defines.push_back("SRC1_INNER_TYPE=u32");
+                defines.push_back("SRC1_BF16");
+                break;
             case GGML_TYPE_F32:
                 defines.push_back("SRC1_INNER_TYPE=f32");
                 break;
@@ -2331,7 +2377,7 @@ class ggml_webgpu_shader_lib {
         }
 
         // variant suffix for src1 type
-        variant += std::string("_") + (context.src1->type == GGML_TYPE_F32 ? "f32" : "f16");
+        variant += std::string("_") + ggml_type_name(context.src1->type);
         if (key.vectorized) {
             variant += "_vectorized";
         }
