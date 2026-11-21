@@ -647,7 +647,22 @@ private:
         const int64_t sequences = x.tensor->ne[2];
         const auto sequence_ids = ids(sequences);
         const modules::Mamba1Module mamba(mamba_config(state_.config));
+        const auto preserve_range = [&](const TensorValue & output) {
+            if (ctx_.backend_type != core::BackendType::Metal || state_.config.causal) return;
+            // LinearModule wraps its projection in a reshape and optional bias.
+            auto * projection = output.tensor;
+            while (projection->op == GGML_OP_RESHAPE || projection->op == GGML_OP_ADD) {
+                projection = projection->src[0];
+            }
+            GGML_ASSERT(projection->op == GGML_OP_MUL_MAT);
+            // Offline scan outputs exceed FP16 range before normalization.
+            if (projection->src[0]->type != GGML_TYPE_F32) {
+                projection->src[0] = ggml_cast(g, projection->src[0], GGML_TYPE_F32);
+            }
+            ggml_mul_mat_set_lowering(projection, GGML_MUL_MAT_LOWERING_METAL_F32_INPUTS);
+        };
         auto forward = mamba.build(ctx_, x, w.forward, sequence_ids, carried);
+        preserve_range(forward.output);
         if (forward.next_state.has_value()) {
             updates_.push_back(ggml_cpy(g, forward.next_state->conv.tensor, carried->conv.tensor));
             updates_.push_back(ggml_cpy(g, forward.next_state->ssm.tensor, carried->ssm.tensor));
@@ -659,12 +674,15 @@ private:
             }
             reverse = ggml_view_2d(g, reverse, reverse->ne[0], sequences, reverse->nb[1], 0);
             auto reversed = core::wrap_tensor(ggml_get_rows(g, x.tensor, reverse), x.shape);
-            auto * backward = ggml_get_rows(g, mamba.build(ctx_, reversed, *w.backward, sequence_ids).output.tensor, reverse);
+            auto backward_output = mamba.build(ctx_, reversed, *w.backward, sequence_ids).output;
+            preserve_range(backward_output);
+            auto * backward = ggml_get_rows(g, backward_output.tensor, reverse);
             joined = ggml_concat(g, joined, ggml_add(g, backward, x.tensor), 0);
         }
         const auto shape = x.shape.with_last_dim(joined->ne[0]);
         auto projected = modules::LinearModule({joined->ne[0], width, true})
             .build(ctx_, core::wrap_tensor(joined, shape), w.output_proj);
+        preserve_range(projected);
         return modules::LayerNormModule({width, kNormEps}).build(ctx_, projected, w.norm);
     }
 
