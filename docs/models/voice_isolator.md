@@ -83,6 +83,14 @@ Largest absolute sample difference against the Python reference (`inworld.voice_
 
 ggml's CUDA backend runs F32 matmuls on TF32 tensor cores, so CUDA output matches the reference to about 1.5e-4. Vulkan (RTX 5090) matches it to about 3.5e-4.
 
+Both checkpoints also run in the browser with WASM64 and WebGPU. Use the
+[WebGPU build guide](../build/webgpu.md) with `AUDIOCPP_MODELS=voice_isolator`,
+the corresponding F32 GGUF, `--backend webgpu` and `--log`. WebGPU uses the
+existing decomposed Mamba operations and materializes Q/K/V through the
+framework's flash-attention lowering to avoid overlapping storage bindings.
+See the [browser validation report](../reports/webgpu_browser_validation.md)
+for measured results.
+
 ## Performance
 
 Real-time factor (RTF) is processing time divided by audio duration, so values below 1.0 run faster than real time. On CPU (AMD Ryzen 9 9950X3D with AVX512-BF16, 16 threads, default Q8_0 cache and 4-frame blocks, best of three, `voice_isolator_warm_bench --backend cpu --threads 16`):
@@ -139,6 +147,6 @@ python tests/voice_isolator/convert_gguf.py \
 
 - The realtime checkpoint attends to the last 1200 frames (12 s of audio); older context is not used.
 - Output is mono 48 kHz.
-- On CPU, Vulkan and Metal the Mamba layers use ggml's fused Mamba-1 operations. CUDA and HIP have no kernels for those and use the older scan and convolution operations.
+- On CPU, Vulkan and Metal the Mamba layers use ggml's fused Mamba-1 operations. CUDA, HIP and WebGPU use the older scan and convolution operations.
 
 Validation commands are in [tests/voice_isolator/README.md](../../tests/voice_isolator/README.md).

@@ -45,6 +45,8 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 | YuE2 | GEN | Q4_0 + F16 VAE | Instrumental; 1,500-token cap | 59.999 | 37.021 | 0.6170 | 3014.4 | 64 |
 | NVIDIA NemotronLabs RE-USE | S2S enhancement | F32 | 14.07 s audio; offline | 14.072 | 4.335 | 0.3080 | 3090.0 | 32 |
 | Realtime RE-USE | S2S enhancement | F32 | 14.07 s audio; streaming | 14.072 | 1.569 | 0.1115 | 522.5 | 32 |
+| Inworld Voice Isolator | S2S enhancement | F32 | 10.77 s speech; offline, warmed | 10.770 | 1.738 | 0.1614 | 905.4 | 64 |
+| Inworld Voice Isolator Realtime | S2S enhancement | F32 | 10.77 s speech; streaming | 10.770 | 4.820 | 0.4475 | 835.5 | 64 |
 
 ## Workload and configuration
 
@@ -55,6 +57,7 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 - VibeVoice uses WASM64 with a 16 GiB host-memory ceiling, separate from GPU memory.
 - YuE2 uses Q4 main weights, an F16 VAE, `cot=off`, eight NAR steps, `semantic_max_tokens=1500` and `vae_tile_frames=256`. Generation stops at the token cap.
 - RE-USE uses 10-second offline chunks with one-second overlap. Realtime RE-USE uses streaming mode, exit layer 8 and zero lookahead.
+- Voice Isolator Realtime uses the default F16 attention cache, two lookahead frames and four-frame blocks.
 - Supertonic's Q8-labelled package contains F32/I64 tensors; the table shows the actual types.
 
 ## Output checks
@@ -62,6 +65,8 @@ Peak VRAM is the observed NVML graphics-memory peak of a dedicated Chrome GPU pr
 PocketTTS Small 18M and LFM3-Audio TTS produced finite, nonconstant 24 kHz audio. Their warmed outputs were identical across repeats and matched the independently checked first-request outputs: Whisper Small transcribed all 43 input words correctly after English normalization (0% WER). LFM3-Audio ASR returned the same English transcript across all four requests.
 
 RE-USE and Realtime RE-USE produced finite, nonconstant 24 kHz audio with the input sample count; waveform cosine similarity against matched native CUDA runs exceeded 0.9999997. Realtime RE-USE's streaming result validates incremental inference and final audio collection, not progressive browser playback or TTFA.
+
+Voice Isolator produced finite, nonconstant 48 kHz audio with the input sample count. Speech waveform cosine against native CUDA was 0.99999999 offline and 0.99924 streaming; offline repeats were byte-identical.
 
 All generated TTS/music WAVs were finite and nonconstant. Independent SenseVoice transcription matched seven of twelve other TTS clips after normalization: Kokoro, VoxCPM, OmniVoice, Ming3, Qwen3-TTS, Irodori RF and VibeVoice. PocketTTS, Magpie and Irodori MF had small transcript differences; Supertonic and MOSS Nano had larger differences. These checks are not a model-quality benchmark.
 

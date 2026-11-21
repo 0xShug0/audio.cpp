@@ -92,13 +92,16 @@ public:
         require_prepared("Voice Isolator start_stream");
         runtime::validate_spec_backed_request_options(request.options, request.option_arrays, *contract_,
             "Voice Isolator");
-        reset();
-        stream_ = model_.create_streaming_session();
         started_ = std::chrono::steady_clock::now();
+        reset();
+        if (!stream_) {
+            stream_ = model_.create_streaming_session();
+        }
+        stream_active_ = true;
     }
 
     runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override {
-        if (!stream_) {
+        if (!stream_active_) {
             throw std::runtime_error("Voice Isolator stream has not started");
         }
         if (chunk.channels < 1 || chunk.sample_rate <= 0) {
@@ -127,7 +130,7 @@ public:
     void set_stream_event_sink(runtime::StreamEventCallback sink) override { sink_ = std::move(sink); }
 
     runtime::TaskResult finalize() override {
-        if (!stream_) {
+        if (!stream_active_) {
             throw std::runtime_error("Voice Isolator stream has not started");
         }
         std::vector<float> tail;
@@ -145,7 +148,7 @@ public:
             event.is_final = true;
             sink_(event);
         }
-        stream_.reset();
+        stream_active_ = false;
         resampler_.reset();
         stream_rate_ = 0;
         debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(started_));
@@ -156,7 +159,10 @@ public:
     }
 
     void reset() override {
-        stream_.reset();
+        stream_active_ = false;
+        if (stream_) {
+            stream_->reset();
+        }
         resampler_.reset();
         stream_rate_ = 0;
         collected_.clear();
@@ -168,6 +174,7 @@ private:
     Model model_;
     int64_t block_frames_ = 4;
     std::unique_ptr<StreamingSession> stream_;
+    bool stream_active_ = false;
     // Streams at other rates are resampled to 48 kHz as they arrive.
     std::unique_ptr<audio::StreamingSoxrResampler> resampler_;
     int stream_rate_ = 0;
