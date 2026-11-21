@@ -3,6 +3,7 @@
 #include "engine/models/kokoro_tts/assets.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/graph_workspace.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 
@@ -248,7 +249,9 @@ struct PlbertSession {
     ggml_tensor * token_type_ids = nullptr;
     ggml_tensor * output = nullptr;
     ggml_cgraph * graph = nullptr;
-    ggml_backend_buffer_t buffer = nullptr;
+    std::unique_ptr<core::GraphWorkspace> workspace;
+    std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> blas{nullptr, ggml_backend_free};
+    std::unique_ptr<ggml_backend_sched, decltype(&ggml_backend_sched_free)> scheduler{nullptr, ggml_backend_sched_free};
 
     PlbertSession(
         std::shared_ptr<const KokoroWeights> weights_in,
@@ -281,18 +284,61 @@ struct PlbertSession {
             ggml_set_input(attn_mask);
             ggml_set_input(position_ids);
             ggml_set_input(token_type_ids);
+            // These constants are uploaded once and remain live across executions.
+            ggml_set_output(position_ids);
+            ggml_set_output(token_type_ids);
 
             ggml_tensor * hidden = plbert_last_hidden_state(ctx, ids, attn_mask, position_ids, token_type_ids, *weights);
             output = project_hidden ? linear_3d(ctx, hidden, weights->bert_encoder) : hidden;
+            ggml_set_output(output);
             graph = ggml_new_graph_custom(ctx, 4096, false);
             ggml_build_forward_expand(graph, output);
 
             core::set_backend_threads(backend, n_threads);
+            if (!use_device_backend && ggml_backend_reg_by_name("BLAS")) {
+                blas.reset(ggml_backend_init_by_name("BLAS", nullptr));
+                if (!blas) throw std::runtime_error("Kokoro PL-BERT BLAS initialization failed");
+                const auto reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(blas.get()));
+                const auto set_threads = reinterpret_cast<ggml_backend_set_n_threads_t>(
+                    ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads"));
+                if (!set_threads) throw std::runtime_error("Kokoro BLAS backend has no thread control");
+                set_threads(blas.get(), n_threads);
+                // The scheduler can promote CPU nodes to BLAS when both use host buffers.
+                // Keep mixed-precision graphs on CPU rather than dequantizing their matmuls.
+                for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+                    const auto * node = ggml_graph_node(graph, i);
+                    if (node->op == GGML_OP_MUL_MAT && node->src[0]->type != GGML_TYPE_F32 &&
+                        ggml_backend_supports_op(blas.get(), node)) {
+                        blas.reset();
+                        break;
+                    }
+                }
+            }
+            engine::debug::trace_log_scalar("kokoro.plbert.blas_enabled", static_cast<bool>(blas));
             const double alloc_ms = measure_ms([&]() {
-                buffer = ggml_backend_alloc_ctx_tensors(ctx, backend);
+                if (blas) {
+                    ggml_backend_t backends[] = {blas.get(), backend};
+                    scheduler.reset(ggml_backend_sched_new(backends, nullptr, 2, ggml_graph_size(graph), false, false));
+                    if (!scheduler) throw std::runtime_error("Kokoro BLAS scheduler creation failed");
+                    if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph))
+                        throw std::runtime_error("Kokoro PL-BERT scheduled allocation failed");
+                } else {
+                    workspace = std::make_unique<core::GraphWorkspace>(backend);
+                    workspace->add(graph);
+                    workspace->prepare();
+                }
             });
-            if (buffer == nullptr) {
-                throw std::runtime_error("failed to allocate Kokoro PL-BERT tensors");
+            engine::debug::trace_log_scalar("kokoro.plbert.graph_buffer_mb",
+                static_cast<double>(scheduler
+                    ? ggml_backend_sched_get_buffer_size(scheduler.get(), blas.get()) +
+                      ggml_backend_sched_get_buffer_size(scheduler.get(), backend)
+                    : workspace->bytes()) / (1024.0 * 1024.0));
+            if (scheduler) {
+                int blas_nodes = 0;
+                for (int i = 0; i < ggml_graph_n_nodes(graph); ++i)
+                    blas_nodes += ggml_graph_node(graph, i)->op == GGML_OP_MUL_MAT &&
+                        ggml_backend_sched_get_tensor_backend(scheduler.get(), ggml_graph_node(graph, i)) == blas.get();
+                engine::debug::trace_log_scalar("kokoro.plbert.blas_matmul_nodes", blas_nodes);
             }
             const double fixed_input_upload_ms = measure_ms([&]() {
                 std::vector<int32_t> positions(static_cast<size_t>(token_count), 0);
@@ -306,10 +352,8 @@ struct PlbertSession {
             engine::debug::timing_log_scalar("kokoro.graph.build.plbert_alloc_ms", alloc_ms);
             engine::debug::timing_log_scalar("kokoro.graph.build.plbert_fixed_input_upload_ms", fixed_input_upload_ms);
         } catch (...) {
-            if (buffer) {
-                ggml_backend_buffer_free(buffer);
-                buffer = nullptr;
-            }
+            scheduler.reset();
+            workspace.reset();
             ggml_free(ctx);
             ctx = nullptr;
             throw;
@@ -317,9 +361,9 @@ struct PlbertSession {
     }
 
     ~PlbertSession() {
-        if (buffer) {
-            ggml_backend_buffer_free(buffer);
-        }
+        core::release_backend_graph_resources(backend, graph, true);
+        scheduler.reset();
+        workspace.reset();
         if (ctx) {
             ggml_free(ctx);
         }
@@ -354,7 +398,9 @@ struct PlbertSession {
         ggml_backend_tensor_set(ids, padded_ids.data(), 0, ggml_nbytes(ids));
         ggml_backend_tensor_set(attn_mask, attn_mask_host.data(), 0, ggml_nbytes(attn_mask));
         core::set_backend_threads(backend, n_threads);
-        const ggml_status status = engine::core::compute_backend_graph(backend, graph);
+        const ggml_status status = scheduler
+            ? ggml_backend_sched_graph_compute(scheduler.get(), graph)
+            : engine::core::compute_backend_graph(backend, graph);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error(std::string("kokoro_plbert_encode graph compute failed: ") + ggml_status_to_string(status));
         }

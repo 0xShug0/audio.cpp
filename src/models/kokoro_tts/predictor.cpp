@@ -10,6 +10,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -449,7 +450,7 @@ modules::ConvTranspose1dWeights make_conv_transpose1d_weights(
     const KokoroWeights::WeightNormConvTranspose1dWeights & conv) {
     modules::ConvTranspose1dWeights weights = {};
     (void) ctx;
-    weights.weight = conv.groups == 1 ? conv.weight : conv.dense_weight;
+    weights.weight = conv.weight;
     if (conv.use_bias) {
         weights.bias = conv.bias;
     }
@@ -500,18 +501,19 @@ ggml_tensor * build_grouped_conv_transpose1d_ct_predictor(
         const auto input_bct = modules::ReshapeModule({
             core::TensorShape::from_dims({1, conv.in_channels, input->ne[0]})})
                                    .build(build_ctx, input_ct);
-        modules::ConvTranspose1dWeights weights = {};
-        weights.weight = conv.dense_weight;
+        modules::DepthwiseConvTranspose1dWeights weights = {};
+        weights.weight = conv.depthwise_weight;
+        if (weights.weight.type != GGML_TYPE_F32) {
+            weights.weight = core::wrap_tensor(ggml_cast(ctx, weights.weight.tensor, GGML_TYPE_F32),
+                weights.weight.shape, GGML_TYPE_F32);
+        }
         if (conv.use_bias) {
             weights.bias = conv.bias;
         }
-        auto output_bct = modules::ConvTranspose1dModule({
+        auto output_bct = modules::DepthwiseConvTranspose1dModule({
             conv.in_channels,
-            conv.out_channels,
             conv.kernel,
             static_cast<int>(conv.stride),
-            0,
-            1,
             conv.use_bias}).build(build_ctx, input_bct, weights);
         const int64_t cropped_len =
             (input->ne[0] - 1) * conv.stride - 2 * conv.padding + conv.kernel + conv.output_padding;
