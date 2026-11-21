@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "family": "kale_tts",
+  "display_name": "kale-tts-1",
+  "description": "Small English text-to-speech with 10 designed voices (8 US, 2 British): kale-tts-1-tiny (45.7M, Ettin word reader) and kale-tts-1-nano (7.5M). Distilled from kale-tts-1-base (Kokoro-82M fine-tuned), with a frame-rate source-filter decoder. Text goes through the model's own word list; eSpeak-ng reads only numbers and words not in it.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en-us",
+    "en-gb"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "description": "Built-in voice. amy and jack are British English, the others US English.",
+        "values": [
+          "kenzie",
+          "simone",
+          "amy",
+          "frankie",
+          "darlene",
+          "owen",
+          "toby",
+          "jack",
+          "earl",
+          "magnus"
+        ],
+        "required": false,
+        "default": "kenzie"
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier; 1.0 is each voice's own pace.",
+        "required": false,
+        "min": 0.25,
+        "max": 4.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Seed of the decoder noise; the same seed gives the same audio. Default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "phonemes",
+        "type": "string_list",
+        "description": "Phonemes in Kokoro's own symbols to speak instead of reading the text, one entry per sentence (at most 510 symbols each). For kale-tts-1-tiny the text should hold the same sentences: its word reader reads them.",
+        "required": false
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form chunk.",
+        "required": false,
+        "min": 1,
+        "default": 400
+      }
+    ],
+    "session": [
+      {
+        "name": "espeak_library_path",
+        "type": "path",
+        "description": "Optional explicit path to the eSpeak-ng shared library (used for numbers and words not in the word list).",
+        "required": false
+      },
+      {
+        "name": "espeak_data_path",
+        "type": "path",
+        "description": "Optional explicit path to espeak-ng-data.",
+        "required": false
+      },
+      {
+        "name": "parity_noise_file",
+        "type": "path",
+        "description": "Tests only: raw float32 samples used as the decoder noise instead of the seeded noise, to compare against a reference run.",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "KaleComputer/kale-tts-1-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "kale_tts_1_nano_f32",
+      "display_name": "kale-tts-1-nano F32 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "kale-tts-1-GGUF",
+      "files": [
+        "kale-tts-1-nano-f32.gguf"
+      ]
+    },
+    {
+      "id": "kale_tts_1_tiny_f32",
+      "display_name": "kale-tts-1-tiny F32 GGUF",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "kale-tts-1-GGUF",
+      "files": [
+        "kale-tts-1-tiny-f32.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "kale_tts_1_nano_f32",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "builtin_voices": [
+      "kenzie",
+      "simone",
+      "amy",
+      "frankie",
+      "darlene",
+      "owen",
+      "toby",
+      "jack",
+      "earl",
+      "magnus"
+    ],
+    "default_voice": "kenzie",
+    "docs": [
+      "docs/models/kale_tts.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "words_lexicon": "model:words/lexicon.tsv",
+        "words_override": "model:words/override.public.tsv",
+        "words_terms": "model:words/terms.tsv",
+        "words_gb_lexicon": "model:words/en-gb/lexicon.tsv",
+        "words_gb_override": "model:words/en-gb/override.public.tsv",
+        "ettin_tokenizer": "model:ettin-tokenizer.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "voices": {
+          "source": "weights:",
+          "prefix": "voices"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "words_lexicon": "model:words/lexicon.tsv",
+        "words_override": "model:words/override.public.tsv",
+        "words_terms": "model:words/terms.tsv",
+        "words_gb_lexicon": "model:words/en-gb/lexicon.tsv",
+        "words_gb_override": "model:words/en-gb/override.public.tsv",
+        "ettin_tokenizer": "model:ettin-tokenizer.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "voices": "model:voices.safetensors"
+      }
+    }
+  ]
+}

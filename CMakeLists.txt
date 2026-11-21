@@ -1275,6 +1275,21 @@ if (MSVC)
     target_compile_options(engine_model_tiny_voca PRIVATE /utf-8)
 endif()
 
+audiocpp_add_model(kale_tts
+    SOURCES
+        src/community_models/kale_tts/assets.cpp
+        src/community_models/kale_tts/ettin_tokenizer.cpp
+        src/community_models/kale_tts/frontend.cpp
+        src/community_models/kale_tts/runtime.cpp
+        src/community_models/kale_tts/session.cpp
+        src/community_models/kale_tts/source_filter.cpp
+    INCLUDES
+        engine/community_models/kale_tts/session.h
+    LOADERS
+        engine::models::kale_tts::make_kale_tts_loader
+    OBJECT_LIBRARIES utf8proc_vendor
+)
+
 audiocpp_add_model(piper_tts
     SOURCES
         src/community_models/piper_tts/assets.cpp

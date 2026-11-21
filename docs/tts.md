@@ -25,6 +25,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
 | Kitten TTS 2 | `kitten_tts2` | `tts`, `clon` | [Kitten TTS 2](models/kitten_tts2.md) |
+| kale-tts-1 (tiny, nano) | `kale_tts` | `tts` | [kale-tts-1](models/kale_tts.md) |
 | KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](models/kitten_tts.md) |
 | Kokoro 82M | `kokoro_tts` | `tts` | [Kokoro 82M](models/kokoro_tts.md) |
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
