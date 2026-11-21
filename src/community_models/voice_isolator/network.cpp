@@ -601,7 +601,9 @@ private:
             values = wrap(ggml_permute(g, v, 0, 2, 1, 3), {bands, heads, frames, dim});
         }
         auto attended = modules::ScaledDotProductAttentionModule({dim,
-            modules::ScaledDotProductAttentionLowering::FlashPreserveViews, GGML_PREC_F32,
+            ctx_.backend_type == core::BackendType::WebGPU
+                ? modules::ScaledDotProductAttentionLowering::Flash
+                : modules::ScaledDotProductAttentionLowering::FlashPreserveViews, GGML_PREC_F32,
             modules::AttentionCausality::NonCausal})
             .build(ctx_, wrap(ggml_permute(g, q, 0, 2, 1, 3), {bands, heads, frames, dim}), keys, values, mask).tensor;
         if (c.exclusive_time) {
@@ -624,7 +626,9 @@ private:
         };
         auto heads_of = [&](ggml_tensor * t) { return wrap(ggml_permute(g, t, 0, 2, 1, 3), {frames, heads, bands, dim}); };
         auto attended = modules::ScaledDotProductAttentionModule({dim,
-            modules::ScaledDotProductAttentionLowering::FlashPreserveViews, GGML_PREC_F32,
+            ctx_.backend_type == core::BackendType::WebGPU
+                ? modules::ScaledDotProductAttentionLowering::Flash
+                : modules::ScaledDotProductAttentionLowering::FlashPreserveViews, GGML_PREC_F32,
             modules::AttentionCausality::NonCausal})
             .build(ctx_, heads_of(part(0)), heads_of(part(1)), heads_of(part(2))).tensor;
         if (c.exclusive_band) {

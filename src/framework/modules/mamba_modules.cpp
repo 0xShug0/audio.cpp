@@ -47,8 +47,9 @@ Mamba1Outputs Mamba1Module::build(
         core::validate_shape(state->conv, core::TensorShape::from_dims({batch, inner, history}), "mamba conv state");
         core::validate_shape(state->ssm, core::TensorShape::from_dims({batch, inner, 1, states}), "mamba ssm state");
     }
-    // CUDA/HIP lack the fused Mamba-1 kernels; they run the legacy scan with its gate fusion.
-    const bool legacy = core::uses_ggml_cuda_or_hip_backend(ctx.backend_type);
+    // CUDA/HIP and WebGPU use the decomposed Mamba-1 graph with the legacy scan.
+    const bool legacy = core::uses_ggml_cuda_or_hip_backend(ctx.backend_type) ||
+                        ctx.backend_type == core::BackendType::WebGPU;
     // Vulkan keeps the projections' activations in F32, as realtime_reuse does.
     const bool precise = ctx.backend_type == core::BackendType::Vulkan;
     auto * g = ctx.ggml;
@@ -97,9 +98,6 @@ Mamba1Outputs Mamba1Module::build(
     if (!legacy) {
         scan = ggml_ssm_scan_mamba1(g, initial, x, projected, weights.a.tensor, sequence_ids.tensor,
             weights.dt_weight.tensor, weights.dt_bias.tensor, weights.d.tensor, z);
-        if (ctx.backend_type == core::BackendType::Metal && states == 16) {
-            ggml_ssm_scan_set_lowering(scan, GGML_SSM_SCAN_LOWERING_METAL_REGISTER16);
-        }
         y = ggml_view_3d(g, scan, inner, length, batch, inner * sizeof(float), inner * length * sizeof(float), 0);
     } else {
         auto * dt = ggml_cont(g, ggml_view_3d(g, projected, config_.dt_rank, length, batch,
