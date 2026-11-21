@@ -7,7 +7,7 @@ param(
     [switch]$RunTests,
     [switch]$Clean,
     [string]$CudaArchitectures = "auto",
-    [ValidateSet("", "native", "avx2", "baseline")]
+    [ValidateSet("", "native", "avx2", "baseline", "all")]
     [string]$CpuArch = "",
     [ValidateSet("ON", "OFF")]
     [string]$NativeCpu = $null,
@@ -348,6 +348,13 @@ function Get-CpuArchSettings {
                     "-DGGML_AVX512_BF16=OFF",
                     "-DGGML_AVX_VNNI=OFF"
                 )
+            }
+        }
+        "all" {
+            return @{
+                Label = "runtime-dispatched CPU variants"
+                Native = "OFF"
+                CMakeArgs = @("-DENGINE_ENABLE_CPU_ALL_VARIANTS=ON")
             }
         }
         "baseline" {
