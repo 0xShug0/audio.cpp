@@ -159,7 +159,25 @@ package.
 | `language` | language code | voice prefix | Language selection precedence: voice-style language, transcript language (CLI --language), request-option language, then voice prefix. Must match the selected voice. |
 | `seed` | integer | random | Decoder noise seed for the current request; omitted requests choose a fresh random seed. |
 | `speed` | positive float | `1.0` | Speech speed multiplier; default 1.0. Must be finite and positive. |
+| `phoneme_rules` | JSON array encoded as a string | none | Ordered `{pattern, replacement}` regex rules for generated English phonemes. Supplied phonemes bypass rewriting. |
 | `text_chunk_size` | integer chars | `240`; `100` for Chinese and Japanese | Long-form chunk size. |
+
+To add secondary stress to unstressed standalone “I” in phrases such as “I foo.”:
+
+```bash
+build/debug/bin/audiocpp_cli --task tts --family kokoro_tts --model "$MODEL" \
+  --voice-id af_kore --language en-us --backend cpu --threads 8 --seed 42 \
+  --text 'I foo.' \
+  --request-option 'phoneme_rules=[{"pattern":"(^|\\s)I(?=\\s|$)","replacement":"$1ˌI"}]' \
+  --out i.wav --log
+```
+
+Rules use ECMAScript regex syntax and `$1`, `$2`, etc. for capture replacements.
+The example matches only an unstressed `I` between whitespace or string boundaries;
+existing stress and longer words stay unchanged. Users can supply additional rules
+or different boundaries. Omitting the option preserves the default pronunciation.
+Malformed JSON and invalid regex patterns produce errors. Existing GGUF packages
+work without repacking.
 
 ## Session Options (use with `--session-option`)
 

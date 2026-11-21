@@ -51,6 +51,12 @@
         "required": false
       },
       {
+        "name": "phoneme_rules",
+        "type": "string",
+        "description": "Optional JSON array of {pattern, replacement} ECMAScript regex rules applied in order to generated English phonemes before tokenization. No rules by default. Supplied phonemes bypass rewriting. Invalid rules are rejected.",
+        "required": false
+      },
+      {
         "name": "text_chunk_size",
         "type": "int",
         "description": "Maximum codepoints per text chunk before synthesis. Default 100 for Chinese and Japanese voices, otherwise 240.",

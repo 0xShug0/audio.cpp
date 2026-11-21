@@ -5,9 +5,11 @@
 
 #include <cstdint>
 #include <optional>
+#include <regex>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace engine::models::kokoro_tts {
@@ -26,12 +28,14 @@ struct KokoroFrontendSessionState {
     std::string language_code;
     std::vector<std::pair<const KokoroVoicePack *, double>> voices;
     float speaking_rate = 1.0f;
+    std::vector<std::pair<std::regex, std::string>> phoneme_rules;
 };
 
 KokoroFrontendSessionState resolve_kokoro_frontend_session_state(
     const std::optional<runtime::Transcript> & text,
     const std::optional<runtime::VoiceCondition> & voice,
-    const KokoroAssets & assets);
+    const KokoroAssets & assets,
+    const std::unordered_map<std::string, std::string> & options = {});
 
 // `phoneme_override`, when present, is synthesized as-is INSTEAD of running the built-in
 // G2P over `text`. It lets a caller with its own grapheme-to-phoneme stage — a lexicon the
