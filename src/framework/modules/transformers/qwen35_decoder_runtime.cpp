@@ -4,6 +4,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/feed_forward_modules.h"
+#include "engine/framework/modules/gated_delta_net_module.h"
 #include "engine/framework/modules/attention/grouped_query_attention.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -95,30 +96,32 @@ struct FullAttentionWeights {
     modules::NormWeights k_norm;
 };
 
-struct LinearAttentionWeights {
-    modules::LinearWeights in_proj_qkv;
-    modules::LinearWeights in_proj_z;
-    modules::LinearWeights in_proj_b;
-    modules::LinearWeights in_proj_a;
-    core::TensorValue conv_weight;
-    core::TensorValue dt_bias;
-    core::TensorValue a_log;
-    modules::NormWeights norm;
-    modules::LinearWeights out_proj;
-};
-
 struct Qwen35LayerWeights {
     bool full_attention = false;
     modules::NormWeights input_norm;
     modules::NormWeights post_norm;
     std::optional<FullAttentionWeights> full;
-    std::optional<LinearAttentionWeights> linear;
-    modules::LinearWeights mlp_gate;
-    modules::LinearWeights mlp_up;
-    modules::LinearWeights mlp_down;
+    std::optional<modules::GatedDeltaNetWeights> linear;
+    modules::GatedFeedForwardWeights mlp;
 };
 
 struct Qwen35Weights {
+    explicit Qwen35Weights(const Qwen35DecoderConfig & config)
+        : delta_net({config.hidden_size, config.linear_key_head_dim, config.linear_num_key_heads,
+            config.linear_value_head_dim, config.linear_num_value_heads, config.linear_conv_kernel_dim,
+            config.rms_norm_eps, config.round_bf16_activations, config.rms_norm_lowering}),
+          feed_forward([&] {
+              modules::GatedFeedForwardConfig ffn;
+              ffn.hidden_size = config.hidden_size;
+              ffn.intermediate_size = config.intermediate_size;
+              ffn.activation = modules::GatedFeedForwardActivation::Silu;
+              ffn.round_projections = ffn.round_activation = config.round_bf16_activations;
+              ffn.round_product = ffn.round_output = config.round_bf16_activations;
+              return ffn;
+          }()) {}
+
+    modules::GatedDeltaNetModule delta_net;
+    modules::GatedFeedForwardModule feed_forward;
     std::shared_ptr<core::BackendWeightStore> store;
     core::TensorValue token_embedding;
     std::vector<Qwen35LayerWeights> layers;
@@ -170,13 +173,13 @@ FullAttentionWeights load_full_attention(
     return out;
 }
 
-LinearAttentionWeights load_linear_attention(
+modules::GatedDeltaNetWeights load_linear_attention(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const std::string & prefix,
     const Qwen35DecoderConfig & config,
     assets::TensorStorageType storage_type) {
-    LinearAttentionWeights out;
+    modules::GatedDeltaNetWeights out;
     const int64_t key_dim = config.linear_key_head_dim * config.linear_num_key_heads;
     const int64_t value_dim = config.linear_value_head_dim * config.linear_num_value_heads;
     const int64_t conv_dim = key_dim * 2 + value_dim;
@@ -202,7 +205,7 @@ std::shared_ptr<Qwen35Weights> load_qwen35_weights(
     core::ExecutionContext & execution,
     size_t weight_context_bytes,
     assets::TensorStorageType storage_type) {
-    auto weights = std::make_shared<Qwen35Weights>();
+    auto weights = std::make_shared<Qwen35Weights>(config);
     weights->store = std::make_shared<core::BackendWeightStore>(
         execution.backend(),
         execution.backend_type(),
@@ -227,9 +230,9 @@ std::shared_ptr<Qwen35Weights> load_qwen35_weights(
         } else {
             out.linear = load_linear_attention(*weights->store, source, prefix + ".linear_attn", c, storage_type);
         }
-        out.mlp_gate = binding::linear_from_source(*weights->store, source, prefix + ".mlp.gate_proj", storage_type, c.intermediate_size, c.hidden_size, false);
-        out.mlp_up = binding::linear_from_source(*weights->store, source, prefix + ".mlp.up_proj", storage_type, c.intermediate_size, c.hidden_size, false);
-        out.mlp_down = binding::linear_from_source(*weights->store, source, prefix + ".mlp.down_proj", storage_type, c.hidden_size, c.intermediate_size, false);
+        out.mlp.gate_proj = binding::linear_from_source(*weights->store, source, prefix + ".mlp.gate_proj", storage_type, c.intermediate_size, c.hidden_size, false);
+        out.mlp.up_proj = binding::linear_from_source(*weights->store, source, prefix + ".mlp.up_proj", storage_type, c.intermediate_size, c.hidden_size, false);
+        out.mlp.down_proj = binding::linear_from_source(*weights->store, source, prefix + ".mlp.down_proj", storage_type, c.hidden_size, c.intermediate_size, false);
         weights->layers.push_back(std::move(out));
     }
     weights->final_norm = binding::norm_weight_from_source(*weights->store, source, root + ".norm", c.hidden_size);
@@ -296,23 +299,6 @@ core::TensorValue round_activation(
     return core::wrap_tensor(ggml_round_bf16(ctx.ggml, input.tensor), input.shape, GGML_TYPE_F32);
 }
 
-core::TensorValue mlp(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & x,
-    const Qwen35LayerWeights & weights,
-    const Qwen35DecoderConfig & config) {
-    auto gate = modules::LinearModule({config.hidden_size, config.intermediate_size, false}).build(ctx, x, weights.mlp_gate);
-    gate = round_activation(ctx, gate, config);
-    gate = modules::SiluModule{}.build(ctx, gate);
-    gate = round_activation(ctx, gate, config);
-    auto up = modules::LinearModule({config.hidden_size, config.intermediate_size, false}).build(ctx, x, weights.mlp_up);
-    up = round_activation(ctx, up, config);
-    auto gated = modules::MulModule{}.build(ctx, gate, up);
-    gated = round_activation(ctx, gated, config);
-    return round_activation(ctx,
-        modules::LinearModule({config.intermediate_size, config.hidden_size, false}).build(ctx, gated, weights.mlp_down), config);
-}
-
 core::TensorValue apply_partial_rope(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -332,6 +318,77 @@ core::TensorValue apply_partial_rope(
     return modules::ConcatModule({3}).build(ctx, rotary, pass);
 }
 
+// Q/K/V projection, normalization, rotary embedding and output gating are
+// identical for full forward, cached prefill and single-step cached attention.
+class FullAttentionBlock {
+public:
+    FullAttentionBlock(core::ModuleBuildContext & ctx, const core::TensorValue & input,
+        const core::TensorValue & positions, const FullAttentionWeights & weights,
+        const Qwen35DecoderConfig & config)
+        : ctx_(ctx), weights_(weights), config_(config) {
+        auto q_gate = modules::LinearModule({config.hidden_size, config.heads * config.head_dim * 2, false}).build(ctx, input, weights.q_proj);
+        q_gate = round_activation(ctx, q_gate, config);
+        q_gate = reshape_heads(ctx, q_gate, config.heads, config.head_dim * 2);
+        query = modules::SliceModule({3, 0, config.head_dim}).build(ctx, q_gate);
+        gate = modules::SliceModule({3, config.head_dim, config.head_dim}).build(ctx, q_gate);
+        gate = core::reshape_tensor(
+            ctx,
+            core::ensure_backend_addressable_layout(ctx, gate),
+            core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
+        key = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.k_proj);
+        value = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.v_proj);
+        key = round_activation(ctx, key, config);
+        value = round_activation(ctx, value, config);
+        key = reshape_heads(ctx, key, config.kv_heads, config.head_dim);
+        value = reshape_heads(ctx, value, config.kv_heads, config.head_dim);
+        query = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, query, weights.q_norm);
+        key = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, key, weights.k_norm);
+        query = round_activation(ctx, query, config);
+        key = round_activation(ctx, key, config);
+        query = apply_partial_rope(ctx, query, positions, config);
+        key = apply_partial_rope(ctx, key, positions, config);
+        query = round_activation(ctx, query, config);
+        key = round_activation(ctx, key, config);
+    }
+
+    core::TensorValue build(const core::TensorValue & attention_mask,
+        const core::TensorValue & attention_key, const core::TensorValue & attention_value,
+        modules::AttentionCausality causality) {
+        auto & ctx = ctx_;
+        const auto & weights = weights_;
+        const auto & config = config_;
+        auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, query.shape.rank}).build(ctx, query);
+        q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
+        auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, attention_key.shape.rank}).build(ctx, attention_key);
+        auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, attention_value.shape.rank}).build(ctx, attention_value);
+        auto context = modules::GroupedQueryAttentionModule({
+            config.head_dim,
+            modules::GroupedQueryAttentionLowering::FlashGroupedViewKV,
+            GGML_PREC_F32,
+            causality,
+        }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
+        context = round_activation(ctx, context, config);
+        context = core::reshape_tensor(
+            ctx,
+            core::ensure_backend_addressable_layout(ctx, context),
+            core::TensorShape::from_dims({query.shape.dims[0], query.shape.dims[1], config.heads * config.head_dim}));
+        gate = modules::SigmoidModule{}.build(ctx, gate);
+        gate = round_activation(ctx, gate, config);
+        context = modules::MulModule{}.build(ctx, context, gate);
+        context = round_activation(ctx, context, config);
+        return round_activation(ctx,
+            modules::LinearModule({config.heads * config.head_dim, config.hidden_size, false}).build(ctx, context, weights.o_proj), config);
+    }
+
+    core::TensorValue query, key, value;
+
+private:
+    core::ModuleBuildContext & ctx_;
+    const FullAttentionWeights & weights_;
+    const Qwen35DecoderConfig & config_;
+    core::TensorValue gate;
+};
+
 core::TensorValue full_attention(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -339,50 +396,8 @@ core::TensorValue full_attention(
     const core::TensorValue & attention_mask,
     const FullAttentionWeights & weights,
     const Qwen35DecoderConfig & config) {
-    auto q_gate = modules::LinearModule({config.hidden_size, config.heads * config.head_dim * 2, false}).build(ctx, input, weights.q_proj);
-    q_gate = round_activation(ctx, q_gate, config);
-    q_gate = reshape_heads(ctx, q_gate, config.heads, config.head_dim * 2);
-    auto q = modules::SliceModule({3, 0, config.head_dim}).build(ctx, q_gate);
-    auto gate = modules::SliceModule({3, config.head_dim, config.head_dim}).build(ctx, q_gate);
-    gate = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, gate),
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    auto k = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.k_proj);
-    auto v = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.v_proj);
-    k = round_activation(ctx, k, config);
-    v = round_activation(ctx, v, config);
-    k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
-    v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, k, weights.k_norm);
-    q = round_activation(ctx, q, config);
-    k = round_activation(ctx, k, config);
-    q = apply_partial_rope(ctx, q, positions, config);
-    k = apply_partial_rope(ctx, k, positions, config);
-    q = round_activation(ctx, q, config);
-    k = round_activation(ctx, k, config);
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
-    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
-    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = modules::GroupedQueryAttentionModule({
-        config.head_dim,
-        modules::GroupedQueryAttentionLowering::FlashGroupedViewKV,
-        GGML_PREC_F32,
-        modules::AttentionCausality::Causal,
-    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
-    context = round_activation(ctx, context, config);
-    context = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, context),
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    gate = modules::SigmoidModule{}.build(ctx, gate);
-    gate = round_activation(ctx, gate, config);
-    context = modules::MulModule{}.build(ctx, context, gate);
-    context = round_activation(ctx, context, config);
-    return round_activation(ctx,
-        modules::LinearModule({config.heads * config.head_dim, config.hidden_size, false}).build(ctx, context, weights.o_proj), config);
+    FullAttentionBlock attention(ctx, input, positions, weights, config);
+    return attention.build(attention_mask, attention.key, attention.value, modules::AttentionCausality::Causal);
 }
 
 core::TensorValue full_attention_prefill_cached(
@@ -396,56 +411,14 @@ core::TensorValue full_attention_prefill_cached(
     const FullAttentionWeights & weights,
     const Qwen35DecoderConfig & config) {
     const int64_t steps = input.shape.dims[1];
-    auto q_gate = modules::LinearModule({config.hidden_size, config.heads * config.head_dim * 2, false}).build(ctx, input, weights.q_proj);
-    q_gate = round_activation(ctx, q_gate, config);
-    q_gate = reshape_heads(ctx, q_gate, config.heads, config.head_dim * 2);
-    auto q = modules::SliceModule({3, 0, config.head_dim}).build(ctx, q_gate);
-    auto gate = modules::SliceModule({3, config.head_dim, config.head_dim}).build(ctx, q_gate);
-    gate = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, gate),
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    auto k = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.k_proj);
-    auto v = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.v_proj);
-    k = round_activation(ctx, k, config);
-    v = round_activation(ctx, v, config);
-    k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
-    v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, k, weights.k_norm);
-    q = round_activation(ctx, q, config);
-    k = round_activation(ctx, k, config);
-    q = apply_partial_rope(ctx, q, positions, config);
-    k = apply_partial_rope(ctx, k, positions, config);
-    q = round_activation(ctx, q, config);
-    k = round_activation(ctx, k, config);
-    k = core::ensure_backend_addressable_layout(ctx, k);
-    v = core::ensure_backend_addressable_layout(ctx, v);
+    FullAttentionBlock attention(ctx, input, positions, weights, config);
+    attention.key = core::ensure_backend_addressable_layout(ctx, attention.key);
+    attention.value = core::ensure_backend_addressable_layout(ctx, attention.value);
     auto key_dest = cache_view(ctx, cache_key, 0, steps, config.kv_heads, config.head_dim);
     auto value_dest = cache_view(ctx, cache_value, 0, steps, config.kv_heads, config.head_dim);
-    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, k.tensor, key_dest.tensor));
-    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, v.tensor, value_dest.tensor));
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
-    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
-    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = modules::GroupedQueryAttentionModule({
-        config.head_dim,
-        modules::GroupedQueryAttentionLowering::FlashGroupedViewKV,
-        GGML_PREC_F32,
-        modules::AttentionCausality::Causal,
-    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
-    context = round_activation(ctx, context, config);
-    context = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, context),
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    gate = modules::SigmoidModule{}.build(ctx, gate);
-    gate = round_activation(ctx, gate, config);
-    context = modules::MulModule{}.build(ctx, context, gate);
-    context = round_activation(ctx, context, config);
-    return round_activation(ctx,
-        modules::LinearModule({config.heads * config.head_dim, config.hidden_size, false}).build(ctx, context, weights.o_proj), config);
+    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, attention.key.tensor, key_dest.tensor));
+    ggml_build_forward_expand(graph, ggml_cpy(ctx.ggml, attention.value.tensor, value_dest.tensor));
+    return attention.build(attention_mask, attention.key, attention.value, modules::AttentionCausality::Causal);
 }
 
 core::TensorValue full_attention_cached(
@@ -458,292 +431,13 @@ core::TensorValue full_attention_cached(
     const core::TensorValue & cache_value,
     const FullAttentionWeights & weights,
     const Qwen35DecoderConfig & config) {
-    auto q_gate = modules::LinearModule({config.hidden_size, config.heads * config.head_dim * 2, false}).build(ctx, input, weights.q_proj);
-    q_gate = round_activation(ctx, q_gate, config);
-    q_gate = reshape_heads(ctx, q_gate, config.heads, config.head_dim * 2);
-    auto q = modules::SliceModule({3, 0, config.head_dim}).build(ctx, q_gate);
-    auto gate = modules::SliceModule({3, config.head_dim, config.head_dim}).build(ctx, q_gate);
-    gate = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, gate),
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    auto k = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.k_proj);
-    auto v = modules::LinearModule({config.hidden_size, config.kv_heads * config.head_dim, false}).build(ctx, input, weights.v_proj);
-    k = round_activation(ctx, k, config);
-    v = round_activation(ctx, v, config);
-    k = reshape_heads(ctx, k, config.kv_heads, config.head_dim);
-    v = reshape_heads(ctx, v, config.kv_heads, config.head_dim);
-    q = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, q, weights.q_norm);
-    k = modules::GemmaRMSNormModule({config.head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(ctx, k, weights.k_norm);
-    q = round_activation(ctx, q, config);
-    k = round_activation(ctx, k, config);
-    q = apply_partial_rope(ctx, q, positions, config);
-    k = apply_partial_rope(ctx, k, positions, config);
-    q = round_activation(ctx, q, config);
-    k = round_activation(ctx, k, config);
-    k = core::ensure_backend_addressable_layout(ctx, k);
-    v = core::ensure_backend_addressable_layout(ctx, v);
-
+    FullAttentionBlock attention(ctx, input, positions, weights, config);
     const modules::FastKVSetRowsModule set_rows({modules::FastKVSetRowsMode::BackendViewOptimized});
-    auto attention_key_cache = set_rows.build(ctx, cache_key, k, cache_slot);
-    auto attention_value_cache = set_rows.build(ctx, cache_value, v, cache_slot);
+    auto attention_key_cache = set_rows.build(ctx, cache_key, attention.key, cache_slot);
+    auto attention_value_cache = set_rows.build(ctx, cache_value, attention.value, cache_slot);
 
-    auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
-    q_heads = core::wrap_tensor(ggml_cont(ctx.ggml, q_heads.tensor), q_heads.shape, q_heads.type);
-    auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, attention_key_cache.shape.rank}).build(ctx, attention_key_cache);
-    auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, attention_value_cache.shape.rank}).build(ctx, attention_value_cache);
-    auto context = modules::GroupedQueryAttentionModule({
-        config.head_dim,
-        modules::GroupedQueryAttentionLowering::FlashGroupedViewKV,
-        GGML_PREC_F32,
-        modules::AttentionCausality::NonCausal,
-    }).build(ctx, q_heads, k_heads, v_heads, attention_mask);
-    context = round_activation(ctx, context, config);
-    context = core::reshape_tensor(
-        ctx,
-        core::ensure_backend_addressable_layout(ctx, context),
-        core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], config.heads * config.head_dim}));
-    gate = modules::SigmoidModule{}.build(ctx, gate);
-    gate = round_activation(ctx, gate, config);
-    context = modules::MulModule{}.build(ctx, context, gate);
-    context = round_activation(ctx, context, config);
-    return round_activation(ctx,
-        modules::LinearModule({config.heads * config.head_dim, config.hidden_size, false}).build(ctx, context, weights.o_proj), config);
-}
-
-core::TensorValue repeat_head_values(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & values,
-    int64_t steps,
-    int64_t heads) {
-    auto shaped = core::reshape_tensor(ctx, values, core::TensorShape::from_dims({1, 1, heads}));
-    return modules::RepeatModule({core::TensorShape::from_dims({1, steps, heads})}).build(ctx, shaped);
-}
-
-core::TensorValue repeat_linear_attention_heads(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    int64_t repeats) {
-    if (repeats == 1) {
-        return input;
-    }
-    if (input.shape.rank != 4) {
-        throw std::runtime_error("Qwen3.5 decoder linear attention head repeat expects rank-4 input");
-    }
-    std::vector<core::TensorValue> repeated_heads;
-    repeated_heads.reserve(static_cast<size_t>(input.shape.dims[2] * repeats));
-    for (int64_t head = 0; head < input.shape.dims[2]; ++head) {
-        auto one = modules::SliceModule({2, head, 1}).build(ctx, input);
-        for (int64_t rep = 0; rep < repeats; ++rep) {
-            repeated_heads.push_back(one);
-        }
-    }
-    auto output = repeated_heads.front();
-    for (size_t i = 1; i < repeated_heads.size(); ++i) {
-        output = modules::ConcatModule({2}).build(ctx, output, repeated_heads[i]);
-    }
-    return output;
-}
-
-struct LinearAttentionCachedOutput {
-    core::TensorValue output;
-    core::TensorValue next_conv_tail;
-    core::TensorValue next_recurrent_state;
-};
-
-LinearAttentionCachedOutput linear_attention_prefill(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & state,
-    const LinearAttentionWeights & weights,
-    const Qwen35DecoderConfig & config) {
-    const int64_t steps = input.shape.dims[1];
-    const int64_t key_dim = config.linear_key_head_dim * config.linear_num_key_heads;
-    const int64_t value_dim = config.linear_value_head_dim * config.linear_num_value_heads;
-    const int64_t conv_dim = key_dim * 2 + value_dim;
-    auto qkv = modules::LinearModule({config.hidden_size, conv_dim, false}).build(ctx, input, weights.in_proj_qkv);
-    qkv = round_activation(ctx, qkv, config);
-    qkv = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, qkv);
-    qkv = core::ensure_backend_addressable_layout(ctx, qkv);
-    auto * padded_raw = ggml_pad_ext(
-        ctx.ggml,
-        qkv.tensor,
-        static_cast<int>(config.linear_conv_kernel_dim - 1),
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0);
-    auto padded = core::wrap_tensor(
-        padded_raw,
-        core::TensorShape::from_dims({1, conv_dim, steps + config.linear_conv_kernel_dim - 1}),
-        GGML_TYPE_F32);
-    auto conv_weight = core::reshape_tensor(ctx, weights.conv_weight, core::TensorShape::from_dims({conv_dim, config.linear_conv_kernel_dim}));
-    auto conv = core::wrap_tensor(
-        ggml_ssm_conv(ctx.ggml, padded.tensor, conv_weight.tensor),
-        core::TensorShape::from_dims({1, steps, conv_dim}),
-        GGML_TYPE_F32);
-    conv = round_activation(ctx, conv, config);
-    conv = modules::SiluModule{}.build(ctx, conv);
-    conv = round_activation(ctx, conv, config);
-    auto query = modules::SliceModule({2, 0, key_dim}).build(ctx, conv);
-    auto key = modules::SliceModule({2, key_dim, key_dim}).build(ctx, conv);
-    auto value = modules::SliceModule({2, 2 * key_dim, value_dim}).build(ctx, conv);
-    query = reshape_heads(ctx, query, config.linear_num_key_heads, config.linear_key_head_dim);
-    key = reshape_heads(ctx, key, config.linear_num_key_heads, config.linear_key_head_dim);
-    value = reshape_heads(ctx, value, config.linear_num_value_heads, config.linear_value_head_dim);
-    query = core::wrap_tensor(ggml_l2_norm(ctx.ggml, query.tensor, 1.0e-6F), query.shape, GGML_TYPE_F32);
-    key = core::wrap_tensor(ggml_l2_norm(ctx.ggml, key.tensor, 1.0e-6F), key.shape, GGML_TYPE_F32);
-    query = round_activation(ctx, query, config);
-    key = round_activation(ctx, key, config);
-    if (config.linear_num_value_heads % config.linear_num_key_heads != 0) {
-        throw std::runtime_error("Qwen3.5 decoder linear attention key heads must divide value heads");
-    }
-    const int64_t key_repeats = config.linear_num_value_heads / config.linear_num_key_heads;
-    query = repeat_linear_attention_heads(ctx, query, key_repeats);
-    key = repeat_linear_attention_heads(ctx, key, key_repeats);
-    auto beta = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_b);
-    beta = round_activation(ctx, beta, config);
-    beta = modules::SigmoidModule{}.build(ctx, beta);
-    beta = round_activation(ctx, beta, config);
-    auto a = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_a);
-    a = round_activation(ctx, a, config);
-    auto dt_bias = repeat_head_values(ctx, weights.dt_bias, steps, config.linear_num_value_heads);
-    a = modules::AddModule{}.build(ctx, a, dt_bias);
-    a = core::wrap_tensor(ggml_softplus(ctx.ggml, a.tensor), a.shape, GGML_TYPE_F32);
-    auto a_log = repeat_head_values(ctx, weights.a_log, steps, config.linear_num_value_heads);
-    a_log = core::wrap_tensor(ggml_exp(ctx.ggml, a_log.tensor), a_log.shape, GGML_TYPE_F32);
-    auto g = modules::MulModule{}.build(ctx, a, a_log);
-    g = core::wrap_tensor(ggml_scale(ctx.ggml, g.tensor, -1.0F), g.shape, GGML_TYPE_F32);
-    beta = core::reshape_tensor(ctx, beta, core::TensorShape::from_dims({1, steps, config.linear_num_value_heads, 1}));
-    g = core::reshape_tensor(ctx, g, core::TensorShape::from_dims({1, steps, config.linear_num_value_heads, 1}));
-    auto delta = core::wrap_tensor(
-        ggml_gated_delta_net(ctx.ggml, query.tensor, key.tensor, value.tensor, g.tensor, beta.tensor, state.tensor),
-        core::TensorShape::from_dims({steps + config.linear_value_head_dim, value_dim}),
-        GGML_TYPE_F32);
-    auto current_delta = modules::SliceModule({0, 0, steps}).build(ctx, delta);
-    auto next_state = modules::SliceModule({0, steps, config.linear_value_head_dim}).build(ctx, delta);
-    current_delta = round_activation(ctx, current_delta, config);
-    next_state = round_activation(ctx, next_state, config);
-    next_state = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, next_state), state.shape);
-    auto z = modules::LinearModule({config.hidden_size, value_dim, false}).build(ctx, input, weights.in_proj_z);
-    z = round_activation(ctx, z, config);
-    z = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, z), core::TensorShape::from_dims({steps, value_dim}));
-    current_delta = modules::RMSNormModule({config.linear_value_head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(
-        ctx,
-        core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({steps * config.linear_num_value_heads, config.linear_value_head_dim})),
-        weights.norm);
-    current_delta = round_activation(ctx, current_delta, config);
-    auto z_flat = core::reshape_tensor(ctx, z, core::TensorShape::from_dims({steps * config.linear_num_value_heads, config.linear_value_head_dim}));
-    z_flat = modules::SiluModule{}.build(ctx, z_flat);
-    z_flat = round_activation(ctx, z_flat, config);
-    current_delta = modules::MulModule{}.build(ctx, current_delta, z_flat);
-    current_delta = round_activation(ctx, current_delta, config);
-    current_delta = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({1, steps, value_dim}));
-    auto output = modules::LinearModule({value_dim, config.hidden_size, false}).build(ctx, current_delta, weights.out_proj);
-    output = round_activation(ctx, output, config);
-    auto next_tail = modules::SliceModule({2, steps, config.linear_conv_kernel_dim - 1}).build(ctx, padded);
-    next_tail = core::ensure_backend_addressable_layout(ctx, next_tail);
-    return {std::move(output), std::move(next_tail), std::move(next_state)};
-}
-
-core::TensorValue linear_attention(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & state,
-    const LinearAttentionWeights & weights,
-    const Qwen35DecoderConfig & config) {
-    return linear_attention_prefill(ctx, input, state, weights, config).output;
-}
-
-LinearAttentionCachedOutput linear_attention_cached(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input,
-    const core::TensorValue & conv_tail,
-    const core::TensorValue & recurrent_state,
-    const LinearAttentionWeights & weights,
-    const Qwen35DecoderConfig & config) {
-    const int64_t steps = input.shape.dims[1];
-    if (steps != 1) {
-        throw std::runtime_error("Qwen3.5 decoder cached linear attention requires one decode step");
-    }
-    const int64_t key_dim = config.linear_key_head_dim * config.linear_num_key_heads;
-    const int64_t value_dim = config.linear_value_head_dim * config.linear_num_value_heads;
-    const int64_t conv_dim = key_dim * 2 + value_dim;
-    auto qkv = modules::LinearModule({config.hidden_size, conv_dim, false}).build(ctx, input, weights.in_proj_qkv);
-    qkv = round_activation(ctx, qkv, config);
-    qkv = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, qkv);
-    qkv = core::ensure_backend_addressable_layout(ctx, qkv);
-    auto conv_input = modules::ConcatModule({2}).build(ctx, conv_tail, qkv);
-    auto conv_weight = core::reshape_tensor(ctx, weights.conv_weight, core::TensorShape::from_dims({conv_dim, config.linear_conv_kernel_dim}));
-    auto conv = core::wrap_tensor(
-        ggml_ssm_conv(ctx.ggml, conv_input.tensor, conv_weight.tensor),
-        core::TensorShape::from_dims({1, 1, conv_dim}),
-        GGML_TYPE_F32);
-    conv = round_activation(ctx, conv, config);
-    conv = modules::SiluModule{}.build(ctx, conv);
-    conv = round_activation(ctx, conv, config);
-    auto query = modules::SliceModule({2, 0, key_dim}).build(ctx, conv);
-    auto key = modules::SliceModule({2, key_dim, key_dim}).build(ctx, conv);
-    auto value = modules::SliceModule({2, 2 * key_dim, value_dim}).build(ctx, conv);
-    query = reshape_heads(ctx, query, config.linear_num_key_heads, config.linear_key_head_dim);
-    key = reshape_heads(ctx, key, config.linear_num_key_heads, config.linear_key_head_dim);
-    value = reshape_heads(ctx, value, config.linear_num_value_heads, config.linear_value_head_dim);
-    query = core::wrap_tensor(ggml_l2_norm(ctx.ggml, query.tensor, 1.0e-6F), query.shape, GGML_TYPE_F32);
-    key = core::wrap_tensor(ggml_l2_norm(ctx.ggml, key.tensor, 1.0e-6F), key.shape, GGML_TYPE_F32);
-    query = round_activation(ctx, query, config);
-    key = round_activation(ctx, key, config);
-    if (config.linear_num_value_heads % config.linear_num_key_heads != 0) {
-        throw std::runtime_error("Qwen3.5 decoder linear attention key heads must divide value heads");
-    }
-    const int64_t key_repeats = config.linear_num_value_heads / config.linear_num_key_heads;
-    query = repeat_linear_attention_heads(ctx, query, key_repeats);
-    key = repeat_linear_attention_heads(ctx, key, key_repeats);
-    auto beta = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_b);
-    beta = round_activation(ctx, beta, config);
-    beta = modules::SigmoidModule{}.build(ctx, beta);
-    beta = round_activation(ctx, beta, config);
-    auto a = modules::LinearModule({config.hidden_size, config.linear_num_value_heads, false}).build(ctx, input, weights.in_proj_a);
-    a = round_activation(ctx, a, config);
-    auto dt_bias = repeat_head_values(ctx, weights.dt_bias, 1, config.linear_num_value_heads);
-    a = modules::AddModule{}.build(ctx, a, dt_bias);
-    a = core::wrap_tensor(ggml_softplus(ctx.ggml, a.tensor), a.shape, GGML_TYPE_F32);
-    auto a_log = repeat_head_values(ctx, weights.a_log, 1, config.linear_num_value_heads);
-    a_log = core::wrap_tensor(ggml_exp(ctx.ggml, a_log.tensor), a_log.shape, GGML_TYPE_F32);
-    auto g = modules::MulModule{}.build(ctx, a, a_log);
-    g = core::wrap_tensor(ggml_scale(ctx.ggml, g.tensor, -1.0F), g.shape, GGML_TYPE_F32);
-    beta = core::reshape_tensor(ctx, beta, core::TensorShape::from_dims({1, 1, config.linear_num_value_heads, 1}));
-    g = core::reshape_tensor(ctx, g, core::TensorShape::from_dims({1, 1, config.linear_num_value_heads, 1}));
-    auto delta = core::wrap_tensor(
-        ggml_gated_delta_net(ctx.ggml, query.tensor, key.tensor, value.tensor, g.tensor, beta.tensor, recurrent_state.tensor),
-        core::TensorShape::from_dims({1 + config.linear_value_head_dim, value_dim}),
-        GGML_TYPE_F32);
-    auto current_delta = modules::SliceModule({0, 0, 1}).build(ctx, delta);
-    auto next_state = modules::SliceModule({0, 1, config.linear_value_head_dim}).build(ctx, delta);
-    current_delta = round_activation(ctx, current_delta, config);
-    next_state = round_activation(ctx, next_state, config);
-    next_state = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, next_state), recurrent_state.shape);
-    auto z = modules::LinearModule({config.hidden_size, value_dim, false}).build(ctx, input, weights.in_proj_z);
-    z = round_activation(ctx, z, config);
-    z = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, z), core::TensorShape::from_dims({1, value_dim}));
-    current_delta = modules::RMSNormModule({config.linear_value_head_dim, config.rms_norm_eps, true, false}, config.rms_norm_lowering).build(
-        ctx,
-        core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({config.linear_num_value_heads, config.linear_value_head_dim})),
-        weights.norm);
-    current_delta = round_activation(ctx, current_delta, config);
-    auto z_flat = core::reshape_tensor(ctx, z, core::TensorShape::from_dims({config.linear_num_value_heads, config.linear_value_head_dim}));
-    z_flat = modules::SiluModule{}.build(ctx, z_flat);
-    z_flat = round_activation(ctx, z_flat, config);
-    current_delta = modules::MulModule{}.build(ctx, current_delta, z_flat);
-    current_delta = round_activation(ctx, current_delta, config);
-    current_delta = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, current_delta), core::TensorShape::from_dims({1, 1, value_dim}));
-    auto output = modules::LinearModule({value_dim, config.hidden_size, false}).build(ctx, current_delta, weights.out_proj);
-    output = round_activation(ctx, output, config);
-    auto next_tail = modules::SliceModule({2, 1, config.linear_conv_kernel_dim - 1}).build(ctx, conv_input);
-    next_tail = core::ensure_backend_addressable_layout(ctx, next_tail);
-    return {std::move(output), std::move(next_tail), std::move(next_state)};
+    return attention.build(attention_mask, attention_key_cache, attention_value_cache,
+        modules::AttentionCausality::NonCausal);
 }
 
 class BackboneForwardGraph {
@@ -791,7 +485,7 @@ public:
         positions_ = nullptr;
         attention_mask_ = nullptr;
         output_ = nullptr;
-        state_inputs_.clear();
+        initial_state_ = nullptr;
     }
 
 private:
@@ -817,7 +511,7 @@ private:
             attention_mask_,
             core::TensorShape::from_dims({1, 1, steps, steps}),
             GGML_TYPE_F16);
-        state_inputs_.clear();
+        initial_state_ = nullptr;
         for (const auto & layer : weights_->layers) {
             auto residual = x;
             auto h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.input_norm);
@@ -825,24 +519,22 @@ private:
             if (layer.full_attention) {
                 h = full_attention(ctx, h, positions, attention_mask, *layer.full, config_);
             } else {
-                auto state = core::make_tensor(
-                    input_ctx,
-                    GGML_TYPE_F32,
-                    core::TensorShape::from_dims({
-                        1,
-                        1,
-                        config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads,
-                    }));
-                state_inputs_.push_back(state.tensor);
-                ggml_set_input(state.tensor);
-                h = linear_attention(ctx, h, state, *layer.linear, config_);
+                if (!initial_state_) {
+                    initial_state_ = core::make_tensor(input_ctx, GGML_TYPE_F32,
+                        core::TensorShape::from_dims({1, 1,
+                            config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads})).tensor;
+                    ggml_set_input(initial_state_);
+                }
+                const auto state = core::wrap_tensor(initial_state_, core::TensorShape::from_dims({1, 1,
+                    config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads}));
+                h = weights_->delta_net.build(ctx, h, state, *layer.linear).output;
             }
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
             residual = x;
             h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
-            h = mlp(ctx, h, layer, config_);
+            h = weights_->feed_forward.build(ctx, h, layer.mlp);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
@@ -867,8 +559,8 @@ private:
         const size_t state_values = static_cast<size_t>(
             config_.linear_value_head_dim * config_.linear_value_head_dim * config_.linear_num_value_heads);
         std::vector<float> zero_state(state_values, 0.0F);
-        for (ggml_tensor * state : state_inputs_) {
-            ggml_backend_tensor_set(state, zero_state.data(), 0, zero_state.size() * sizeof(float));
+        if (initial_state_) {
+            ggml_backend_tensor_set(initial_state_, zero_state.data(), 0, zero_state.size() * sizeof(float));
         }
         steps_ = steps;
     }
@@ -883,7 +575,7 @@ private:
     ggml_tensor * positions_ = nullptr;
     ggml_tensor * attention_mask_ = nullptr;
     ggml_tensor * output_ = nullptr;
-    std::vector<ggml_tensor *> state_inputs_;
+    ggml_tensor * initial_state_ = nullptr;
 };
 
 class TokenEmbeddingGraph {
@@ -1102,7 +794,7 @@ public:
                     core::TensorShape::from_dims({1, 1, state_values}));
                 linear_conv_tails_.push_back(conv_tail.tensor);
                 linear_recurrent_states_.push_back(recurrent_state.tensor);
-                auto out = linear_attention_cached(ctx, h, conv_tail, recurrent_state, *layer.linear, config_);
+                auto out = weights_->delta_net.build(ctx, h, recurrent_state, *layer.linear, conv_tail);
                 ggml_build_forward_expand(graph_, ggml_cpy(ctx.ggml, out.next_conv_tail.tensor, conv_tail.tensor));
                 ggml_build_forward_expand(graph_, ggml_cpy(ctx.ggml, out.next_recurrent_state.tensor, recurrent_state.tensor));
                 h = std::move(out.output);
@@ -1112,7 +804,7 @@ public:
             residual = x;
             h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
-            h = mlp(ctx, h, layer, config_);
+            h = weights_->feed_forward.build(ctx, h, layer.mlp);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
@@ -1216,7 +908,7 @@ private:
             return;
         }
         prefill_mem_.reset(execution_.backend());
-        prefill_state_inputs_.clear();
+        prefill_initial_state_ = nullptr;
         prefill_attention_mask_ = nullptr;
         ggml_init_params params{128ull * 1024ull * 1024ull, nullptr, true};
         prefill_mem_.ctx.reset(ggml_init(params));
@@ -1272,13 +964,16 @@ private:
                 if (linear_index >= linear_count) {
                     throw std::runtime_error("Qwen3.5 decoder linear-attention state count mismatch");
                 }
-                auto state = core::make_tensor(
-                    input_ctx,
-                    GGML_TYPE_F32,
+                // Every layer reads the same immutable zero state. Returned
+                // states are committed to the separate per-layer decode banks.
+                if (!prefill_initial_state_) {
+                    prefill_initial_state_ = core::make_tensor(input_ctx, GGML_TYPE_F32,
+                        core::TensorShape::from_dims({1, 1, state_values})).tensor;
+                    ggml_set_input(prefill_initial_state_);
+                }
+                const auto state = core::wrap_tensor(prefill_initial_state_,
                     core::TensorShape::from_dims({1, 1, state_values}));
-                prefill_state_inputs_.push_back(state.tensor);
-                ggml_set_input(state.tensor);
-                auto out = linear_attention_prefill(ctx, h, state, *layer.linear, config_);
+                auto out = weights_->delta_net.build(ctx, h, state, *layer.linear);
                 ggml_build_forward_expand(
                     prefill_mem_.graph,
                     ggml_cpy(ctx.ggml, out.next_conv_tail.tensor, linear_conv_tails_[static_cast<size_t>(linear_index)]));
@@ -1293,7 +988,7 @@ private:
             residual = x;
             h = modules::GemmaRMSNormModule({config_.hidden_size, config_.rms_norm_eps, true, false}, config_.rms_norm_lowering).build(ctx, x, layer.post_norm);
             h = round_activation(ctx, h, config_);
-            h = mlp(ctx, h, layer, config_);
+            h = weights_->feed_forward.build(ctx, h, layer.mlp);
             x = modules::AddModule{}.build(ctx, residual, h);
             x = round_activation(ctx, x, config_);
         }
@@ -1318,8 +1013,8 @@ private:
         const auto mask = modules::causal_prefill_mask_values(1, steps);
         ggml_backend_tensor_set(prefill_attention_mask_, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
         std::vector<float> zero_state(static_cast<size_t>(state_values), 0.0F);
-        for (ggml_tensor * state : prefill_state_inputs_) {
-            ggml_backend_tensor_set(state, zero_state.data(), 0, zero_state.size() * sizeof(float));
+        if (prefill_initial_state_) {
+            ggml_backend_tensor_set(prefill_initial_state_, zero_state.data(), 0, zero_state.size() * sizeof(float));
         }
         prefill_steps_ = steps;
     }
@@ -1348,7 +1043,7 @@ private:
     ggml_tensor * prefill_positions_ = nullptr;
     ggml_tensor * prefill_attention_mask_ = nullptr;
     ggml_tensor * prefill_output_ = nullptr;
-    std::vector<ggml_tensor *> prefill_state_inputs_;
+    ggml_tensor * prefill_initial_state_ = nullptr;
 };
 
 }  // namespace
