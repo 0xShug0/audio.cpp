@@ -282,9 +282,14 @@ HttpResult http_request(
     RequestAuth auth,
     bool follow_redirects = true) {
     const auto parsed = parse_http_url(url);
+#ifdef _WIN32
+    // Close HTTPS clients before the worker thread's BoringSSL TLS teardown.
+    std::map<std::string, std::unique_ptr<httplib::Client>> clients;
+#else
     // Inventory workers issue many requests to the same origin. Keep their
     // connections local to each thread rather than resolving every file anew.
     thread_local std::map<std::string, std::unique_ptr<httplib::Client>> clients;
+#endif
     const auto origin = http_origin(parsed);
     auto & cached = clients[origin];
     if (!cached) cached = std::make_unique<httplib::Client>(origin);
