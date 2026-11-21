@@ -1411,6 +1411,76 @@ inline static vfloat32m2_t ggml_v_silu_m2(vfloat32m2_t x, int vl) {
 
 #endif // __ARM_NEON / __AVX2__ / __SSE2__ / __riscv_v_intrinsic
 
+// erf with at most 1 ulp error on top of ggml_v_expf's (N. Juffa's float erf):
+// a polynomial in x^2 below |x| = 0.9277, 1 - exp(polynomial) above.
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+inline static __m512 ggml_v_erf(__m512 a) {
+    const __m512 t = _mm512_abs_ps(a);
+    const __m512 s = _mm512_mul_ps(a, a);
+    __m512 r = _mm512_fmadd_ps(_mm512_set1_ps(-1.72853470e-5f), t, _mm512_set1_ps(3.83197126e-4f));
+    const __m512 u = _mm512_fmadd_ps(_mm512_set1_ps(-3.88396438e-3f), t, _mm512_set1_ps(2.42546219e-2f));
+    r = _mm512_fmadd_ps(r, s, u);
+    r = _mm512_fmadd_ps(r, t, _mm512_set1_ps(-1.06777877e-1f));
+    r = _mm512_fmadd_ps(r, t, _mm512_set1_ps(-6.34846687e-1f));
+    r = _mm512_fmadd_ps(r, t, _mm512_set1_ps(-1.28717512e-1f));
+    r = _mm512_fmadd_ps(r, t, _mm512_sub_ps(_mm512_setzero_ps(), t));
+    const __m512 sign = _mm512_and_ps(a, _mm512_set1_ps(-0.0f));
+    const __m512 big = _mm512_or_ps(_mm512_sub_ps(_mm512_set1_ps(1.0f), ggml_v_expf(r)), sign);
+    __m512 p = _mm512_set1_ps(-5.96761703e-4f);
+    p = _mm512_fmadd_ps(p, s, _mm512_set1_ps(4.99119423e-3f));
+    p = _mm512_fmadd_ps(p, s, _mm512_set1_ps(-2.67681349e-2f));
+    p = _mm512_fmadd_ps(p, s, _mm512_set1_ps(1.12819925e-1f));
+    p = _mm512_fmadd_ps(p, s, _mm512_set1_ps(-3.76125336e-1f));
+    p = _mm512_fmadd_ps(p, s, _mm512_set1_ps(1.28379166e-1f));
+    p = _mm512_fmadd_ps(p, a, a);
+    return _mm512_mask_blend_ps(_mm512_cmp_ps_mask(t, _mm512_set1_ps(0.927734375f), _CMP_GT_OQ), p, big);
+}
+#elif defined(__AVX2__) && defined(__FMA__)
+inline static __m256 ggml_v_erf(__m256 a) {
+    const __m256 sign = _mm256_and_ps(a, _mm256_set1_ps(-0.0f));
+    const __m256 t = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), a);
+    const __m256 s = _mm256_mul_ps(a, a);
+    __m256 r = _mm256_fmadd_ps(_mm256_set1_ps(-1.72853470e-5f), t, _mm256_set1_ps(3.83197126e-4f));
+    const __m256 u = _mm256_fmadd_ps(_mm256_set1_ps(-3.88396438e-3f), t, _mm256_set1_ps(2.42546219e-2f));
+    r = _mm256_fmadd_ps(r, s, u);
+    r = _mm256_fmadd_ps(r, t, _mm256_set1_ps(-1.06777877e-1f));
+    r = _mm256_fmadd_ps(r, t, _mm256_set1_ps(-6.34846687e-1f));
+    r = _mm256_fmadd_ps(r, t, _mm256_set1_ps(-1.28717512e-1f));
+    r = _mm256_fmadd_ps(r, t, _mm256_sub_ps(_mm256_setzero_ps(), t));
+    const __m256 big = _mm256_or_ps(_mm256_sub_ps(_mm256_set1_ps(1.0f), ggml_v_expf(r)), sign);
+    __m256 p = _mm256_set1_ps(-5.96761703e-4f);
+    p = _mm256_fmadd_ps(p, s, _mm256_set1_ps(4.99119423e-3f));
+    p = _mm256_fmadd_ps(p, s, _mm256_set1_ps(-2.67681349e-2f));
+    p = _mm256_fmadd_ps(p, s, _mm256_set1_ps(1.12819925e-1f));
+    p = _mm256_fmadd_ps(p, s, _mm256_set1_ps(-3.76125336e-1f));
+    p = _mm256_fmadd_ps(p, s, _mm256_set1_ps(1.28379166e-1f));
+    p = _mm256_fmadd_ps(p, a, a);
+    return _mm256_blendv_ps(p, big, _mm256_cmp_ps(t, _mm256_set1_ps(0.927734375f), _CMP_GT_OQ));
+}
+#endif
+
+// Vectorized GELU (erf): close to ggml_vec_gelu_erf_f32 but not bit-identical to it.
+inline static void ggml_vec_gelu_erf_approx_f32(const int n, float * y, const float * x) {
+    int i = 0;
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 15 < n; i += 16) {
+        const __m512 xi = _mm512_loadu_ps(x + i);
+        const __m512 e = ggml_v_erf(_mm512_mul_ps(xi, _mm512_set1_ps(SQRT_2_INV)));
+        _mm512_storeu_ps(y + i, _mm512_mul_ps(_mm512_mul_ps(_mm512_set1_ps(0.5f), xi), _mm512_add_ps(_mm512_set1_ps(1.0f), e)));
+    }
+#elif defined(__AVX2__) && defined(__FMA__)
+    for (; i + 7 < n; i += 8) {
+        const __m256 xi = _mm256_loadu_ps(x + i);
+        const __m256 e = ggml_v_erf(_mm256_mul_ps(xi, _mm256_set1_ps(SQRT_2_INV)));
+        _mm256_storeu_ps(y + i, _mm256_mul_ps(_mm256_mul_ps(_mm256_set1_ps(0.5f), xi), _mm256_add_ps(_mm256_set1_ps(1.0f), e)));
+    }
+#endif
+    for (; i < n; ++i) {
+        float xi = x[i];
+        y[i] = 0.5f*xi*(1.0f + erff(xi*SQRT_2_INV));
+    }
+}
+
 inline static void ggml_vec_silu_f16(const int n, ggml_fp16_t * y, const ggml_fp16_t * x) {
     for (int i = 0; i < n; ++i) {
         y[i] = ggml_silu_f16(x[i]);

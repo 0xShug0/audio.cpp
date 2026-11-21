@@ -2497,6 +2497,51 @@ static void ggml_compute_forward_gelu_erf(
     }
 }
 
+// ggml_compute_forward_gelu_erf_approx
+
+static void ggml_compute_forward_gelu_erf_approx(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    if (src0->type != GGML_TYPE_F32) {
+        // only F32 has a vectorized kernel
+        ggml_compute_forward_gelu_erf(params, dst);
+        return;
+    }
+
+    assert(ggml_is_contiguous_rows(src0));
+    assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int nc = src0->ne[0];
+    const int nr = ggml_nrows(src0);
+
+    // rows per thread
+    const int dr = (nr + nth - 1)/nth;
+
+    // row range for this thread
+    const int ir0 = dr*ith;
+    const int ir1 = MIN(ir0 + dr, nr);
+
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
+        ggml_vec_gelu_erf_approx_f32(nc,
+                (float *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (float *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
+    }
+}
+
 // ggml_compute_forward_gelu_quick
 
 static void ggml_compute_forward_gelu_quick_f32(
@@ -8621,7 +8666,54 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
         // loop over n_kv and n_head_kv
         // ref: https://arxiv.org/pdf/2112.05682.pdf
 
-        for (int64_t ic = ic_start; ic < ic_end; ++ic) {
+        // Quantized V without a soft cap goes in blocks of keys: every score of
+        // a block first, then one vectorized exp and one rescale per block, so
+        // the dequantized rows feed one F32 accumulator.
+        const bool blocked = logit_softcap == 0.0f && ggml_is_quantized(v->type);
+        if (blocked) {
+            memset(VKQ32, 0, DV*sizeof(float));
+            constexpr int64_t block = 64;
+            float scores[block];
+            for (int64_t ib = ic_start; ib < ic_end; ib += block) {
+                const int64_t n = std::min(block, ic_end - ib);
+                float block_max = -INFINITY;
+                for (int64_t j = 0; j < n; ++j) {
+                    const float mv = mp ? slope*GGML_CPU_FP16_TO_FP32(mp[ib + j]) : 0.0f;
+                    if (mv == -INFINITY) {
+                        scores[j] = -INFINITY;
+                        continue;
+                    }
+                    float s;
+                    kq_vec_dot(DK, &s, 0, (const char *) k->data + ((ib + j)*nbk1 + ik2*nbk2 + ik3*nbk3), 0, Q_q, 0, 1);
+                    scores[j] = s*scale + mv;
+                    block_max = std::max(block_max, scores[j]);
+                }
+                if (block_max == -INFINITY) {
+                    continue;
+                }
+                if (block_max > M) {
+                    const float ms = expf(M - block_max);
+                    ggml_vec_scale_f32(DV, VKQ32, ms);
+                    S *= ms;
+                    M = block_max;
+                }
+                S += (float) ggml_vec_soft_max_f32((int) n, scores, scores, M);
+                for (int64_t j = 0; j < n; ++j) {
+                    if (scores[j] == 0.0f) {
+                        continue;
+                    }
+                    const char * v_data = (const char *) v->data + ((ib + j)*nbv1 + iv2*nbv2 + iv3*nbv3);
+                    if (v_to_float) {
+                        v_to_float(v_data, V32, DV);
+                        ggml_vec_mad_f32(DV, VKQ32, V32, scores[j]);
+                    } else {
+                        ggml_vec_mad_f32(DV, VKQ32, (const float *) v_data, scores[j]);
+                    }
+                }
+            }
+        }
+
+        for (int64_t ic = blocked ? ic_end : ic_start; ic < ic_end; ++ic) {
             const float mv = mp ? slope*GGML_CPU_FP16_TO_FP32(mp[ic]) : 0.0f;
             if (mv == -INFINITY) {
                 continue;
@@ -8688,7 +8780,7 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
             S = S*ms + vs; // scale and increment sum with partial sum
         }
 
-        if (v->type == GGML_TYPE_F16) {
+        if (!blocked && v->type == GGML_TYPE_F16) {
             for (int64_t d = 0; d < DV; ++d) {
                 VKQ32[d] = GGML_CPU_FP16_TO_FP32(VKQ16[d]);
             }
@@ -9581,24 +9673,60 @@ void ggml_compute_forward_flash_attn_back(
 
 // ggml_compute_forward_ssm_conv
 
+// The explicit Mamba-1 kernels work on blocks of kSsmLanes adjacent channels: a
+// thread owns whole (sequence, block) pairs, reads and writes each block's
+// channels contiguously, and evaluates exp on vector registers.
+static constexpr int64_t kSsmLanes = 16;
+
+// exp of kSsmLanes floats in place, on the vector unit ggml_v_expf targets here.
+static inline void ggml_ssm_exp_lanes(float * v) {
+#if defined(__ARM_FEATURE_SVE) && defined(__aarch64__)
+    for (int64_t i = 0; i < kSsmLanes; ++i) v[i] = expf(v[i]);
+#elif defined(__ARM_NEON) && defined(__aarch64__)
+    for (int64_t i = 0; i < kSsmLanes; i += 4) vst1q_f32(v + i, ggml_v_expf(vld1q_f32(v + i)));
+#elif defined(__AVX512F__) && defined(__AVX512DQ__)
+    _mm512_storeu_ps(v, ggml_v_expf(_mm512_loadu_ps(v)));
+#elif defined(__AVX2__) && defined(__FMA__)
+    for (int64_t i = 0; i < kSsmLanes; i += 8) _mm256_storeu_ps(v + i, ggml_v_expf(_mm256_loadu_ps(v + i)));
+#elif defined(__SSE2__)
+    for (int64_t i = 0; i < kSsmLanes; i += 4) _mm_storeu_ps(v + i, ggml_v_expf(_mm_loadu_ps(v + i)));
+#else
+    for (int64_t i = 0; i < kSsmLanes; ++i) v[i] = expf(v[i]);
+#endif
+}
+
 void ggml_compute_forward_ssm_conv_causal_silu(const ggml_compute_params * params, ggml_tensor * dst) {
     const auto * x = dst->src[0];
     const auto * w = (const float *) dst->src[1]->data;
     const auto * bias = (const float *) dst->src[2]->data;
-    const int64_t taps = dst->src[1]->ne[0], channels = x->ne[1], tokens = x->ne[0];
+    const int64_t taps = dst->src[1]->ne[0], channels = x->ne[1], tokens = x->ne[0], sequences = x->ne[2];
+    const int64_t blocks = (channels + kSsmLanes - 1) / kSsmLanes;
     auto * output = (float *) dst->data;
-    for (int64_t row = params->ith; row < channels*x->ne[2]; row += params->nth) {
-        const int64_t channel = row % channels, seq = row / channels;
+    std::vector<float> weights(taps * kSsmLanes);
+    for (int64_t task = params->ith; task < sequences*blocks; task += params->nth) {
+        const int64_t seq = task / blocks, first = (task % blocks) * kSsmLanes;
+        const int64_t lanes = std::min(kSsmLanes, channels - first);
+        float b[kSsmLanes] = {};
+        std::fill(weights.begin(), weights.end(), 0.0f);
+        for (int64_t l = 0; l < lanes; ++l) {
+            b[l] = bias[first + l];
+            for (int64_t k = 0; k < taps; ++k) weights[k*kSsmLanes + l] = w[(first + l)*taps + k];
+        }
         for (int64_t t = 0; t < tokens; ++t) {
-            float value = 0;
-            for (int64_t k = 0; k < taps; ++k) {
-                const int64_t time = t + k - taps + 1;
-                const float sample = time < 0 ? 0.0f : *(const float *)
-                    ((const char *) x->data + time*x->nb[0] + channel*x->nb[1] + seq*x->nb[2]);
-                value = std::fma(sample, w[channel*taps + k], value);
+            float value[kSsmLanes] = {};
+            for (int64_t k = std::max<int64_t>(0, taps - 1 - t); k < taps; ++k) {
+                const char * row = (const char *) x->data + (t + k - taps + 1)*x->nb[0] + first*x->nb[1] + seq*x->nb[2];
+                float sample[kSsmLanes] = {};
+                if (x->nb[1] == sizeof(float)) {
+                    std::copy_n((const float *) row, lanes, sample);
+                } else {
+                    for (int64_t l = 0; l < lanes; ++l) sample[l] = *(const float *) (row + l*x->nb[1]);
+                }
+                for (int64_t l = 0; l < kSsmLanes; ++l) value[l] = std::fma(sample[l], weights[k*kSsmLanes + l], value[l]);
             }
-            value += bias[channel];
-            output[(seq*tokens + t)*channels + channel] = value / (1.0f + std::exp(-value));
+            for (int64_t l = 0; l < kSsmLanes; ++l) value[l] += b[l];
+            ggml_vec_silu_f32(kSsmLanes, value, value);
+            std::copy_n(value, lanes, output + (seq*tokens + t)*channels + first);
         }
     }
 }
@@ -9607,40 +9735,82 @@ void ggml_compute_forward_ssm_scan_mamba1(const ggml_compute_params * params, gg
     const auto * initial = dst->src[0];
     const auto * x = dst->src[1];
     const auto * projected = dst->src[2];
-    const auto * A = dst->src[3];
+    const auto * A = (const float *) dst->src[3]->data;
     const auto * ids = (const int32_t *) dst->src[4]->data;
     const auto * dw = (const float *) dst->src[5]->data;
     const auto * db = (const float *) dst->src[6]->data;
     const auto * D = (const float *) dst->src[7]->data;
     const auto * gate = dst->src[8];
     const int64_t size = initial->ne[0], channels = x->ne[1], tokens = x->ne[2], sequences = x->ne[3];
-    const int64_t rank = dst->src[5]->ne[0];
+    const int64_t rank = dst->src[5]->ne[0], decay_stride = dst->src[3]->ne[0];
+    const int64_t blocks = (channels + kSsmLanes - 1) / kSsmLanes;
     auto * output = (float *) dst->data;
-    std::vector<float> state(size);
-    for (int64_t row = params->ith; row < channels*sequences; row += params->nth) {
-        const int64_t channel = row % channels, seq = row / channels;
-        GGML_ASSERT(ids[seq] >= 0 && ids[seq] < initial->ne[3]);
-        const auto * start = (const float *) ((const char *) initial->data + channel*initial->nb[2] + ids[seq]*initial->nb[3]);
-        std::copy(start, start + size, state.begin());
-        const auto * decay = (const float *) ((const char *) A->data + channel*A->nb[1]);
-        for (int64_t t = 0; t < tokens; ++t) {
-            const auto * p = (const float *) ((const char *) projected->data + t*projected->nb[1] + seq*projected->nb[2]);
-            float delta = 0;
-            for (int64_t k = 0; k < rank; ++k) delta = std::fma(dw[channel*rank + k], p[k], delta);
-            delta += db[channel];
-            delta = delta <= 20.0f ? std::log(1.0f + std::exp(delta)) : delta;
-            const float sample = *(const float *) ((const char *) x->data + channel*x->nb[1] + t*x->nb[2] + seq*x->nb[3]);
-            const float injection = sample*delta;
-            float sum[4] = {0, 0, 0, 0};
-            for (int64_t n = 0; n < size; ++n) {
-                state[n] = std::fma(state[n], std::exp(delta*decay[A->ne[0] == 1 ? 0 : n]), p[rank + n]*injection);
-                sum[n % 4] = std::fma(state[n], p[rank + size + n], sum[n % 4]);
-            }
-            const float y = (sum[0] + sum[1] + sum[2] + sum[3]) + sample*D[channel];
-            const float z = *(const float *) ((const char *) gate->data + channel*gate->nb[0] + t*gate->nb[1] + seq*gate->nb[2]);
-            output[(seq*tokens + t)*channels + channel] = (z / (1.0f + std::exp(-z)))*y;
+    auto * final_state = output + channels*tokens*sequences;
+    // A task is one channel block over a run of sequences: whole blocks when
+    // there are enough to share, so a block's weights are laid out once.
+    const int64_t runs = blocks >= params->nth ? 1 : sequences;
+    const int64_t per_run = (sequences + runs - 1) / runs;
+    // Lane-major copies of a block's state, decay and dt projection.
+    std::vector<float> state(size * kSsmLanes), decay(size * kSsmLanes), dt_weight(rank * kSsmLanes);
+    for (int64_t task = params->ith; task < blocks*runs; task += params->nth) {
+        const int64_t first = (task % blocks) * kSsmLanes, run = task / blocks;
+        const int64_t lanes = std::min(kSsmLanes, channels - first);
+        float dt_bias[kSsmLanes] = {}, skip[kSsmLanes] = {};
+        std::fill(decay.begin(), decay.end(), 0.0f);
+        std::fill(dt_weight.begin(), dt_weight.end(), 0.0f);
+        for (int64_t l = 0; l < lanes; ++l) {
+            const int64_t channel = first + l;
+            for (int64_t n = 0; n < size; ++n) decay[n*kSsmLanes + l] = A[channel*decay_stride + (decay_stride == 1 ? 0 : n)];
+            for (int64_t k = 0; k < rank; ++k) dt_weight[k*kSsmLanes + l] = dw[channel*rank + k];
+            dt_bias[l] = db[channel];
+            skip[l] = D[channel];
         }
-        std::copy(state.begin(), state.end(), output + channels*tokens*sequences + row*size);
+        for (int64_t seq = run*per_run; seq < std::min(sequences, (run + 1)*per_run); ++seq) {
+            GGML_ASSERT(ids[seq] >= 0 && ids[seq] < initial->ne[3]);
+            std::fill(state.begin(), state.end(), 0.0f);
+            for (int64_t l = 0; l < lanes; ++l) {
+                const auto * start = (const float *) ((const char *) initial->data + (first + l)*initial->nb[2] + ids[seq]*initial->nb[3]);
+                for (int64_t n = 0; n < size; ++n) state[n*kSsmLanes + l] = start[n];
+            }
+            for (int64_t t = 0; t < tokens; ++t) {
+                const auto * p = (const float *) ((const char *) projected->data + t*projected->nb[1] + seq*projected->nb[2]);
+                float sample[kSsmLanes] = {}, z[kSsmLanes] = {};
+                std::copy_n((const float *) ((const char *) x->data + first*x->nb[1] + t*x->nb[2] + seq*x->nb[3]), lanes, sample);
+                std::copy_n((const float *) ((const char *) gate->data + first*gate->nb[0] + t*gate->nb[1] + seq*gate->nb[2]), lanes, z);
+                float delta[kSsmLanes], soft[kSsmLanes];
+                std::copy_n(dt_bias, kSsmLanes, delta);
+                for (int64_t k = 0; k < rank; ++k) {
+                    for (int64_t l = 0; l < kSsmLanes; ++l) delta[l] = std::fma(dt_weight[k*kSsmLanes + l], p[k], delta[l]);
+                }
+                std::copy_n(delta, kSsmLanes, soft);
+                ggml_ssm_exp_lanes(soft);
+                float injection[kSsmLanes];
+                for (int64_t l = 0; l < kSsmLanes; ++l) {
+                    delta[l] = delta[l] <= 20.0f ? std::log(1.0f + soft[l]) : delta[l];
+                    injection[l] = sample[l]*delta[l];
+                }
+                float sum[4][kSsmLanes] = {};
+                for (int64_t n = 0; n < size; ++n) {
+                    float factor[kSsmLanes];
+                    for (int64_t l = 0; l < kSsmLanes; ++l) factor[l] = delta[l]*decay[n*kSsmLanes + l];
+                    ggml_ssm_exp_lanes(factor);
+                    const float b = p[rank + n], c = p[rank + size + n];
+                    float * s = state.data() + n*kSsmLanes;
+                    for (int64_t l = 0; l < kSsmLanes; ++l) {
+                        s[l] = std::fma(s[l], factor[l], b*injection[l]);
+                        sum[n % 4][l] = std::fma(s[l], c, sum[n % 4][l]);
+                    }
+                }
+                ggml_vec_silu_f32(kSsmLanes, z, z);
+                float * out = output + (seq*tokens + t)*channels + first;
+                for (int64_t l = 0; l < lanes; ++l) {
+                    out[l] = z[l]*((sum[0][l] + sum[1][l] + sum[2][l] + sum[3][l]) + sample[l]*skip[l]);
+                }
+            }
+            for (int64_t l = 0; l < lanes; ++l) {
+                for (int64_t n = 0; n < size; ++n) final_state[(seq*channels + first + l)*size + n] = state[n*kSsmLanes + l];
+            }
+        }
     }
 }
 
@@ -10114,6 +10284,10 @@ void ggml_compute_forward_unary(
         case GGML_UNARY_OP_GELU_ERF:
             {
                 ggml_compute_forward_gelu_erf(params, dst);
+            } break;
+        case GGML_UNARY_OP_GELU_ERF_APPROX:
+            {
+                ggml_compute_forward_gelu_erf_approx(params, dst);
             } break;
         case GGML_UNARY_OP_GELU_QUICK:
             {

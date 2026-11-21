@@ -10,6 +10,9 @@ enum class GeluApproximation {
     ExactErf,
     Tanh,
     Quick,
+    // Vectorized erf on the CPU backend, the only backend with a kernel for it:
+    // faster than ExactErf, last bits can differ. Opt-in per model.
+    ApproxErf,
 };
 
 struct GeluConfig {

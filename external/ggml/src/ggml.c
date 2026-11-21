@@ -1312,9 +1312,10 @@ static const char * GGML_UNARY_OP_NAME[GGML_UNARY_OP_COUNT] = {
     "TRUNC",
     "ROUND_BF16",
     "RSQRT",
+    "GELU_ERF_APPROX",
 };
 
-static_assert(GGML_UNARY_OP_COUNT == 24, "GGML_UNARY_OP_COUNT != 24");
+static_assert(GGML_UNARY_OP_COUNT == 25, "GGML_UNARY_OP_COUNT != 25");
 
 static const char * GGML_GLU_OP_NAME[GGML_GLU_OP_COUNT] = {
     "REGLU",
@@ -2957,6 +2958,20 @@ struct ggml_tensor * ggml_gelu_erf_inplace(
         struct ggml_context * ctx,
         struct ggml_tensor  * a) {
     return ggml_unary_inplace(ctx, a, GGML_UNARY_OP_GELU_ERF);
+}
+
+// ggml_gelu_erf_approx
+
+struct ggml_tensor * ggml_gelu_erf_approx(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a) {
+    return ggml_unary(ctx, a, GGML_UNARY_OP_GELU_ERF_APPROX);
+}
+
+struct ggml_tensor * ggml_gelu_erf_approx_inplace(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a) {
+    return ggml_unary_inplace(ctx, a, GGML_UNARY_OP_GELU_ERF_APPROX);
 }
 
 // ggml_gelu_quick

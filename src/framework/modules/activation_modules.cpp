@@ -472,6 +472,8 @@ core::TensorValue GeluModule::build(core::ModuleBuildContext & ctx, const core::
         }
         case GeluApproximation::Quick:
             return build_unary(ctx, input, ggml_gelu_quick);
+        case GeluApproximation::ApproxErf:
+            return build_unary(ctx, input, ggml_gelu_erf_approx);
         default:
             throw std::runtime_error("Unsupported GELU approximation mode");
     }
