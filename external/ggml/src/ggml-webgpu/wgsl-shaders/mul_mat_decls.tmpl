@@ -73,8 +73,13 @@ fn init_shmem_src1(thread_id: u32, batch_offset: u32, offset_n: u32, k_outer: u3
         let global_k = k_outer + tile_k;
         let src1_idx = batch_offset + global_n * params.stride_11 + global_k;
         let src1_val = select(
+#ifdef SRC1_BF16
+            f32(0.0),
+            bf16_word_to_f32(SRC1[src1_idx / 2u], src1_idx & 1u),
+#else
             SRC1_TYPE(0.0),
             SRC1[src1_idx/VEC_SIZE],
+#endif
             global_n < params.n && global_k < params.k);
         store_shmem(SHMEM_TYPE(src1_val), TILE_SRC0_SHMEM + elem_idx);
     }

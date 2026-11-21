@@ -5064,9 +5064,12 @@ struct test_pool2d : public test_case {
     // padding
     const int p0;
     const int p1;
+    const int row_pad;
+    const int offset;
 
     std::string vars() override {
-        return VARS_TO_STR9(pool_type, type_input, ne_input, k0, k1, s0, s1, p0, p1);
+        return VARS_TO_STR9(pool_type, type_input, ne_input, k0, k1, s0, s1, p0, p1) +
+            (row_pad || offset ? "," + VARS_TO_STR2(row_pad, offset) : "");
     }
 
     test_pool2d(ggml_op_pool pool_type = GGML_OP_POOL_AVG,
@@ -5074,12 +5077,18 @@ struct test_pool2d : public test_case {
             std::array<int64_t, 4> ne_input = {10, 10, 3, 1}, // [input_width, input_height, input_channels, 1]
             int k0 = 3, int k1 = 3,
             int s0 = 1, int s1 = 1,
-            int p0 = 1, int p1 = 1)
-        : pool_type(pool_type), type_input(type_input), ne_input(ne_input), k0(k0), k1(k1), s0(s0), s1(s1), p0(p0), p1(p1) {}
+            int p0 = 1, int p1 = 1, int row_pad = 0, int offset = 0)
+        : pool_type(pool_type), type_input(type_input), ne_input(ne_input), k0(k0), k1(k1), s0(s0), s1(s1), p0(p0), p1(p1), row_pad(row_pad), offset(offset) {}
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
-        ggml_tensor * input = ggml_new_tensor(ctx, type_input, 4, ne_input.data());
+        auto storage_shape = ne_input;
+        storage_shape[0] += row_pad + offset;
+        ggml_tensor * input = ggml_new_tensor(ctx, type_input, 4, storage_shape.data());
         ggml_set_param(input);
+        if (row_pad || offset) {
+            input = ggml_view_4d(ctx, input, ne_input[0], ne_input[1], ne_input[2], ne_input[3],
+                input->nb[1], input->nb[2], input->nb[3], offset * ggml_type_size(type_input));
+        }
         ggml_set_name(input, "input");
 
         ggml_tensor * out = ggml_pool_2d(ctx, input, pool_type, k0, k1, s0, s1, p0, p1);
@@ -7797,7 +7806,31 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         }
     }
 
-    for (ggml_type type_input : {GGML_TYPE_F32}) {
+    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        test_cases.emplace_back(new test_conv_transpose_2d({32, 8, 32, 1}, {2, 2, 16, 32}, 2, type));
+        test_cases.emplace_back(new test_conv_transpose_2d({17, 9, 7, 1}, {3, 2, 5, 7}, 2, type));
+        test_cases.emplace_back(new test_conv_transpose_2d({11, 7, 3, 1}, {1, 2, 4, 3}, 3, type));
+        test_cases.emplace_back(new test_conv_transpose_2d({9, 5, 7, 1}, {5, 3, 9, 7}, 2, type));
+    }
+
+    // Wide BF16 RHS exercises the tiled path; small RHS retains the matvec path.
+    for (int n : {1, 4, 5, 33}) {
+        test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_BF16, 71, n, 63, {1, 1}, {1, 1}));
+    }
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_BF16, 128, 512, 1024, {1, 1}, {1, 1}));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_BF16, 65, 35, 127, {2, 2}, {2, 1}));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_BF16, 128, 5, 65,
+        {1, 1}, {1, 1}, {0, 1, 2, 3}, 0, 1, true));
+
+    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        for (ggml_op_pool pool : {GGML_OP_POOL_AVG, GGML_OP_POOL_MAX}) {
+            test_cases.emplace_back(new test_pool2d(pool, type, {17, 13, 3, 2}, 2, 3, 2, 2, 1, 1));
+            test_cases.emplace_back(new test_pool2d(pool, type, {17, 13, 3, 2}, 2, 3, 2, 2, 1, 1, 3, 1));
+            test_cases.emplace_back(new test_pool2d(pool, type, {8192, 128, 16, 1}, 2, 2, 2, 2, 0, 0));
+        }
+    }
+
+    for (ggml_type type_input : {GGML_TYPE_F32, GGML_TYPE_F16}) {
         for (ggml_op_pool pool_type : {GGML_OP_POOL_AVG, GGML_OP_POOL_MAX}) {
             for (int k0 : {1, 3}) {
                 for (int k1 : {1, 3}) {
@@ -9272,6 +9305,14 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 // Test cases for performance evaluation: should be representative of real-world use cases
 static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     std::vector<std::unique_ptr<test_case>> test_cases;
+
+    for (ggml_type type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        for (ggml_op_pool pool : {GGML_OP_POOL_AVG, GGML_OP_POOL_MAX}) {
+            test_cases.emplace_back(new test_pool2d(pool, type, {8192, 128, 16, 1}, 2, 2, 2, 2, 0, 0));
+        }
+        test_cases.emplace_back(new test_conv_transpose_2d({512, 8, 64, 1}, {2, 2, 32, 64}, 2, type));
+    }
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_BF16, GGML_TYPE_BF16, 128, 512, 1024, {1, 1}, {1, 1}));
 
     for (ggml_type dst_type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
         test_cases.emplace_back(new test_im2col_3d(
