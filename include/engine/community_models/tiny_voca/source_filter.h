@@ -41,10 +41,9 @@ private:
         int64_t steps = 0;                  // filter frames for each acoustic frame
         int64_t coefficients = 0;           // cepstrum values of one frame
         std::vector<float> lifter;
-        std::vector<double> real;           // coefficients x bins: the transform of a unit coefficient
-        std::vector<double> imaginary;
+        std::vector<int64_t> positions;     // where each cepstrum value sits in a frame of `fft` samples
         std::vector<float> window;
-        std::vector<float> weight;          // the linear head: (coefficients + steps) x channels
+        std::vector<float> weight;          // the linear head, kept channels x (coefficients + steps)
         std::vector<float> bias;
     };
 
