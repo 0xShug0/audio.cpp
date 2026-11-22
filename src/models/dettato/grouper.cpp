@@ -16,22 +16,40 @@ using namespace modules;
 
 GrouperNetwork::GrouperNetwork(const assets::TensorSource &source, const ExecutionContext &execution)
     : execution_(execution),
-      store_(execution.backend(), execution.backend_type(), "dettato.grouper.weights", 1024 * 1024) {
+      store_(execution.backend(), execution.backend_type(), "dettato.grouper.weights", 1024 * 1024),
+      graphs_(32) {
     const std::array<std::string, 12> prefixes{"blocks.", "ln_in.",   "ln_out.",   "pitch_emb.",
                                                "feat.",   "hd.enc.",  "prof.net.", "lanes.",
                                                "s15_ln.", "s15_net.", "heads.",    "hd.prior"};
+    const std::array<int,14> offsets{-2,-1,1,2,-12,12,-19,19,-24,24,-28,28,-31,31};
+    std::array<size_t,14> order{};
+    for (size_t k=0;k<order.size();++k) order[k]=k;
+    std::sort(order.begin(),order.end(),[&](size_t a,size_t b){return offsets[a]<offsets[b];});
+    if (execution_.backend_type()==BackendType::Cuda) {
+        std::array<int32_t,28> positions{};
+        for (size_t k=0;k<order.size();++k) positions[2*k]=offsets[order[k]];
+        weights_.emplace("pitch_offsets",store_.make_tensor(TensorShape::from_dims({14,2}),
+            GGML_TYPE_I32,positions.data(),positions.size()*sizeof(int32_t)));
+    }
     for (const auto &metadata : source.tensors()) {
-        if (std::any_of(prefixes.begin(), prefixes.end(),
+        const bool pitch_taps=metadata.name.rfind("lanes.blocks.",0)==0 && metadata.name.find(".pm.taps")!=std::string::npos;
+        if (!(execution_.backend_type()==BackendType::Cuda && pitch_taps) && std::any_of(prefixes.begin(), prefixes.end(),
                         [&](const auto &prefix) { return metadata.name.rfind(prefix, 0) == 0; }))
             weights_.emplace(metadata.name, store_.load_tensor(source, metadata.name, assets::TensorStorageType::Native, metadata.shape));
         const auto & name=metadata.name;
         if(name.rfind("lanes.attn.",0)==0 && name.find(".rel_bias")!=std::string::npos)
             relative_bias_.emplace(name.substr(0,name.size()-9),source.require_f32(name));
-        if(name.rfind("lanes.blocks.",0)==0 && name.find(".pm.taps")!=std::string::npos) {
+        if(pitch_taps) {
             constexpr int64_t P=96;
             const auto taps=source.require_f32(name);
             const int64_t C=metadata.shape[0];
-            const std::array<int,14> offsets{-2,-1,1,2,-12,12,-19,19,-24,24,-28,28,-31,31};
+            if (execution_.backend_type()==BackendType::Cuda) {
+                std::vector<float> coefficients(taps.size());
+                for (int64_t c=0;c<C;++c) for (size_t k=0;k<order.size();++k)
+                    coefficients[static_cast<size_t>(c*order.size()+k)]=taps[static_cast<size_t>(c*order.size()+order[k])];
+                weights_.emplace(name+".compact",store_.make_f32(TensorShape::from_dims({C,14}),std::move(coefficients)));
+                continue;
+            }
             std::vector<float> matrix(static_cast<size_t>(C*P*P));
             for(int64_t c=0;c<C;++c) for(int64_t p=0;p<P;++p) for(size_t k=0;k<offsets.size();++k) {
                 const auto q=p+offsets[k];
@@ -88,12 +106,18 @@ void GrouperNetwork::build_lanes() {
     for(int layer=0;layer<6;++layer) {
         const auto prefix="lanes.blocks."+std::to_string(layer);
         auto y=convolution(value,prefix+".dw_t",1<<(layer%4),true);
-        auto mixed=TransposeModule({{1,0,2,3},4}).build(ctx,y);
-        mixed=reshape_tensor(ctx,ensure_backend_addressable_layout(ctx,mixed),TensorShape::from_dims({C,T,P}));
-        const auto matrix=TransposeModule({{0,2,1,3},3}).build(ctx,weights_.at(prefix+".pm.taps.matrix"));
-        mixed=MatMulModule{}.build(ctx,mixed,matrix);
-        mixed=reshape_tensor(ctx,mixed,TensorShape::from_dims({C,1,T,P}));
-        mixed=TransposeModule({{1,0,2,3},4}).build(ctx,mixed);
+        TensorValue mixed;
+        if (ctx.backend_type==BackendType::Cuda) {
+            mixed=wrap_tensor(ggml_conv_2d_dw_sparse(ctx.ggml,weights_.at(prefix+".pm.taps.compact").tensor,
+                y.tensor,weights_.at("pitch_offsets").tensor),y.shape);
+        } else {
+            mixed=TransposeModule({{1,0,2,3},4}).build(ctx,y);
+            mixed=reshape_tensor(ctx,ensure_backend_addressable_layout(ctx,mixed),TensorShape::from_dims({C,T,P}));
+            const auto matrix=TransposeModule({{0,2,1,3},3}).build(ctx,weights_.at(prefix+".pm.taps.matrix"));
+            mixed=MatMulModule{}.build(ctx,mixed,matrix);
+            mixed=reshape_tensor(ctx,mixed,TensorShape::from_dims({C,1,T,P}));
+            mixed=TransposeModule({{1,0,2,3},4}).build(ctx,mixed);
+        }
         y=AddModule{}.build(ctx,y,mixed);
         y=TransposeModule({{0,2,3,1},4}).build(ctx,y);
         y=LayerNormModule({C,1e-6f,true,true}).build(ctx,y,{weights_.at(prefix+".norm.w"),weights_.at(prefix+".norm.b")});
@@ -188,14 +212,16 @@ void GrouperNetwork::prepare_lanes(int64_t frames) {
     for (const auto & constant : constants_) write_tensor_f32(constant.first, constant.second);
 }
 
-void GrouperNetwork::prepare(int64_t notes) {
+GrouperNetwork::GraphState &GrouperNetwork::prepare(int64_t notes) {
     if (notes <= 0 || notes > 768)
         throw std::runtime_error("Dettato grouper graph expects 1..768 notes");
-    if (graph_ && notes_ == notes)
-        return;
-    graph_.reset();
-    notes_ = notes;
-    graph_ = std::make_unique<PreparedGraph>(execution_, PreparedGraphConfig{"dettato.grouper", 8 * 1024 * 1024, 8192,1024*1024});
+    if (auto *cached = graphs_.find(notes)) return **cached;
+    auto state = std::make_unique<GraphState>();
+    auto &graph_ = state->graph;
+    auto &inputs_ = state->inputs;
+    auto &outputs_ = state->outputs;
+    graph_ = std::make_unique<PreparedGraph>(execution_, PreparedGraphConfig{"dettato.grouper",
+        size_t{2} * 1024 * 1024, 8192, 1024 * 1024});
     auto &ctx = graph_->build_context();
     inputs_[0] = make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({1, notes}));
     const std::array<int64_t, 4> widths{11, 150, 36, 256};
@@ -247,21 +273,32 @@ void GrouperNetwork::prepare(int64_t notes) {
         if (output.tensor->view_src) ggml_set_output(output.tensor->view_src);
         ggml_build_forward_expand(graph_->graph(), output.tensor);
     }
+    debug::timing_log_context_reservation("dettato.grouper.graph", ctx.ggml);
     graph_->allocate();
+    size_t retained = graph_->workspace_bytes() + graph_->persistent_bytes();
+    graphs_.for_each_value([&](const auto &entry) {
+        retained += entry->graph->workspace_bytes() + entry->graph->persistent_bytes();
+    });
+    // Exact note counts preserve attention math. Bound activation retention;
+    // a single oversized shape remains usable without retaining other shapes.
+    if (retained > 32 * 1024 * 1024) graphs_.clear();
+    auto *result = state.get();
+    graphs_.put(notes, std::move(state));
+    return *result;
 }
 
 std::array<std::vector<float>, 5> GrouperNetwork::run(const GrouperInputs &inputs) {
-    prepare(static_cast<int64_t>(inputs.pitch.size()));
-    write_tensor_i32(inputs_[0], inputs.pitch);
+    auto &state = prepare(static_cast<int64_t>(inputs.pitch.size()));
+    write_tensor_i32(state.inputs[0], inputs.pitch);
     const std::array<const std::vector<float> *, 7> values{
         &inputs.scalars, &inputs.harmonics, &inputs.profile, &inputs.lanes, &inputs.taps, &inputs.cosine, &inputs.sine};
     for (size_t i = 0; i < values.size(); ++i)
-        write_tensor_f32(inputs_[i + 1], *values[i]);
+        write_tensor_f32(state.inputs[i + 1], *values[i]);
     const auto start = std::chrono::steady_clock::now();
-    graph_->compute();
+    state.graph->compute();
     std::array<std::vector<float>, 5> result;
     for (size_t i = 0; i < result.size(); ++i)
-        result[i] = read_tensor_f32(outputs_[i].tensor);
+        result[i] = read_tensor_f32(state.outputs[i].tensor);
     debug::timing_log_scalar("dettato.grouper.forward_ms", debug::elapsed_ms(start));
     return result;
 }

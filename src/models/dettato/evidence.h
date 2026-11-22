@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/models/dettato/runtime.h"
 #include <array>
 #include <unordered_map>
@@ -29,12 +30,13 @@ class EvidenceNetwork {
     const core::ExecutionContext &execution_;
     core::BackendWeightStore store_;
     std::unordered_map<std::string, core::TensorValue> weights_;
-    std::unique_ptr<core::PreparedGraph> graph_;
-    std::array<core::TensorValue, 7> inputs_;
-    std::array<core::TensorValue, 5> outputs_;
-    std::array<core::TensorValue, 5> probabilities_;
-    int64_t notes_ = 0;
-    void prepare(int64_t notes);
+    struct GraphState {
+        std::unique_ptr<core::PreparedGraph> graph;
+        std::array<core::TensorValue, 7> inputs;
+        std::array<core::TensorValue, 5> outputs, probabilities;
+    };
+    runtime::CacheSlots<int64_t, std::unique_ptr<GraphState>> graphs_;
+    GraphState &prepare(int64_t notes);
     core::TensorValue linear(core::ModuleBuildContext &, const core::TensorValue &, const std::string &);
     core::TensorValue rms(core::ModuleBuildContext &, const core::TensorValue &, const std::string &);
 };

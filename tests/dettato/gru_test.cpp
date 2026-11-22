@@ -117,6 +117,53 @@ void check(core::BackendType backend, int64_t frames, int64_t batch, int64_t fea
             test::require_close(combined_hidden[i], static_cast<float>(hidden[i]), 2e-5f, "Bidirectional GRU scalar final-state reference");
     }
 }
+// Independent double-precision reference for chronological scan output.
+void check_scan(core::BackendType backend, int64_t width, int64_t frames, int64_t directions, int64_t batches = 3) {
+    core::ExecutionContext execution({backend, 0, 8});
+    core::PreparedGraph graph(execution, {"dettato_gru_scan_test", 1024 * 1024, 128});
+    auto & ctx = graph.build_context();
+    auto * x = ggml_new_tensor_4d(ctx.ggml, GGML_TYPE_F32, 3*width, batches, frames, directions);
+    auto * w = ggml_new_tensor_3d(ctx.ggml, GGML_TYPE_F32, 3*width, width, directions);
+    auto * bias = ggml_new_tensor_3d(ctx.ggml, GGML_TYPE_F32, 3*width, 1, directions);
+    auto * initial = ggml_new_tensor_3d(ctx.ggml, GGML_TYPE_F32, width, batches, directions);
+    for (auto * value : {x,w,bias,initial}) ggml_set_input(value);
+    auto * output = ggml_gru_scan(ctx.ggml,x,w,bias,initial);
+    ggml_set_output(output); ggml_build_forward_expand(graph.graph(),output); graph.allocate();
+    std::vector<float> weights(static_cast<size_t>(3*width*width*directions));
+    std::vector<float> gates(static_cast<size_t>(ggml_nelements(x))), biases(static_cast<size_t>(3*width*directions));
+    std::vector<float> state(static_cast<size_t>(width*batches*directions));
+    for (int reuse=0; reuse<3; ++reuse) {
+        for (size_t i=0;i<weights.size();++i) weights[i]=0.03f*std::sin(float(i+reuse*7));
+        for (size_t i=0;i<gates.size();++i) gates[i]=0.17f*std::sin(float(i+reuse*11));
+        for (size_t i=0;i<biases.size();++i) biases[i]=0.09f*std::cos(float(i+reuse*3));
+        for (size_t i=0;i<state.size();++i) state[i]=0.2f*std::cos(float(i+reuse));
+        ggml_backend_tensor_set(x,gates.data(),0,gates.size()*sizeof(float));
+        ggml_backend_tensor_set(w,weights.data(),0,weights.size()*sizeof(float));
+        ggml_backend_tensor_set(bias,biases.data(),0,biases.size()*sizeof(float));
+        ggml_backend_tensor_set(initial,state.data(),0,state.size()*sizeof(float));
+        std::vector<float> expected(static_cast<size_t>(ggml_nelements(output)));
+        for (int64_t d=0;d<directions;++d) for (int64_t b=0;b<batches;++b) {
+            for (int64_t step=0;step<frames;++step) {
+                const int64_t t=d ? frames-1-step : step;
+                const float * prev=step ? expected.data()+((d*frames+(d ? t+1 : t-1))*batches+b)*width : state.data()+(d*batches+b)*width;
+                for (int64_t j=0;j<width;++j) {
+                    std::array<double,3> sums{};
+                    for (int64_t g=0;g<3;++g) for (int64_t c=0;c<width;++c)
+                        sums[g]+=double(weights[(d*width+c)*3*width+g*width+j])*prev[c];
+                    const int64_t offset=((d*frames+t)*batches+b)*3*width+j;
+                    const double r=1/(1+std::exp(-(gates[offset]+sums[0]+biases[d*3*width+j])));
+                    const double z=1/(1+std::exp(-(gates[offset+width]+sums[1]+biases[d*3*width+j+width])));
+                    const double n=std::tanh(gates[offset+2*width]+r*(sums[2]+biases[d*3*width+j+2*width]));
+                    expected[((d*frames+t)*batches+b)*width+j]=float((1-z)*n+z*prev[j]);
+                }
+            }
+        }
+        graph.compute();
+        const auto actual=core::read_tensor_f32(output);
+        for (size_t i=0;i<actual.size();++i)
+            test::require_close(actual[i],expected[i],2e-5f,"GRU scan independent reference");
+    }
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -135,14 +182,26 @@ int main(int argc, char **argv) {
         }
         auto lowering = dettato::GRURecurrenceLowering::Unrolled;
         for (int i = 1; i < argc; ++i)
-            if (std::string(argv[i]) == "--host-recurrence") lowering = dettato::GRURecurrenceLowering::HostRecurrence;
+            if (std::string(argv[i]) == "--device-cell") lowering = dettato::GRURecurrenceLowering::DeviceCell;
+            else if (std::string(argv[i]) == "--device-scan") lowering = dettato::GRURecurrenceLowering::DeviceScan;
+            else if (std::string(argv[i]) == "--host-recurrence") lowering = dettato::GRURecurrenceLowering::HostRecurrence;
         for (const bool reverse : {false, true}) {
             check(backend, 1, 1, 3, 4, reverse, lowering);
             check(backend, 7, 3, 5, 17, reverse, lowering);
             check(backend, 33, 2, 8, 31, reverse, lowering);
         }
+        if (lowering == dettato::GRURecurrenceLowering::DeviceScan) {
+            for (const int64_t width : {32, 33, 64, 65, 128})
+                for (const bool reverse : {false, true})
+                    check(backend, 17, 1, 5, width, reverse, lowering);
+            check_scan(backend, 4, 1, 1);
+            check_scan(backend, 17, 33, 2);
+            check_scan(backend, 192, 7, 2);
+            check_scan(backend, 32, 33, 2, 17);
+            check_scan(backend, 192, 7, 2, 17);
+        }
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
-        std::cout << "GRU: six independent scalar-reference cases, three changed-input reuses each passed\n";
+        std::cout << "GRU: independent scalar-reference and changed-input reuse checks passed\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

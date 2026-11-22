@@ -496,6 +496,42 @@ int main(int argc, char **argv) {
                 if (outputs.maps != repeated.maps || snapshot[0] != *repeated.hidden ||
                     snapshot[1] != *repeated.grouping_hidden || snapshot[2] != *repeated.grouping_stem)
                     throw std::runtime_error("Window accumulation reuse changed outputs");
+                if (execution.backend_type() == engine::core::BackendType::Cuda) {
+                    network.run_device(audio, false);
+                    auto compact = network.readback();
+                    const double duration = compact.frames * .02;
+                    const std::vector<engine::models::dettato::Note> small{{0, .02, 21, 100, 1, 1, false}};
+                    const std::vector<engine::models::dettato::Note> larger{
+                        {0, std::min(duration, 2.0), 21, 100, 1, 1, false},
+                        {std::max(0.0, duration - .06), duration, 108, 100, 1, 1, false},
+                        {.01, std::min(duration, .31), 21, 100, 1, 1, false}};
+                    for (const auto &selection : {small, larger, std::vector<engine::models::dettato::Note>{}, small}) {
+                        network.readback_grouping(compact, selection);
+                        if (*compact.hidden != snapshot[0])
+                            throw std::runtime_error("Compact grouping overwrote evidence hidden states");
+                        for (size_t i = 0; i < compact.grouping_rows.size(); ++i)
+                            for (size_t c = 0; c < 368; ++c) {
+                                const size_t source = static_cast<size_t>(compact.grouping_rows[i]) * 368 + c;
+                                if ((*compact.grouping_hidden)[i * 368 + c] != snapshot[1][source] ||
+                                    (*compact.grouping_stem)[i * 368 + c] != snapshot[2][source])
+                                    throw std::runtime_error("Compact grouping differs from full-bank readback");
+                            }
+                    }
+                    // Host feature storage changes size while the bounded device
+                    // graph remains reusable; selected rows must remain correct.
+                    network.run_device(reference->require_f32("short.audio16"), false);
+                    compact = network.readback();
+                    network.readback_grouping(compact, small);
+                    network.run_device(audio, false);
+                    compact = network.readback();
+                    network.readback_grouping(compact, small);
+                    if (*compact.hidden != snapshot[0])
+                        throw std::runtime_error("Compact readback shape replacement changed evidence states");
+                    for (size_t c = 0; c < 368; ++c)
+                        if ((*compact.grouping_hidden)[c] != snapshot[1][c] ||
+                            (*compact.grouping_stem)[c] != snapshot[2][c])
+                            throw std::runtime_error("Compact readback shape replacement changed selected rows");
+                }
                 engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
                 return 0;
             }
@@ -541,6 +577,22 @@ int main(int argc, char **argv) {
                 const auto native_inputs=engine::models::dettato::detail::make_grouper_inputs(native_front,notes,inputs.taps,prior,native_lanes);
                 const auto native_outputs=network.run(native_inputs);
                 for(size_t i=0;i<names.size();++i) check(names[i],native_outputs[i]);
+                if (execution.backend_type() == engine::core::BackendType::Cuda) {
+                    for (const int64_t count : {1, 768, 767, 766, 1}) {
+                        engine::models::dettato::detail::GrouperInputs varied;
+                        varied.pitch.assign(count, 60);
+                        varied.scalars.assign(count * 11, .1f);
+                        varied.harmonics.assign(count * 150, .1f);
+                        varied.profile.assign(count * 36, .1f);
+                        varied.lanes.assign(count * 256, .1f);
+                        varied.taps.assign(count * 1104, .1f);
+                        varied.cosine.assign(count * 4 * 22, 1.f);
+                        varied.sine.assign(count * 4 * 22, 0.f);
+                        network.run(varied);
+                        if (native_outputs != network.run(native_inputs))
+                            throw std::runtime_error("Grouper shape eviction/reload changed output");
+                    }
+                }
                 engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
                 return 0;
             }
@@ -563,6 +615,47 @@ int main(int argc, char **argv) {
                     check(names[i], outputs[i]);
                 if (outputs != network.run(inputs))
                     throw std::runtime_error("Evidence same-input reuse changed output");
+                if (backend == engine::core::BackendType::Cuda) {
+                    const auto resize_rows = [&](size_t count) {
+                        auto small = inputs;
+                        const auto repeat_rows = [&](auto &dst, const auto &src, size_t width) {
+                            dst.resize(count * width);
+                            for (size_t row = 0; row < count; ++row)
+                                std::copy_n(src.data() + (row % inputs.instrument.size()) * width,
+                                            width, dst.data() + row * width);
+                        };
+                        repeat_rows(small.instrument, inputs.instrument, 1);
+                        repeat_rows(small.pitch, inputs.pitch, 1);
+                        repeat_rows(small.velocity_bin, inputs.velocity_bin, 1);
+                        repeat_rows(small.continuous, inputs.continuous, 110);
+                        repeat_rows(small.evidence, inputs.evidence, 769);
+                        repeat_rows(small.cosine, inputs.cosine, 14);
+                        repeat_rows(small.sine, inputs.sine, 14);
+                        return small;
+                    };
+                    auto changed = inputs;
+                    changed.continuous[0] += 0.25f;
+                    if (network.run(changed) == outputs)
+                        throw std::runtime_error("Evidence cache reused stale input");
+                    if (network.run(inputs) != outputs)
+                        throw std::runtime_error("Evidence changed-input reuse changed restored output");
+                    // Fill the bounded exact-shape cache and evict its original
+                    // least-recently-used shape, then check the complete output.
+                    for (size_t rows = 1; rows <= 33; ++rows) {
+                        if (rows == inputs.instrument.size()) continue;
+                        const auto result = network.run(resize_rows(rows));
+                        for (const auto &head : result)
+                            for (const float value : head)
+                                if (!std::isfinite(value)) throw std::runtime_error("Evidence shape reuse is nonfinite");
+                    }
+                    if (network.run(inputs) != outputs)
+                        throw std::runtime_error("Evidence cache eviction/reprepare changed output");
+                    // An oversized graph exercises workspace-budget eviction;
+                    // returning to the reference shape must still be exact.
+                    network.run(resize_rows(1536));
+                    if (network.run(inputs) != outputs)
+                        throw std::runtime_error("Evidence workspace growth/reprepare changed output");
+                }
                 const auto source_notes = reference->require_f32("source_notes");
                 std::vector<engine::models::dettato::Note> notes;
                 for (size_t i = 0; i < source_notes.size(); i += 4)

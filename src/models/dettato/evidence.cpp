@@ -19,6 +19,7 @@ using namespace core;
 using namespace modules;
 
 std::vector<float> extract_note_evidence(const WindowTranscription &transcription, const std::vector<Note> &notes, size_t threads) {
+    const auto start = std::chrono::steady_clock::now();
     (void)threads;
     const auto frames = transcription.frames;
     if (frames <= 0 || transcription.hidden->size() != static_cast<size_t>(frames * 88 * 368))
@@ -135,6 +136,7 @@ std::vector<float> extract_note_evidence(const WindowTranscription &transcriptio
         for (size_t c = 0; c < 33; ++c)
             result[i * 769 + c] = ggml_fp16_to_fp32(ggml_fp32_to_fp16(result[i * 769 + c]));
     }
+    debug::timing_log_scalar("dettato.evidence.features_ms", debug::elapsed_ms(start));
     return result;
 }
 
@@ -258,7 +260,8 @@ EvidenceInputs make_evidence_inputs(const std::vector<Note> &notes, const std::v
 
 EvidenceNetwork::EvidenceNetwork(const assets::TensorSource &source, const ExecutionContext &execution)
     : execution_(execution),
-      store_(execution.backend(), execution.backend_type(), "dettato.evidence.weights", 1024 * 1024) {
+      store_(execution.backend(), execution.backend_type(), "dettato.evidence.weights", 1024 * 1024),
+      graphs_(32) {
     for (const auto &metadata : source.tensors())
         weights_.emplace(metadata.name, store_.load_f32_tensor(source, metadata.name, metadata.shape));
     store_.upload();
@@ -275,15 +278,17 @@ TensorValue EvidenceNetwork::rms(ModuleBuildContext &ctx, const TensorValue &x, 
     return RMSNormModule({192, 1e-6f, true, false}).build(ctx, x, {weights_.at(name + ".w"), std::nullopt});
 }
 
-void EvidenceNetwork::prepare(int64_t notes) {
+EvidenceNetwork::GraphState &EvidenceNetwork::prepare(int64_t notes) {
     if (notes <= 0 || notes > 4096)
         throw std::runtime_error("Dettato repair graph expects 1..4096 notes");
-    if (graph_ && notes == notes_)
-        return;
-    graph_.reset();
-    notes_ = notes;
-    graph_ =
-        std::make_unique<PreparedGraph>(execution_, PreparedGraphConfig{"dettato.evidence", 8 * 1024 * 1024, 8192});
+    if (auto *found = graphs_.find(notes)) return **found;
+    auto state = std::make_unique<GraphState>();
+    auto &graph_ = state->graph;
+    auto &inputs_ = state->inputs;
+    auto &outputs_ = state->outputs;
+    auto &probabilities_ = state->probabilities;
+    graph_ = std::make_unique<PreparedGraph>(execution_, PreparedGraphConfig{
+        "dettato.evidence", 2u * 1024 * 1024, 8192});
     auto &ctx = graph_->build_context();
     for (int i = 0; i < 3; ++i)
         inputs_[i] = make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({1, notes}));
@@ -372,11 +377,30 @@ void EvidenceNetwork::prepare(int64_t notes) {
         ggml_set_output(probability.tensor);
         ggml_build_forward_expand(graph_->graph(), probability.tensor);
     }
+    debug::timing_log_context_reservation("dettato.evidence.graph", ctx.ggml);
     graph_->allocate();
+    // Exact shapes retain their own plans/captures. Bound retained workspace
+    // to 32 MiB, or one oversized graph; never retain all dense-note graphs.
+    constexpr size_t workspace_budget = 32u * 1024 * 1024;
+    const size_t required = graph_->workspace_bytes();
+    while (graphs_.size()) {
+        size_t retained = 0;
+        graphs_.for_each_value([&](const auto &entry) { retained += entry->graph->workspace_bytes(); });
+        if (retained + required <= workspace_budget) break;
+        graphs_.set_capacity(graphs_.size() - 1);
+        graphs_.set_capacity(32);
+    }
+    auto *prepared = state.get();
+    graphs_.put(notes, std::move(state));
+    return *prepared;
 }
 
 std::array<std::vector<float>, 5> EvidenceNetwork::run(const EvidenceInputs &inputs, bool probabilities) {
-    prepare(static_cast<int64_t>(inputs.instrument.size()));
+    auto &state = prepare(static_cast<int64_t>(inputs.instrument.size()));
+    const auto &graph_ = state.graph;
+    const auto &inputs_ = state.inputs;
+    const auto &outputs_ = state.outputs;
+    const auto &probabilities_ = state.probabilities;
     write_tensor_i32(inputs_[0], inputs.instrument);
     write_tensor_i32(inputs_[1], inputs.pitch);
     write_tensor_i32(inputs_[2], inputs.velocity_bin);

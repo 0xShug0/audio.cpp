@@ -94,21 +94,28 @@ BidirectionalGRUOutputs BidirectionalGRU::build(core::ModuleBuildContext &ctx,
     auto *hidden = ggml_concat(ctx.ggml,
         ggml_reshape_3d(ctx.ggml, forward_initial.tensor, width, batch, 1),
         ggml_reshape_3d(ctx.ggml, reverse_initial.tensor, width, batch, 1), 2);
-    if (config_.lowering == GRURecurrenceLowering::HostRecurrence) {
+    if (config_.lowering == GRURecurrenceLowering::HostRecurrence || config_.lowering == GRURecurrenceLowering::DeviceScan) {
         auto *projected = ggml_concat(ctx.ggml,
             ggml_reshape_4d(ctx.ggml, forward.tensor, gates, batch, frames, 1),
             ggml_reshape_4d(ctx.ggml, reverse.tensor, gates, batch, frames, 1), 3);
         auto *transposed = ggml_cont(ctx.ggml, ggml_permute(ctx.ggml, weight, 1, 0, 2, 3));
-        ggml_tensor *arguments[]{projected, transposed, bias, hidden};
-        for (const auto *value : arguments)
-            if (value->type != GGML_TYPE_F32 || !ggml_is_contiguous(value))
-                throw std::invalid_argument("Host GRU recurrence requires contiguous F32 tensors");
-        const auto combined = core::wrap_tensor(ggml_custom_4d(ctx.ggml, GGML_TYPE_F32, width, batch, frames + 3, 2,
-            arguments, 4, host_recurrence, GGML_N_TASKS_MAX, nullptr), TensorShape::from_dims({2, frames + 3, batch, width}));
+        const bool scan = config_.lowering == GRURecurrenceLowering::DeviceScan;
+        core::TensorValue combined;
+        if (scan) {
+            combined = core::wrap_tensor(ggml_gru_scan(ctx.ggml, projected, transposed, bias, hidden),
+                TensorShape::from_dims({2, frames, batch, width}));
+        } else {
+            ggml_tensor *arguments[]{projected, transposed, bias, hidden};
+            for (const auto *value : arguments)
+                if (value->type != GGML_TYPE_F32 || !ggml_is_contiguous(value))
+                    throw std::invalid_argument("Host GRU recurrence requires contiguous F32 tensors");
+            combined = core::wrap_tensor(ggml_custom_4d(ctx.ggml, GGML_TYPE_F32, width, batch, frames + 3, 2,
+                arguments, 4, host_recurrence, GGML_N_TASKS_MAX, nullptr), TensorShape::from_dims({2, frames + 3, batch, width}));
+        }
         std::array<core::TensorValue, 2> sequences;
         for (int d = 0; d < 2; ++d) {
             auto sequence = SliceModule({0, d, 1}).build(ctx, combined);
-            sequence = core::reshape_tensor(ctx, sequence, TensorShape::from_dims({frames + 3, batch, width}));
+            sequence = core::reshape_tensor(ctx, sequence, TensorShape::from_dims({scan ? frames : frames + 3, batch, width}));
             sequences[d] = SliceModule({0, 0, frames}).build(ctx, sequence);
         }
         const auto forward_hidden = core::reshape_tensor(ctx, SliceModule({0, frames - 1, 1}).build(ctx, sequences[0]),
@@ -125,30 +132,44 @@ BidirectionalGRUOutputs BidirectionalGRU::build(core::ModuleBuildContext &ctx,
     auto *reverse_projected = ggml_get_rows(ctx.ggml, ggml_reshape_2d(ctx.ggml, reverse.tensor, gates * batch, frames), reverse_rows);
     auto *projected = ggml_concat(ctx.ggml, ggml_reshape_4d(ctx.ggml, forward.tensor, gates, batch, frames, 1),
         ggml_reshape_4d(ctx.ggml, reverse_projected, gates, batch, frames, 1), 3);
-    auto *sequence = ggml_new_tensor_3d(ctx.ggml, GGML_TYPE_F32, width, frames, batch * 2);
+    const bool store_cell = config_.lowering == GRURecurrenceLowering::DeviceCell;
+    auto *sequence = store_cell ? ggml_new_tensor_4d(ctx.ggml, GGML_TYPE_F32, width, batch, 2, frames)
+        : ggml_new_tensor_3d(ctx.ggml, GGML_TYPE_F32, width, frames, batch * 2);
     for (int64_t t = 0; t < frames; ++t) {
         auto *input_gates = ggml_view_3d(ctx.ggml, projected, gates, batch, 2, projected->nb[1], projected->nb[3], t * projected->nb[2]);
         auto *recurrent = ggml_mul_mat(ctx.ggml, weight, hidden);
         ggml_mul_mat_set_prec(recurrent, GGML_PREC_F32);
-        recurrent = ggml_add(ctx.ggml, recurrent, bias);
-        auto *rz = ggml_sigmoid(ctx.ggml, ggml_add(ctx.ggml,
-            ggml_view_3d(ctx.ggml, input_gates, 2 * width, batch, 2, input_gates->nb[1], input_gates->nb[2], 0),
-            ggml_view_3d(ctx.ggml, recurrent, 2 * width, batch, 2, recurrent->nb[1], recurrent->nb[2], 0)));
-        const auto reset = core::wrap_tensor(ggml_view_3d(ctx.ggml, rz, width, batch, 2, rz->nb[1], rz->nb[2], 0), state_shape);
-        const auto update = core::wrap_tensor(ggml_view_3d(ctx.ggml, rz, width, batch, 2, rz->nb[1], rz->nb[2], width * sizeof(float)), state_shape);
-        const auto recurrent_new = core::wrap_tensor(ggml_view_3d(ctx.ggml, recurrent, width, batch, 2,
-            recurrent->nb[1], recurrent->nb[2], 2 * width * sizeof(float)), state_shape);
-        const auto reset_new = MulModule{false, true}.build(ctx, reset, recurrent_new);
-        auto *candidate = ggml_tanh(ctx.ggml, ggml_add(ctx.ggml,
-            ggml_view_3d(ctx.ggml, input_gates, width, batch, 2, input_gates->nb[1], input_gates->nb[2], 2 * width * sizeof(float)),
-            reset_new.tensor));
-        const auto delta = core::wrap_tensor(ggml_sub(ctx.ggml, hidden, candidate), state_shape);
-        hidden = ggml_add(ctx.ggml, candidate, MulModule{false, true}.build(ctx, update, delta).tensor);
-        sequence = ggml_set_rows(ctx.ggml, sequence, ggml_reshape_3d(ctx.ggml, hidden, width, 1, batch * 2),
-            ggml_view_1d(ctx.ggml, rows, 1, t * sizeof(int32_t)));
+        if (config_.lowering == GRURecurrenceLowering::DeviceCell) {
+            sequence = ggml_gru_cell_store(ctx.ggml, input_gates, recurrent, bias, hidden, sequence, t);
+            hidden = ggml_view_3d(ctx.ggml, sequence, width, batch, 2,
+                sequence->nb[1], sequence->nb[2], t * sequence->nb[3]);
+        } else {
+            recurrent = ggml_add(ctx.ggml, recurrent, bias);
+            auto *rz = ggml_sigmoid(ctx.ggml, ggml_add(ctx.ggml,
+                ggml_view_3d(ctx.ggml, input_gates, 2 * width, batch, 2, input_gates->nb[1], input_gates->nb[2], 0),
+                ggml_view_3d(ctx.ggml, recurrent, 2 * width, batch, 2, recurrent->nb[1], recurrent->nb[2], 0)));
+            const auto reset = core::wrap_tensor(ggml_view_3d(ctx.ggml, rz, width, batch, 2, rz->nb[1], rz->nb[2], 0), state_shape);
+            const auto update = core::wrap_tensor(ggml_view_3d(ctx.ggml, rz, width, batch, 2, rz->nb[1], rz->nb[2], width * sizeof(float)), state_shape);
+            const auto recurrent_new = core::wrap_tensor(ggml_view_3d(ctx.ggml, recurrent, width, batch, 2,
+                recurrent->nb[1], recurrent->nb[2], 2 * width * sizeof(float)), state_shape);
+            const auto reset_new = MulModule{false, true}.build(ctx, reset, recurrent_new);
+            auto *candidate = ggml_tanh(ctx.ggml, ggml_add(ctx.ggml,
+                ggml_view_3d(ctx.ggml, input_gates, width, batch, 2, input_gates->nb[1], input_gates->nb[2], 2 * width * sizeof(float)),
+                reset_new.tensor));
+            const auto delta = core::wrap_tensor(ggml_sub(ctx.ggml, hidden, candidate), state_shape);
+            hidden = ggml_add(ctx.ggml, candidate, MulModule{false, true}.build(ctx, update, delta).tensor);
+        }
+        if (!store_cell)
+            sequence = ggml_set_rows(ctx.ggml, sequence, ggml_reshape_3d(ctx.ggml, hidden, width, 1, batch * 2),
+                ggml_view_1d(ctx.ggml, rows, 1, t * sizeof(int32_t)));
     }
-    auto *f = ggml_view_3d(ctx.ggml, sequence, width, frames, batch, sequence->nb[1], sequence->nb[2], 0);
-    auto *r = ggml_view_3d(ctx.ggml, sequence, width, frames, batch, sequence->nb[1], sequence->nb[2], batch * sequence->nb[2]);
+    // Bind the same chronological output views to either bank layout. No
+    // full-bank transpose is needed after direct cell stores.
+    const size_t time_stride = store_cell ? sequence->nb[3] : sequence->nb[1];
+    const size_t batch_stride = store_cell ? sequence->nb[1] : sequence->nb[2];
+    const size_t direction_stride = store_cell ? sequence->nb[2] : batch * sequence->nb[2];
+    auto *f = ggml_view_3d(ctx.ggml, sequence, width, frames, batch, time_stride, batch_stride, 0);
+    auto *r = ggml_view_3d(ctx.ggml, sequence, width, frames, batch, time_stride, batch_stride, direction_stride);
     // Repeat the exact integral-valued F32 positions before casting: CUDA's
     // REPEAT supports F32, but not I32 index tensors.
     auto *reverse_batch_rows = ggml_cast(ctx.ggml,

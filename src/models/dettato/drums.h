@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/core/graph_workspace.h"
 #include "engine/models/dettato/runtime.h"
 #include <unordered_map>
 
@@ -17,12 +18,16 @@ Track decode_drum_hits(const DrumProbabilities & probabilities, const io::json::
 class DrumEmbedder {
   public:
     DrumEmbedder(const assets::TensorSource & source, std::string prefix,
-        const io::json::Value & config, const core::ExecutionContext & execution);
+        const io::json::Value & config, const core::ExecutionContext & execution,
+        core::GraphWorkspace * workspace = nullptr);
     // Input [frames,160]; output [frames/2,width]. Long inputs use upstream
     // context windows; one session-owned graph set caches their shapes.
+    // Build/register before the pipeline finalizes its shared workspace.
+    void prepare(int64_t frames, int64_t long_above = 8400);
     std::vector<float> run(const std::vector<float> & mel, int64_t long_above = 8400);
   private:
     const core::ExecutionContext & execution_;
+    core::GraphWorkspace * workspace_;
     core::BackendWeightStore store_;
     std::unordered_map<std::string, core::TensorValue> weights_;
     std::string stem_, activation_;
@@ -38,14 +43,17 @@ class DrumEmbedder {
 };
 
 // Recording-level temporal convolution, recurrent/attention blocks and family
-// heads. Borrowed outputs are hidden states, onset logits and velocity logits.
+// heads. Persistent outputs survive reuse of the pipeline's shared scratch.
 class DrumTrunk {
   public:
     DrumTrunk(const assets::TensorSource & source, std::string prefix,
-        const io::json::Value & config, const core::ExecutionContext & execution);
+        const io::json::Value & config, const core::ExecutionContext & execution,
+        core::GraphWorkspace * workspace = nullptr);
+    void prepare(int64_t frames);
     std::array<core::TensorValue, 3> run(const std::vector<float> & embeddings);
   private:
     const core::ExecutionContext & execution_;
+    core::GraphWorkspace * workspace_;
     std::unique_ptr<core::ExecutionContext> host_execution_;
     core::BackendWeightStore store_;
     std::unordered_map<std::string, core::TensorValue> weights_;
@@ -56,17 +64,19 @@ class DrumTrunk {
     std::unique_ptr<core::PreparedGraph> graph_;
     core::TensorValue input_, indices_;
     std::array<core::TensorValue, 3> outputs_;
-    void prepare(int64_t frames);
 };
 
 class OrchestralDrumExpert {
   public:
     OrchestralDrumExpert(const assets::TensorSource & source, size_t index,
-        const io::json::Value & config, const core::ExecutionContext & execution);
+        const io::json::Value & config, const core::ExecutionContext & execution,
+        core::GraphWorkspace * workspace = nullptr);
+    void prepare(int64_t frames);
     // Raw base/drum/timpani/velocity/router logits, in upstream order.
     std::array<core::TensorValue, 5> run(const std::vector<float> & features);
   private:
     const core::ExecutionContext & execution_;
+    core::GraphWorkspace * workspace_;
     std::unique_ptr<core::ExecutionContext> host_execution_;
     DrumEmbedder embedder_;
     DrumTrunk trunk_;
@@ -76,7 +86,6 @@ class OrchestralDrumExpert {
     std::unique_ptr<core::PreparedGraph> graph_;
     core::TensorValue cq_input_, hidden_input_, base_input_, initial_;
     std::array<core::TensorValue, 3> outputs_;
-    void prepare(int64_t frames);
 };
 
 struct DrumResult {

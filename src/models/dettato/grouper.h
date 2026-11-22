@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/modules/speech_encoders/rope_transformer_encoder_runtime.h"
 #include "engine/models/dettato/runtime.h"
 #include "grouping_decode.h"
@@ -42,15 +43,18 @@ class GrouperNetwork {
     core::BackendWeightStore store_;
     std::unordered_map<std::string, core::TensorValue> weights_;
     modules::RopeTransformerEncoderWeights encoder_weights_;
-    std::unique_ptr<core::PreparedGraph> graph_, lane_graph_;
-    std::array<core::TensorValue, 8> inputs_;
-    std::array<core::TensorValue, 5> outputs_;
+    struct GraphState {
+        std::unique_ptr<core::PreparedGraph> graph;
+        std::array<core::TensorValue, 8> inputs;
+        std::array<core::TensorValue, 5> outputs;
+    };
+    runtime::CacheSlots<int64_t, std::unique_ptr<GraphState>> graphs_;
+    std::unique_ptr<core::PreparedGraph> lane_graph_;
     core::TensorValue lane_input_, raster_input_, lane_output_;
     std::vector<std::pair<core::TensorValue,std::vector<float>>> constants_;
     std::unordered_map<std::string,std::vector<float>> relative_bias_;
-    int64_t notes_ = 0;
     int64_t frames_ = 0;
-    void prepare(int64_t notes);
+    GraphState &prepare(int64_t notes);
     void prepare_lanes(int64_t frames);
     void build_lanes();
     core::TensorValue linear(core::ModuleBuildContext &, const core::TensorValue &, const std::string &);

@@ -119,8 +119,12 @@ void HarmonicFrontend::apply_pcen(HarmonicFeatures & features) const {
 #endif
     for (int64_t row = 0; row < static_cast<int64_t>(rows); ++row) {
         const size_t ch = row / features.bins, bin = row % features.bins;
-        for (int64_t t = 0; t < features.frames; ++t)
-            pcen_buffer_[row * n + t] = std::exp(features.values[(ch * features.frames + t) * features.bins + bin]);
+        for (int64_t t = 0; t < features.frames; ++t) {
+            const auto index = (ch * features.frames + t) * features.bins + bin;
+            const float energy = std::exp(features.values[index]);
+            features.values[index] = energy;
+            pcen_buffer_[row * n + t] = energy;
+        }
     }
     const audio::TensorStrideBytes real_strides{static_cast<std::ptrdiff_t>(n * sizeof(float)), sizeof(float)};
     const audio::TensorStrideBytes complex_strides{static_cast<std::ptrdiff_t>(frequencies * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
@@ -140,7 +144,7 @@ void HarmonicFrontend::apply_pcen(HarmonicFeatures & features) const {
         const int64_t channel = row / features.bins, bin = row % features.bins;
         for (int64_t t = 0; t < features.frames; ++t) {
             const auto index = static_cast<size_t>((channel * features.frames + t) * features.bins + bin);
-            const float energy = std::exp(features.values[index]);
+            const float energy = features.values[index];
             const float level = pcen_buffer_[static_cast<size_t>(row) * n + t];
             const float compressed =
                 std::sqrt(energy / std::pow(1e-6f + std::max(level, 0.0f), 0.98f) + 2.0f) - std::sqrt(2.0f);
@@ -164,6 +168,9 @@ HarmonicFeatures HarmonicFrontend::extract(const std::vector<float> &samples, in
     out.values.resize(static_cast<size_t>(batch * 9 * out.frames * out.bins));
     out.power.resize(static_cast<size_t>(batch * out.extended_bins * out.frames));
     const std::array<double, 8> harmonics{0.5, 1, 2, 3, 4, 5, 6, 7};
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) num_threads(threads_)
+#endif
     for (int64_t b = 0; b < batch; ++b)
         for (int64_t t = 0; t < out.frames; ++t)
             for (int64_t f = 0; f < out.extended_bins; ++f) {
@@ -178,6 +185,9 @@ HarmonicFeatures HarmonicFrontend::extract(const std::vector<float> &samples, in
         compact.frames = out.frames;
         compact.bins = out.extended_bins + out.bins;
         compact.values.resize(static_cast<size_t>(batch * out.frames * compact.bins));
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) num_threads(threads_)
+#endif
         for (int64_t b = 0; b < batch; ++b)
             for (int64_t t = 0; t < out.frames; ++t) {
                 auto *row = compact.values.data() + (b * out.frames + t) * compact.bins;
@@ -187,6 +197,9 @@ HarmonicFeatures HarmonicFrontend::extract(const std::vector<float> &samples, in
             }
         apply_pcen(compact);
     }
+#ifdef _OPENMP
+#pragma omp parallel for collapse(2) num_threads(threads_)
+#endif
     for (int64_t b = 0; b < batch; ++b)
         for (int64_t ch = 0; ch < 9; ++ch) {
             const int64_t shift = ch < 8

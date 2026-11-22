@@ -1723,8 +1723,7 @@ audiocpp_add_model(dettato
         src/models/dettato/evidence.cpp src/models/dettato/grouper.cpp
         src/models/dettato/windows.cpp src/models/dettato/grouper_features.cpp
         src/models/dettato/grouping_decode.cpp src/models/dettato/grouper_windows.cpp
-        src/models/dettato/drums.cpp src/models/dettato/drum_trunk.cpp
-        src/models/dettato/drum_expert.cpp src/models/dettato/drum_transcriber.cpp
+        src/models/dettato/drums.cpp src/models/dettato/drum_transcriber.cpp
         src/models/dettato/tuning.cpp src/models/dettato/runtime.cpp src/models/dettato/session.cpp
         src/models/dettato/gru.cpp
     INCLUDES engine/models/dettato/session.h
@@ -4041,10 +4040,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(nemotron_asr_webgpu_rnnt_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests)
     endif()
 
-    if (ENGINE_ENABLE_WEBGPU)
-        # Reuse GGML's CPU-reference operator harness for the opt-in backend.
+    if (ENGINE_ENABLE_WEBGPU OR (ENGINE_BUILD_TESTS AND ENGINE_ENABLE_CUDA))
+        # Reuse GGML's CPU-reference operator harness for opt-in backend paths.
         add_executable(test-backend-ops external/ggml/tests/test-backend-ops.cpp)
         target_link_libraries(test-backend-ops PRIVATE ggml Threads::Threads)
+        if (NOT ENGINE_ENABLE_WEBGPU)
+            set_target_properties(test-backend-ops PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        endif()
     endif()
 
     if (ENGINE_BUILD_TESTS AND tiny_voca IN_LIST AUDIOCPP_LINKED_MODELS)

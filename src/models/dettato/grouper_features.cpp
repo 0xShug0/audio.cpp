@@ -9,9 +9,17 @@ namespace engine::models::dettato::detail {
 GroupingFeatures collect_grouping_features(const WindowTranscription & transcription,const std::vector<Note> & notes,
     const NoteThresholds & thresholds) {
     const auto T=transcription.frames;
-    if(T<=0 || transcription.grouping_hidden->size()!=static_cast<size_t>(T*88*368) ||
+    if(T<=0 || transcription.grouping_hidden->size()!=(transcription.compact_grouping ? transcription.grouping_rows.size()*368 : static_cast<size_t>(T*88*368)) ||
         transcription.grouping_stem->size()!=transcription.grouping_hidden->size())
         throw std::runtime_error("Dettato grouping requires aligned hidden/stem sub-averages");
+    const auto row_offset = [&](int64_t t, int64_t lane) {
+        const auto row = t * 88 + lane;
+        if (!transcription.compact_grouping) return static_cast<size_t>(row * 368);
+        const auto found = std::lower_bound(transcription.grouping_rows.begin(), transcription.grouping_rows.end(), row);
+        if (found == transcription.grouping_rows.end() || *found != row)
+            throw std::runtime_error("Dettato grouping readback omitted a required feature row");
+        return static_cast<size_t>(found - transcription.grouping_rows.begin()) * 368;
+    };
     const auto own=decode_notes(transcription.grouping_maps,T,.02,thresholds);
     auto sorted=notes;
     std::stable_sort(sorted.begin(),sorted.end(),[](const auto & a,const auto & b) {return std::tie(a.onset,a.pitch)<std::tie(b.onset,b.pitch);});
@@ -40,14 +48,14 @@ GroupingFeatures collect_grouping_features(const WindowTranscription & transcrip
         meta[10]=maximum(2,b[i]-1);meta[11]=maximum(5,b[i]-1);
         std::array<float,1104> values{};
         const auto limit=std::min<int64_t>(b[i],a[i]+50),stem_limit=std::min<int64_t>(b[i],a[i]+10);
-        ggml_fp16_to_fp32_row(transcription.grouping_hidden->data()+(a[i]*88+lanes[i])*368,values.data(),368);
+        ggml_fp16_to_fp32_row(transcription.grouping_hidden->data()+row_offset(a[i],lanes[i]),values.data(),368);
         std::array<float,368> row;
         for(int64_t t=a[i];t<limit;++t) {
-            ggml_fp16_to_fp32_row(transcription.grouping_hidden->data()+(t*88+lanes[i])*368,row.data(),368);
+            ggml_fp16_to_fp32_row(transcription.grouping_hidden->data()+row_offset(t,lanes[i]),row.data(),368);
             for(size_t channel=0;channel<368;++channel) values[368+channel]+=row[channel];
         }
         for(int64_t t=a[i];t<stem_limit;++t) {
-            ggml_fp16_to_fp32_row(transcription.grouping_stem->data()+(t*88+lanes[i])*368,row.data(),368);
+            ggml_fp16_to_fp32_row(transcription.grouping_stem->data()+row_offset(t,lanes[i]),row.data(),368);
             for(size_t channel=0;channel<368;++channel) values[736+channel]+=row[channel];
         }
         for(size_t channel=0;channel<368;++channel) {

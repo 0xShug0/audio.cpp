@@ -26,6 +26,7 @@ class LaneTranscriber {
     std::array<core::TensorValue, 3> run_device(const std::vector<float> &hcqt, int64_t batch, int64_t frames);
 
   private:
+    static constexpr int64_t kAttentionHeads = 8;
     const core::ExecutionContext &execution_;
     core::BackendWeightStore store_;
     std::unordered_map<std::string, core::TensorValue> weights_;
@@ -38,7 +39,7 @@ class LaneTranscriber {
     core::TensorValue conv(core::ModuleBuildContext &, const core::TensorValue &, const std::string &, int stride = 1,
                            int dilation = 1, bool depthwise = false);
     core::TensorValue norm(core::ModuleBuildContext &, const core::TensorValue &, const std::string &);
-    core::TensorValue linear(core::ModuleBuildContext &, const core::TensorValue &, const std::string &);
+    core::TensorValue linear(core::ModuleBuildContext &, const core::TensorValue &, const std::string &, bool use_bias = true);
     core::TensorValue lane(core::ModuleBuildContext &, const core::TensorValue &, const std::string &, int dilation);
     core::TensorValue attention(core::ModuleBuildContext &, const core::TensorValue &, const std::string &, bool time);
     core::TensorValue recurrent(core::ModuleBuildContext &, const core::TensorValue &, const std::string &);

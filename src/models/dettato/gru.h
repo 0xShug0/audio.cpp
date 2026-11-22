@@ -4,12 +4,13 @@
 
 namespace engine::models::dettato::detail {
 
-enum class GRURecurrenceLowering { Unrolled, HostRecurrence };
+enum class GRURecurrenceLowering { Unrolled, HostRecurrence, DeviceScan, DeviceCell };
 struct BidirectionalGRUConfig {
     int64_t input_size = 0;
     int64_t hidden_size = 0;
-    // Existing GGML CPU custom operation; GPU callers provide a CPU scheduler
-    // backend. Input projection stays on the graph's ordinary execution path.
+    // Unrolled preserves the original graph. HostRecurrence needs a CPU backend.
+    // DeviceCell keeps GGML recurrent GEMMs and fuses cell math; DeviceScan runs
+    // F32 recurrence in one device operation. Input projection remains batched.
     GRURecurrenceLowering lowering = GRURecurrenceLowering::Unrolled;
 };
 

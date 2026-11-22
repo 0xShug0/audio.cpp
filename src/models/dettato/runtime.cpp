@@ -98,7 +98,7 @@ Transcription DettatoRuntime::transcribe(const std::vector<float> & mono, int sa
     if (sample_rate >= 40000 && s.drum_execution)
         drum_features = std::async(std::launch::async, prepare_drums);
     auto phase = std::chrono::steady_clock::now();
-    s.transcriber.run_device(pitched);
+    s.transcriber.run_device(pitched, false);
     // Neural device work is complete. Drum inference can now overlap readback,
     // evidence and grouping without contending with the transcriber graph.
     if (sample_rate >= 40000 && s.drum_execution)
@@ -115,6 +115,7 @@ Transcription DettatoRuntime::transcribe(const std::vector<float> & mono, int sa
     debug::timing_log_scalar("dettato.evidence_ms", debug::elapsed_ms(phase));
     phase = std::chrono::steady_clock::now();
     for (auto & note : repaired.notes) note.offset = std::max(note.offset, note.onset + .03);
+    s.transcriber.readback_grouping(prediction, repaired.notes);
     const auto features = detail::collect_grouping_features(prediction, repaired.notes, s.thresholds);
     // Grouping metadata is sorted and quantized to F32 by the official reader.
     // The decoder must consume that same order and confidence source.

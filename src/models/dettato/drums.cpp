@@ -16,8 +16,8 @@ using namespace core;
 using namespace modules;
 
 DrumEmbedder::DrumEmbedder(const assets::TensorSource & source, std::string prefix,
-    const io::json::Value & config, const ExecutionContext & execution)
-    : execution_(execution), store_(execution.backend(), execution.backend_type(), "dettato.drums." + prefix + "weights", 1024 * 1024),
+    const io::json::Value & config, const ExecutionContext & execution, GraphWorkspace *workspace)
+    : execution_(execution), workspace_(workspace), store_(execution.backend(), execution.backend_type(), "dettato.drums." + prefix + "weights", 1024 * 1024),
       stem_(config.require("stem").as_string()), activation_(config.require("act").as_string()),
       width_(config.require("w").as_i64()), band_hidden_(config.require("collapse_m").as_i64()) {
     for (const auto & metadata : source.tensors()) {
@@ -36,7 +36,7 @@ DrumEmbedder::DrumEmbedder(const assets::TensorSource & source, std::string pref
 }
 
 void DrumEmbedder::prepare(const std::vector<int64_t> & shapes) {
-    if (graph_ && shapes_ == shapes) return;
+    if (graph_ && graph_->graph() && shapes_ == shapes) return;
     graph_.reset(); shapes_ = shapes; ports_.clear(); ports_.resize(shapes.size());
     graph_ = std::make_unique<PreparedGraph>(execution_, PreparedGraphConfig{"dettato.drums.embed", 8 * 1024 * 1024, 8192, 1024 * 1024});
     for (size_t shape = 0; shape < shapes.size(); ++shape) {
@@ -96,7 +96,7 @@ void DrumEmbedder::prepare(const std::vector<int64_t> & shapes) {
             parameters[d] = {weights_.at("collapse.rnn.weight_ih" + suffix), weights_.at("collapse.rnn.weight_hh" + suffix),
                  weights_.at("collapse.rnn.bias_ih" + suffix), weights_.at("collapse.rnn.bias_hh" + suffix)};
         }
-        const auto recurrent = BidirectionalGRU({channels, band_hidden_})
+        const auto recurrent = BidirectionalGRU({channels, band_hidden_, ctx.backend_type == BackendType::Cuda ? GRURecurrenceLowering::DeviceCell : GRURecurrenceLowering::Unrolled})
             .build(ctx, x, ports.initial, ports.initial, parameters[0], parameters[1]);
         const auto hidden = ConcatModule({1}).build(ctx, recurrent.forward_hidden, recurrent.reverse_hidden);
         auto mean = ReduceMeanModule({0}).build(ctx, recurrent.sequence);
@@ -107,17 +107,14 @@ void DrumEmbedder::prepare(const std::vector<int64_t> & shapes) {
         ports.output = reshape_tensor(ctx, ports.output, TensorShape::from_dims({1, time, width_}));
         ggml_set_output(ports.output.tensor); ggml_build_forward_expand(graph_->graph(id), ports.output.tensor);
     }
-    graph_->allocate_persistent(); graph_->allocate();
+    graph_->allocate_persistent();
+    if (workspace_) workspace_->add(*graph_);
+    else graph_->allocate();
     for (size_t i = 0; i < shapes.size(); ++i)
         write_tensor_f32(ports_[i].initial, std::vector<float>(static_cast<size_t>(shapes[i] / 2 * band_hidden_)));
 }
 
-std::vector<float> DrumEmbedder::run(const std::vector<float> & mel, int64_t long_above) {
-    if (mel.size() % 160 || mel.size() < 320)
-        throw std::invalid_argument("Dettato drum embedding expects at least two 160-band frames");
-    const auto frames = static_cast<int64_t>(mel.size() / 160);
-    // These are the upstream DrumNet/OrchestralAdapter windows, including the
-    // different direct-path thresholds supplied by their callers.
+void DrumEmbedder::prepare(int64_t frames, int64_t long_above) {
     constexpr int64_t chunk = 8000, margin = 200;
     const auto step = frames > long_above ? chunk : frames;
     std::vector<int64_t> shapes;
@@ -128,12 +125,23 @@ std::vector<float> DrumEmbedder::run(const std::vector<float> & mel, int64_t lon
         if (std::find(shapes.begin(), shapes.end(), size) == shapes.end()) shapes.push_back(size);
     }
     prepare(shapes);
+}
+
+std::vector<float> DrumEmbedder::run(const std::vector<float> & mel, int64_t long_above) {
+    if (mel.size() % 160 || mel.size() < 320)
+        throw std::invalid_argument("Dettato drum embedding expects at least two 160-band frames");
+    const auto frames = static_cast<int64_t>(mel.size() / 160);
+    // These are the upstream DrumNet/OrchestralAdapter windows, including the
+    // different direct-path thresholds supplied by their callers.
+    constexpr int64_t chunk = 8000, margin = 200;
+    const auto step = frames > long_above ? chunk : frames;
+    prepare(frames, long_above);
     std::vector<float> output;
     output.reserve(static_cast<size_t>(frames / 2 * width_));
     for (int64_t start = 0; start < frames; start += step) {
         const auto begin = std::max<int64_t>(0, start - margin);
         const auto end = std::min(frames, start + step + margin);
-        const auto id = static_cast<size_t>(std::find(shapes.begin(), shapes.end(), end - begin) - shapes.begin());
+        const auto id = static_cast<size_t>(std::find(shapes_.begin(), shapes_.end(), end - begin) - shapes_.begin());
         window_.assign(mel.begin() + begin * 160, mel.begin() + end * 160);
         write_tensor_f32(ports_[id].input, window_);
         const auto phase = std::chrono::steady_clock::now(); graph_->compute(id);
