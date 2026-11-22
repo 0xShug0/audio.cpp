@@ -12,6 +12,15 @@ namespace engine::models::pocket_tts {
 
 struct PocketTTSAssets;
 
+// Which upstream's prompt punctuation the text conditioner follows.
+enum class PromptPunctuation {
+    // pocket-tts: a trailing comma, colon or dash becomes a period, any other unfinished prompt
+    // gets one after its closing quotes, and those quotes stay with their sentence when it is split.
+    PocketTTS,
+    // Gradium Phonon: only a final letter or digit gets a period.
+    LetterOrDigit,
+};
+
 // Package loading and session contracts differ; the acoustic runtime is shared.
 struct PocketTTSImplementation {
     const std::string_view family;
@@ -20,6 +29,7 @@ struct PocketTTSImplementation {
         const runtime::TaskSpec &, const runtime::SessionOptions &,
         std::shared_ptr<const PocketTTSAssets>, const std::filesystem::path &,
         std::shared_ptr<const model_spec::ModelContract>);
+    PromptPunctuation prompt_punctuation = PromptPunctuation::PocketTTS;
 };
 
 extern const PocketTTSImplementation kGradiumPhononImplementation;
