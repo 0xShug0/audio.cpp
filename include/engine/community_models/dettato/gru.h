@@ -2,7 +2,7 @@
 
 #include "engine/framework/core/module.h"
 
-namespace engine::models::dettato::detail {
+namespace engine::community_models::dettato::detail {
 
 enum class GRURecurrenceLowering { Unrolled, HostRecurrence, DeviceScan, DeviceCell };
 struct BidirectionalGRUConfig {
@@ -40,11 +40,11 @@ class BidirectionalGRU {
         return config_;
     }
     BidirectionalGRUOutputs build(core::ModuleBuildContext &ctx, const core::TensorValue &input,
-        const core::TensorValue &forward_initial, const core::TensorValue &reverse_initial,
-        const GRUWeights &forward_weights, const GRUWeights &reverse_weights) const;
+                                  const core::TensorValue &forward_initial, const core::TensorValue &reverse_initial,
+                                  const GRUWeights &forward_weights, const GRUWeights &reverse_weights) const;
 
   private:
     BidirectionalGRUConfig config_;
 };
 
-} // namespace engine::models::dettato::detail
+} // namespace engine::community_models::dettato::detail

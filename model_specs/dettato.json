@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "dettato",
   "display_name": "Dettato",
-  "description": "Multi-instrument audio-to-MIDI transcription with note detection, evidence repair, instrument grouping and drum transcription.",
+  "description": "Experimental multi-instrument audio-to-MIDI transcription with note detection, evidence repair, instrument grouping and drum transcription.",
   "category": "audio_tools",
   "status": "experimental",
   "tasks": [

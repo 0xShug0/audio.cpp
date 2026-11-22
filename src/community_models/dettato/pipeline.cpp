@@ -1,43 +1,46 @@
-#include "engine/models/dettato/runtime.h"
+#include "engine/community_models/dettato/pipeline.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/profiler.h"
-#include "decode.h"
-#include "drums.h"
-#include "evidence.h"
-#include "frontend.h"
-#include "grouper.h"
-#include "tuning.h"
-#include "windows.h"
+#include "engine/community_models/dettato/assets.h"
+#include "engine/community_models/dettato/drums.h"
+#include "engine/community_models/dettato/frontend.h"
+#include "engine/community_models/dettato/grouper.h"
+#include "engine/community_models/dettato/note_repair.h"
+#include "engine/community_models/dettato/transcriber.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <future>
 
-namespace engine::models::dettato {
-struct DettatoRuntime::Impl {
+namespace engine::community_models::dettato {
+struct DettatoPipeline::Impl {
     std::shared_ptr<const DettatoAssets> assets;
     const size_t threads;
     detail::TuningEstimator tuning;
     detail::WindowTranscriber transcriber;
-    detail::EvidenceNetwork evidence;
+    detail::NoteRepairNetwork note_repair;
     detail::WindowGrouper grouper;
-    detail::GroupingDecoder grouping;
     std::unique_ptr<core::ExecutionContext> drum_execution;
     detail::DrumFrontend drum_frontend;
     detail::DrumTranscriber drums;
     detail::NoteThresholds thresholds;
 
-    Impl(std::shared_ptr<const DettatoAssets> a, const core::ExecutionContext & execution, int window_hop_sec)
+    Impl(std::shared_ptr<const DettatoAssets> a, const core::ExecutionContext &execution, int window_hop_sec)
         : assets(std::move(a)), threads(execution.config().threads), tuning(execution.config().threads),
-          transcriber(*assets->weights[0], execution, window_hop_sec), evidence(*assets->weights[1], execution),
-          grouper(*assets->weights[2], assets->config.require("grouper"), execution),
-          grouping(*assets->weights[2], assets->config.require("grouper")),
-          drum_execution(execution.backend_type() == core::BackendType::Cpu ? nullptr :
-              std::make_unique<core::ExecutionContext>(core::BackendConfig{execution.backend_type(),
-                  execution.config().device, execution.config().threads, execution.config().impl})),
-          drum_frontend(*assets->weights[3], execution.config().threads),
-          drums(*assets->weights[3], assets->config.require("drums"), drum_execution ? *drum_execution : execution) {
-        const auto & t = assets->config.require("transcriber").require("thresholds");
+          transcriber(detail::bind_transcriber_weights(*assets->transcriber, execution), execution, window_hop_sec),
+          note_repair(detail::bind_note_repair_weights(*assets->note_repair, execution), execution),
+          grouper(detail::bind_grouper_weights(*assets->grouper, execution), assets->config.require("grouper"),
+                  execution),
+          drum_execution(execution.backend_type() == core::BackendType::Cpu
+                             ? nullptr
+                             : std::make_unique<core::ExecutionContext>(
+                                   core::BackendConfig{execution.backend_type(), execution.config().device,
+                                                       execution.config().threads, execution.config().impl})),
+          drum_frontend(detail::load_drum_frontend(*assets->drums), execution.config().threads),
+          drums(detail::bind_drum_weights(*assets->drums, assets->config.require("drums"),
+                                          drum_execution ? *drum_execution : execution),
+                assets->config.require("drums"), drum_execution ? *drum_execution : execution) {
+        const auto &t = assets->config.require("transcriber").require("thresholds");
         thresholds.onset = t.require("on_th").as_number();
         thresholds.offset = t.require("off_th").as_number();
         thresholds.frame = t.require("fr_th").as_number();
@@ -46,15 +49,16 @@ struct DettatoRuntime::Impl {
         thresholds.onset_nms = t.require("on_nms").as_i64();
     }
 };
-DettatoRuntime::DettatoRuntime(std::shared_ptr<const DettatoAssets> assets, const core::ExecutionContext & execution, int window_hop_sec)
+DettatoPipeline::DettatoPipeline(std::shared_ptr<const DettatoAssets> assets, const core::ExecutionContext &execution,
+                                 int window_hop_sec)
     : impl_(std::make_unique<Impl>(std::move(assets), execution, window_hop_sec)) {}
-DettatoRuntime::~DettatoRuntime() = default;
+DettatoPipeline::~DettatoPipeline() = default;
 
-Transcription DettatoRuntime::transcribe(const std::vector<float> & mono, int sample_rate) {
+Transcription DettatoPipeline::transcribe(const std::vector<float> &mono, int sample_rate) {
     if (sample_rate <= 0 || mono.empty() ||
         std::any_of(mono.begin(), mono.end(), [](float x) { return !std::isfinite(x); }))
         throw std::invalid_argument("Dettato requires non-empty finite mono audio and a positive sample rate");
-    auto & s = *impl_;
+    auto &s = *impl_;
     const auto start = std::chrono::steady_clock::now();
     audio::SoxrResampleOptions options;
     options.require_full_input = true;
@@ -108,33 +112,27 @@ Transcription DettatoRuntime::transcribe(const std::vector<float> & mono, int sa
     result.transcribed = notes.size();
     debug::timing_log_scalar("dettato.transcriber_ms", debug::elapsed_ms(phase));
     phase = std::chrono::steady_clock::now();
-    const auto & cfg = s.assets->config.require("evidence");
-    auto repaired = detail::repair_notes(s.evidence, notes, detail::extract_note_evidence(prediction, notes, s.threads),
-        cfg.require("keep_th").as_number(), cfg.require("insert_th").as_number());
-    result.dropped = repaired.dropped; result.inserted = repaired.inserted;
+    const auto &cfg = s.assets->config.require("evidence");
+    auto repaired =
+        detail::repair_notes(s.note_repair, notes, detail::extract_note_evidence(prediction, notes, s.threads),
+                             cfg.require("keep_th").as_number(), cfg.require("insert_th").as_number());
+    result.dropped = repaired.dropped;
+    result.inserted = repaired.inserted;
     debug::timing_log_scalar("dettato.evidence_ms", debug::elapsed_ms(phase));
     phase = std::chrono::steady_clock::now();
-    for (auto & note : repaired.notes) note.offset = std::max(note.offset, note.onset + .03);
+    for (auto &note : repaired.notes)
+        note.offset = std::max(note.offset, note.onset + .03);
     s.transcriber.readback_grouping(prediction, repaired.notes);
-    const auto features = detail::collect_grouping_features(prediction, repaired.notes, s.thresholds);
-    // Grouping metadata is sorted and quantized to F32 by the official reader.
-    // The decoder must consume that same order and confidence source.
-    std::vector<Note> grouped_notes(features.notes.size() / 12);
-    for (size_t i = 0; i < grouped_notes.size(); ++i) {
-        const auto * row = features.notes.data() + i * 12;
-        auto & note = grouped_notes[i];
-        note.onset = row[0]; note.offset = row[1]; note.pitch = static_cast<int>(row[2]);
-        note.confidence = row[row[3] > .5f ? 5 : 4];
-    }
-    result.tracks = s.grouping.decode(s.grouper.predict(pitched, features), grouped_notes, tuning.ratio);
-    for (auto & track : result.tracks) std::replace(track.name.begin(), track.name.end(), '_', ' ');
+    result.tracks = s.grouper.group(pitched, prediction, repaired.notes, s.thresholds, tuning.ratio);
     debug::timing_log_scalar("dettato.grouping_ms", debug::elapsed_ms(phase));
     if (sample_rate >= 40000) {
         auto drum_result = drum_request.valid() ? drum_request.get() : run_drums();
-        result.drum_router = drum_result.router; result.drum_model = std::move(drum_result.model);
-        if (!drum_result.track.notes.empty()) result.tracks.push_back(std::move(drum_result.track));
+        result.drum_router = drum_result.router;
+        result.drum_model = std::move(drum_result.model);
+        if (!drum_result.track.notes.empty())
+            result.tracks.push_back(std::move(drum_result.track));
     }
     debug::timing_log_scalar("dettato.transcribe_ms", debug::elapsed_ms(start));
     return result;
 }
-} // namespace engine::models::dettato
+} // namespace engine::community_models::dettato

@@ -11,10 +11,70 @@ import subprocess
 import sys
 import tempfile
 
+import numpy as np
 import torch
 from safetensors.torch import load_file, save_file
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+
+def prepare_native_state(stage, state):
+    """Normalize checkpoint-only layouts without changing inference arithmetic."""
+    for key in list(state):
+        if key.endswith('.running_var'):
+            prefix = key[:-len('.running_var')]
+            gamma = state[prefix + '.weight'].numpy().astype(np.float32)
+            beta = state[prefix + '.bias'].numpy().astype(np.float32)
+            mean = state[prefix + '.running_mean'].numpy().astype(np.float32)
+            variance = state[key].numpy().astype(np.float32)
+            scale = gamma / np.sqrt(variance + np.float32(1e-5))
+            bias = beta - mean * scale
+            state[prefix + '.eval_scale'] = torch.from_numpy(scale.copy())
+            state[prefix + '.eval_bias'] = torch.from_numpy(bias.copy())
+            for suffix in ['.weight', '.bias', '.running_mean', '.running_var']:
+                del state[prefix + suffix]
+    if stage in ('transcriber', 'grouper'):
+        offsets = np.array([-2,-1,1,2,-12,12,-19,19,-24,24,-28,28,-31,31], dtype=np.int32)
+        order = np.argsort(offsets)
+        for key in list(state):
+            if key.endswith(('.pmix.taps', '.pm.taps')):
+                prefix = key[:-len('.taps')]
+                state[prefix + '.coefficients'] = state.pop(key)[:, order].contiguous()
+                positions = np.zeros((len(offsets), 2), dtype=np.int32)
+                positions[:, 0] = offsets[order]
+                state[prefix + '.offsets'] = torch.from_numpy(positions)
+            elif key.endswith('.rel_bias'):
+                lanes = 88 if stage == 'transcriber' else 96
+                table = state[key]
+                positions = torch.arange(lanes)
+                indices = positions[None, :] - positions[:, None] + table.shape[-1] // 2
+                state[key] = table[:, indices].contiguous()
+    if stage == 'transcriber':
+        for key in list(state):
+            if key.endswith(('.pw1.weight', '.pw2.weight')):
+                weight = state[key]
+                if weight.ndim != 4 or tuple(weight.shape[2:]) != (1, 1):
+                    raise ValueError(f'Expected pointwise projection: {key} {tuple(weight.shape)}')
+                state[key] = weight[:, :, 0, 0].contiguous()
+    return state
+
+
+def prepare_native_config(configs):
+    configs['weight_layout'] = 'audiocpp_v1'
+    config = configs['drums']['drum_kit']
+    layers, index = [], 0
+    for token in config['stem'].split(','):
+        if token.startswith('c'):
+            layers.append({'kind':'conv', 'index':index}); index += 3
+        elif token == 'r':
+            layers.append({'kind':'residual', 'index':index}); index += 1
+        elif token.startswith('p') and len(token) >= 3:
+            layers.append({'kind':'pool', 'index':index, 'time':int(token[1]), 'frequency':int(token[2:])}); index += 1
+        else:
+            raise ValueError(f'Unknown drum stem token: {token}')
+    config['stem_layers'] = layers
+    del config['stem']
 
 
 def main():
@@ -36,6 +96,7 @@ def main():
     from dettato.drums.features import _filters
     stages = {'transcriber':'dettato', 'evidence':'dettato-evidence', 'grouper':'dettato-grouper', 'drums':'dettato-drums'}
     configs = {stage:json.loads((args.source / name / 'config.json').read_text()) for stage, name in stages.items()}
+    prepare_native_config(configs)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.log_file.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='dettato-convert-') as directory:
@@ -56,6 +117,7 @@ def main():
                     state['front.' + name + '.window'] = torch.hann_window(nfft)
             if stage=='grouper':
                 state['instrument_credit'] = torch.from_numpy(CREDIT).float().contiguous()
+            state = prepare_native_state(stage, state)
             # Keep frontend constants, normalization, evidence and host-recurrent
             # matrices in F32. Only the actual GEMM/convolution weights use F16.
             if args.weight_type == 'f16' and stage != 'evidence':

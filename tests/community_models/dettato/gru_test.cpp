@@ -1,10 +1,10 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/profiler.h"
-#include "../../src/models/dettato/gru.h"
+#include "engine/community_models/dettato/gru.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "../unittests/test_assert.h"
+#include "../../unittests/test_assert.h"
 
 #include <array>
 #include <chrono>
@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace dettato = engine::models::dettato::detail;
+namespace dettato = engine::community_models::dettato::detail;
 
 namespace {
 using namespace engine;

@@ -1,24 +1,13 @@
-#include "frontend.h"
+#include "engine/community_models/dettato/frontend.h"
 #include "engine/framework/audio/resampling.h"
-
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <stdexcept>
 
-namespace engine::models::dettato::detail {
-namespace {
-audio::SparseMelFilterbank filter(const assets::TensorSource &source, const std::string &name) {
-    const auto data = source.require_f32_tensor(name);
-    auto bank = audio::MelFilterbank{}.prepare_sparse({data.values, {data.shape.dims[0], data.shape.dims[1]}});
-    // Harmonics above Nyquist have exactly zero support. Represent those rows
-    // as empty ranges; the generic sparse builder assumes nonempty mel rows.
-    for (size_t row = 0; row < bank.starts.size(); ++row)
-        if (bank.starts[row] == data.shape.dims[1] && bank.ends[row] == 0)
-            bank.starts[row] = 0;
-    return bank;
-}
+namespace engine::community_models::dettato::detail {
 
+namespace {
 audio::AudioTensor spectrum(const std::vector<float> &samples, int64_t batch, const std::vector<float> &window,
                             int64_t hop, const audio::SparseMelFilterbank &bank, size_t threads) {
     audio::STFTConfig config;
@@ -89,27 +78,26 @@ void standardise(HarmonicFeatures &out, size_t threads) {
 }
 } // namespace
 
-HarmonicFrontend::HarmonicFrontend(const assets::TensorSource &source, const std::string &prefix, size_t threads)
-    : long_filter_(filter(source, prefix + ".fb")), short_filter_(filter(source, prefix + ".fb_x0")),
-      long_window_(source.require_f32(prefix + ".win")), short_window_(source.require_f32(prefix + ".win_x0")),
-      threads_(threads) {
+HarmonicFrontend::HarmonicFrontend(HarmonicFrontendWeights weights, size_t threads)
+    : long_filter_(std::move(weights.long_filter)), short_filter_(std::move(weights.short_filter)),
+      long_window_(std::move(weights.long_window)), short_window_(std::move(weights.short_window)), threads_(threads) {}
 
-}
-
-void HarmonicFrontend::apply_pcen(HarmonicFeatures & features) const {
+void HarmonicFrontend::apply_pcen(HarmonicFeatures &features) const {
     // Match upstream's finite 200-tap FFT convolution. Replacing it with an
     // IIR/subtraction recurrence changes low-level values in padded windows;
     // PCEN and window standardisation amplify those changes.
     size_t n = 1;
-    while (n < static_cast<size_t>(features.frames + 200)) n *= 2;
+    while (n < static_cast<size_t>(features.frames + 200))
+        n *= 2;
     const size_t frequencies = n / 2 + 1;
     if (!pcen_plan_ || pcen_plan_->fft_size() != n) {
         pcen_plan_ = audio::get_real_fft_plan(n);
         std::vector<float> kernel(n, 0);
-        for (size_t k = 0; k < 200; ++k) kernel[k] = .025f * std::pow(.975f, static_cast<float>(k));
+        for (size_t k = 0; k < 200; ++k)
+            kernel[k] = .025f * std::pow(.975f, static_cast<float>(k));
         pcen_kernel_.resize(frequencies);
-        pcen_plan_->forward({n}, {sizeof(float)}, {sizeof(std::complex<float>)}, 0,
-            kernel.data(), pcen_kernel_.data(), 1, threads_);
+        pcen_plan_->forward({n}, {sizeof(float)}, {sizeof(std::complex<float>)}, 0, kernel.data(), pcen_kernel_.data(),
+                            1, threads_);
     }
     const size_t rows = static_cast<size_t>(features.batch * features.channels * features.bins);
     pcen_buffer_.assign(rows * n, 0);
@@ -127,14 +115,18 @@ void HarmonicFrontend::apply_pcen(HarmonicFeatures & features) const {
         }
     }
     const audio::TensorStrideBytes real_strides{static_cast<std::ptrdiff_t>(n * sizeof(float)), sizeof(float)};
-    const audio::TensorStrideBytes complex_strides{static_cast<std::ptrdiff_t>(frequencies * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
-    pcen_plan_->forward({rows, n}, real_strides, complex_strides, 1, pcen_buffer_.data(), pcen_spectrum_.data(), 1, threads_);
+    const audio::TensorStrideBytes complex_strides{
+        static_cast<std::ptrdiff_t>(frequencies * sizeof(std::complex<float>)), sizeof(std::complex<float>)};
+    pcen_plan_->forward({rows, n}, real_strides, complex_strides, 1, pcen_buffer_.data(), pcen_spectrum_.data(), 1,
+                        threads_);
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(threads_)
 #endif
-    for (int64_t row = 0; row < static_cast<int64_t>(rows); ++row) for (size_t k = 0; k < frequencies; ++k)
-        pcen_spectrum_[row * frequencies + k] *= pcen_kernel_[k];
-    pcen_plan_->inverse({rows, n}, complex_strides, real_strides, 1, pcen_spectrum_.data(), pcen_buffer_.data(), 1.f / n, threads_);
+    for (int64_t row = 0; row < static_cast<int64_t>(rows); ++row)
+        for (size_t k = 0; k < frequencies; ++k)
+            pcen_spectrum_[row * frequencies + k] *= pcen_kernel_[k];
+    pcen_plan_->inverse({rows, n}, complex_strides, real_strides, 1, pcen_spectrum_.data(), pcen_buffer_.data(),
+                        1.f / n, threads_);
     // Each frequency sequence is independent. Harmonic channels that read the
     // same frequency share this work before channel-specific standardisation.
 #ifdef _OPENMP
@@ -169,15 +161,16 @@ HarmonicFeatures HarmonicFrontend::extract(const std::vector<float> &samples, in
     out.power.resize(static_cast<size_t>(batch * out.extended_bins * out.frames));
     const std::array<double, 8> harmonics{0.5, 1, 2, 3, 4, 5, 6, 7};
 #ifdef _OPENMP
-#pragma omp parallel for collapse(2) num_threads(threads_)
+#pragma omp parallel for num_threads(threads_)
 #endif
-    for (int64_t b = 0; b < batch; ++b)
-        for (int64_t t = 0; t < out.frames; ++t)
-            for (int64_t f = 0; f < out.extended_bins; ++f) {
-                const auto index = static_cast<size_t>((b * raw.shape[1] + t) * out.extended_bins + f);
-                out.power[static_cast<size_t>((b * out.extended_bins + f) * out.frames + t)] = raw.values[index];
-                raw.values[index] = std::log(raw.values[index] + 1e-5f);
-            }
+    for (int64_t row = 0; row < batch * out.frames; ++row) {
+        const int64_t b = row / out.frames, t = row % out.frames;
+        for (int64_t f = 0; f < out.extended_bins; ++f) {
+            const auto index = static_cast<size_t>((b * raw.shape[1] + t) * out.extended_bins + f);
+            out.power[static_cast<size_t>((b * out.extended_bins + f) * out.frames + t)] = raw.values[index];
+            raw.values[index] = std::log(raw.values[index] + 1e-5f);
+        }
+    }
     HarmonicFeatures compact;
     if (pcen) {
         compact.batch = batch;
@@ -186,49 +179,48 @@ HarmonicFeatures HarmonicFrontend::extract(const std::vector<float> &samples, in
         compact.bins = out.extended_bins + out.bins;
         compact.values.resize(static_cast<size_t>(batch * out.frames * compact.bins));
 #ifdef _OPENMP
-#pragma omp parallel for collapse(2) num_threads(threads_)
+#pragma omp parallel for num_threads(threads_)
 #endif
-        for (int64_t b = 0; b < batch; ++b)
-            for (int64_t t = 0; t < out.frames; ++t) {
-                auto *row = compact.values.data() + (b * out.frames + t) * compact.bins;
-                std::copy_n(raw.values.data() + (b * raw.shape[1] + t) * out.extended_bins, out.extended_bins, row);
-                for (int64_t f = 0; f < out.bins; ++f)
-                    row[out.extended_bins + f] = std::log(high.values[static_cast<size_t>((b * high.shape[1] + t) * out.bins + f)] + 1e-5f);
-            }
+        for (int64_t row_index = 0; row_index < batch * out.frames; ++row_index) {
+            const int64_t b = row_index / out.frames, t = row_index % out.frames;
+            auto *row = compact.values.data() + (b * out.frames + t) * compact.bins;
+            std::copy_n(raw.values.data() + (b * raw.shape[1] + t) * out.extended_bins, out.extended_bins, row);
+            for (int64_t f = 0; f < out.bins; ++f)
+                row[out.extended_bins + f] =
+                    std::log(high.values[static_cast<size_t>((b * high.shape[1] + t) * out.bins + f)] + 1e-5f);
+        }
         apply_pcen(compact);
     }
 #ifdef _OPENMP
-#pragma omp parallel for collapse(2) num_threads(threads_)
+#pragma omp parallel for num_threads(threads_)
 #endif
-    for (int64_t b = 0; b < batch; ++b)
-        for (int64_t ch = 0; ch < 9; ++ch) {
-            const int64_t shift = ch < 8
-                ? static_cast<int64_t>(std::nearbyint(36 * std::log2(harmonics[static_cast<size_t>(ch)]))) + 36 : 0;
-            for (int64_t t = 0; t < out.frames; ++t) {
-                auto *destination = out.values.data() + ((b * 9 + ch) * out.frames + t) * out.bins;
-                if (pcen) {
-                    const auto offset = ch < 8 ? shift : out.extended_bins;
-                    std::copy_n(compact.values.data() + (b * out.frames + t) * compact.bins + offset, out.bins, destination);
-                } else if (ch < 8) {
-                    std::copy_n(raw.values.data() + (b * raw.shape[1] + t) * out.extended_bins + shift, out.bins, destination);
-                } else {
-                    for (int64_t f = 0; f < out.bins; ++f)
-                        destination[f] = std::log(high.values[static_cast<size_t>((b * high.shape[1] + t) * out.bins + f)] + 1e-5f);
-                }
+    for (int64_t row = 0; row < batch * 9; ++row) {
+        const int64_t b = row / 9, ch = row % 9;
+        const int64_t shift =
+            ch < 8 ? static_cast<int64_t>(std::nearbyint(36 * std::log2(harmonics[static_cast<size_t>(ch)]))) + 36 : 0;
+        for (int64_t t = 0; t < out.frames; ++t) {
+            auto *destination = out.values.data() + ((b * 9 + ch) * out.frames + t) * out.bins;
+            if (pcen) {
+                const auto offset = ch < 8 ? shift : out.extended_bins;
+                std::copy_n(compact.values.data() + (b * out.frames + t) * compact.bins + offset, out.bins,
+                            destination);
+            } else if (ch < 8) {
+                std::copy_n(raw.values.data() + (b * raw.shape[1] + t) * out.extended_bins + shift, out.bins,
+                            destination);
+            } else {
+                for (int64_t f = 0; f < out.bins; ++f)
+                    destination[f] =
+                        std::log(high.values[static_cast<size_t>((b * high.shape[1] + t) * out.bins + f)] + 1e-5f);
             }
         }
-    if (pcen) standardise(out, threads_);
+    }
+    if (pcen)
+        standardise(out, threads_);
     return out;
 }
 
-DrumFrontend::DrumFrontend(const assets::TensorSource &source, size_t threads) : threads_(threads) {
-    for (const auto name : {"lo", "hi", "cq"}) {
-        const auto prefix = std::string("front.") + name;
-        filters_.push_back(filter(source, prefix + ".filterbank"));
-        windows_.push_back(source.require_f32(prefix + ".window"));
-    }
-
-}
+DrumFrontend::DrumFrontend(DrumFrontendWeights weights, size_t threads)
+    : filters_(std::move(weights.filters)), windows_(std::move(weights.windows)), threads_(threads) {}
 
 std::vector<float> DrumFrontend::extract(const std::vector<float> &mono44k) const {
     double energy = 0;
@@ -261,4 +253,75 @@ std::vector<float> DrumFrontend::extract(const std::vector<float> &mono44k) cons
     }
     return output;
 }
-} // namespace engine::models::dettato::detail
+
+namespace {
+constexpr double pi = 3.14159265358979323846;
+}
+TuningEstimator::TuningEstimator(size_t threads) : threads_(threads), window_(8192) {
+    for (size_t i = 0; i < window_.size(); ++i)
+        window_[i] = static_cast<float>(.5 - .5 * std::cos(2 * pi * i / 8191));
+    const double lo = 1200 * std::log2(65. / 440.), hi = 1200 * std::log2(1000. / 440.);
+    for (size_t i = 0; lo + i * 5 < hi; ++i)
+        cents_.push_back(lo + i * 5);
+}
+Tuning TuningEstimator::estimate(const std::vector<float> &audio16) {
+    if (audio16.size() < 8192)
+        return {};
+    const size_t frames = 1 + (audio16.size() - 8192) / 1024;
+    std::complex<double> sum{};
+    double weight_sum = 0;
+    for (size_t first = 0; first < frames; first += 512) {
+        const size_t count = std::min<size_t>(512, frames - first);
+        input_.resize(count * 8192);
+        spectrum_.resize(count * 4097);
+        magnitude_.resize(count * 4097);
+        salience_.assign(cents_.size() * count, 0);
+        for (size_t t = 0; t < count; ++t)
+            for (size_t i = 0; i < 8192; ++i)
+                input_[t * 8192 + i] = audio16[(first + t) * 1024 + i] * window_[i];
+        fft_.forward({count, 8192}, {8192 * sizeof(float), sizeof(float)},
+                     {4097 * sizeof(std::complex<float>), sizeof(std::complex<float>)}, 1, input_.data(),
+                     spectrum_.data(), 1, threads_);
+        for (size_t i = 0; i < magnitude_.size(); ++i)
+            magnitude_[i] = std::sqrt(std::abs(spectrum_[i]));
+        for (int h = 1; h <= 6; ++h) {
+            const float harmonic_weight = static_cast<float>(std::pow(.85, h - 1));
+            for (size_t j = 0; j < cents_.size(); ++j) {
+                const double bin = h * 440 * std::pow(2., cents_[j] / 1200) * 8192 / 16000;
+                if (bin >= 4095)
+                    continue;
+                const size_t i = static_cast<size_t>(bin);
+                const float w = static_cast<float>(bin - i);
+                for (size_t t = 0; t < count; ++t)
+                    salience_[j * count + t] +=
+                        harmonic_weight * ((1 - w) * magnitude_[t * 4097 + i] + w * magnitude_[t * 4097 + i + 1]);
+            }
+        }
+        std::vector<float> maxima(count, 0);
+        for (size_t j = 0; j < cents_.size(); ++j)
+            for (size_t t = 0; t < count; ++t)
+                maxima[t] = std::max(maxima[t], salience_[j * count + t]);
+        for (size_t j = 1; j + 1 < cents_.size(); ++j) {
+            for (size_t t = 0; t < count; ++t) {
+                const float a = salience_[(j - 1) * count + t], b = salience_[j * count + t],
+                            c = salience_[(j + 1) * count + t];
+                if (!(b > a && b >= c && b > .5f * maxima[t] && maxima[t] > 0))
+                    continue;
+                const float d = std::clamp(.5f * (a - c) / (a - 2 * b + c - 1e-12f), -1.f, 1.f);
+                const double angle = 2 * pi * (cents_[j] + d * 5) / 100;
+                sum += static_cast<double>(b) * std::complex<double>(std::cos(angle), std::sin(angle));
+                weight_sum += b;
+            }
+        }
+    }
+    if (weight_sum <= 0)
+        return {};
+    sum /= weight_sum;
+    Tuning result;
+    result.cents = std::arg(sum) * 100 / (2 * pi);
+    result.strength = std::abs(sum);
+    if (std::abs(result.cents) >= 10 && result.strength >= .12)
+        result.ratio = std::pow(2., -result.cents / 1200);
+    return result;
+}
+} // namespace engine::community_models::dettato::detail

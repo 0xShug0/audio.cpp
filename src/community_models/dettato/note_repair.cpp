@@ -1,4 +1,4 @@
-#include "evidence.h"
+#include "engine/community_models/dettato/note_repair.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/attention/scaled_dot_product_attention.h"
@@ -8,17 +8,109 @@
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "windows.h"
+#include "engine/community_models/dettato/transcriber.h"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <tuple>
 
-namespace engine::models::dettato::detail {
+namespace engine::community_models::dettato::detail {
+
+namespace {
+bool peak(const std::vector<float> &values, int64_t t, int lane, int64_t frames, float threshold) {
+    const float value = values[static_cast<size_t>(t * 88 + lane)];
+    const float left = t ? values[static_cast<size_t>((t - 1) * 88 + lane)] : -1;
+    const float right = t + 1 < frames ? values[static_cast<size_t>((t + 1) * 88 + lane)] : -1;
+    return value >= threshold && value > left && value >= right;
+}
+
+double refine(const std::vector<float> &values, int64_t t, int lane, int64_t frames) {
+    const float value = values[static_cast<size_t>(t * 88 + lane)];
+    const float left = t ? values[static_cast<size_t>((t - 1) * 88 + lane)] : value;
+    const float right = t + 1 < frames ? values[static_cast<size_t>((t + 1) * 88 + lane)] : value;
+    const float denominator = 2 * (value - std::min(left, right));
+    return denominator <= 1e-6f ? 0 : std::clamp((right - left) / denominator, -0.5f, 0.5f);
+}
+} // namespace
+
+std::vector<Note> decode_notes(const std::array<std::vector<float>, 6> &maps, int64_t frames, double hop,
+                               const NoteThresholds &thresholds) {
+    if (frames <= 0 || hop <= 0 || thresholds.low_frames <= 0)
+        throw std::runtime_error("Invalid Dettato note-decoding shape or thresholds");
+    for (const auto &values : maps)
+        if (values.size() != static_cast<size_t>(frames * 88))
+            throw std::runtime_error("Dettato probability-map shape mismatch");
+    std::vector<Note> notes;
+    for (int voice = 0; voice < 2; ++voice) {
+        const auto &on = maps[voice * 3];
+        const auto &fr = maps[voice * 3 + 1];
+        const auto &off = maps[voice * 3 + 2];
+        for (int lane = 0; lane < 88; ++lane) {
+            std::vector<int64_t> starts, ends, lows;
+            for (int64_t t = 0; t < frames; ++t) {
+                if (peak(on, t, lane, frames, voice ? thresholds.second_onset : thresholds.onset))
+                    starts.push_back(t);
+                if (peak(off, t, lane, frames, thresholds.offset))
+                    ends.push_back(t);
+                bool low = true;
+                for (int k = 0; k < thresholds.low_frames && t + k < frames; ++k)
+                    low = low && fr[static_cast<size_t>((t + k) * 88 + lane)] < thresholds.frame;
+                if (low)
+                    lows.push_back(t);
+            }
+            if (thresholds.onset_nms > 0 && starts.size() > 1) {
+                std::vector<size_t> order(starts.size());
+                std::iota(order.begin(), order.end(), 0);
+                std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+                    return on[static_cast<size_t>(starts[a] * 88 + lane)] >
+                           on[static_cast<size_t>(starts[b] * 88 + lane)];
+                });
+                std::vector<bool> keep(starts.size(), true);
+                for (const auto i : order) {
+                    if (!keep[i])
+                        continue;
+                    for (size_t j = 0; j < starts.size(); ++j)
+                        if (i != j && std::abs(starts[i] - starts[j]) <= thresholds.onset_nms)
+                            keep[j] = false;
+                }
+                size_t count = 0;
+                for (size_t i = 0; i < starts.size(); ++i)
+                    if (keep[i])
+                        starts[count++] = starts[i];
+                starts.resize(count);
+            }
+            for (size_t i = 0; i < starts.size(); ++i) {
+                const auto t = starts[i], next = i + 1 < starts.size() ? starts[i + 1] : frames;
+                const auto low = std::lower_bound(lows.begin(), lows.end(), t + 1);
+                const auto end = std::lower_bound(ends.begin(), ends.end(), t + 2);
+                const auto frame_end = low == lows.end() ? frames : *low;
+                const auto offset_end = end == ends.end() ? frames : *end;
+                const double onset = t + refine(on, t, lane, frames);
+                double stop;
+                if (offset_end < frames && offset_end <= std::min(frame_end, next))
+                    stop = offset_end + refine(off, offset_end, lane, frames);
+                else if (frame_end <= next)
+                    stop = frame_end - 0.5;
+                else
+                    stop = next + (next < frames ? refine(on, next, lane, frames) : 0);
+                const auto confidence_frame =
+                    std::clamp<int64_t>(static_cast<int64_t>(std::nearbyint(onset)), 0, frames - 1);
+                notes.push_back({onset * hop, std::max(stop * hop, onset * hop + 0.02), 21 + lane, 100,
+                                 on[static_cast<size_t>(confidence_frame * 88 + lane)], voice + 1, false});
+            }
+        }
+    }
+    std::sort(notes.begin(), notes.end(), [](const Note &a, const Note &b) {
+        return std::tie(a.onset, a.offset, a.pitch) < std::tie(b.onset, b.offset, b.pitch);
+    });
+    return notes;
+}
+
 using namespace core;
 using namespace modules;
 
-std::vector<float> extract_note_evidence(const WindowTranscription &transcription, const std::vector<Note> &notes, size_t threads) {
+std::vector<float> extract_note_evidence(const WindowTranscription &transcription, const std::vector<Note> &notes,
+                                         size_t threads) {
     const auto start = std::chrono::steady_clock::now();
     (void)threads;
     const auto frames = transcription.frames;
@@ -105,15 +197,19 @@ std::vector<float> extract_note_evidence(const WindowTranscription &transcriptio
             const auto frame = std::get<0>(endpoint), i = static_cast<int64_t>(std::get<1>(endpoint));
             while (t < frame) {
                 ggml_fp16_to_fp32_row(transcription.hidden->data() + (t * 88 + lane) * 368, row.data(), 368);
-                for (size_t c = 0; c < 368; ++c) accumulated[c] += row[c];
+                for (size_t c = 0; c < 368; ++c)
+                    accumulated[c] += row[c];
                 ++t;
             }
             if (!std::get<2>(endpoint)) {
-                ggml_fp16_to_fp32_row(transcription.hidden->data() + (starts[i] * 88 + lane) * 368, at.data() + i * 368, 368);
-                for (size_t c = 0; c < 368; ++c) mean[i * 368 + c] = -static_cast<float>(accumulated[c]);
+                ggml_fp16_to_fp32_row(transcription.hidden->data() + (starts[i] * 88 + lane) * 368, at.data() + i * 368,
+                                      368);
+                for (size_t c = 0; c < 368; ++c)
+                    mean[i * 368 + c] = -static_cast<float>(accumulated[c]);
             } else {
                 for (size_t c = 0; c < 368; ++c)
-                    mean[i * 368 + c] = (static_cast<float>(accumulated[c]) + mean[i * 368 + c]) / static_cast<float>(ends[i] - starts[i]);
+                    mean[i * 368 + c] = (static_cast<float>(accumulated[c]) + mean[i * 368 + c]) /
+                                        static_cast<float>(ends[i] - starts[i]);
             }
         }
     }
@@ -140,12 +236,12 @@ std::vector<float> extract_note_evidence(const WindowTranscription &transcriptio
     return result;
 }
 
-EvidenceInputs make_evidence_inputs(const std::vector<Note> &notes, const std::vector<float> &evidence,
-                                    float window_start) {
+NoteRepairInputs make_note_repair_inputs(const std::vector<Note> &notes, const std::vector<float> &evidence,
+                                         float window_start) {
     const size_t count = notes.size();
     if (evidence.size() != count * 769)
         throw std::runtime_error("Dettato evidence rows must match the input notes");
-    EvidenceInputs result;
+    NoteRepairInputs result;
     result.evidence = evidence;
     result.instrument.assign(count, 0);
     result.pitch.resize(count);
@@ -258,37 +354,31 @@ EvidenceInputs make_evidence_inputs(const std::vector<Note> &notes, const std::v
     return result;
 }
 
-EvidenceNetwork::EvidenceNetwork(const assets::TensorSource &source, const ExecutionContext &execution)
-    : execution_(execution),
-      store_(execution.backend(), execution.backend_type(), "dettato.evidence.weights", 1024 * 1024),
-      graphs_(32) {
-    for (const auto &metadata : source.tensors())
-        weights_.emplace(metadata.name, store_.load_f32_tensor(source, metadata.name, metadata.shape));
-    store_.upload();
+NoteRepairNetwork::NoteRepairNetwork(NoteRepairWeights weights, const ExecutionContext &execution)
+    : execution_(execution), weights_(std::move(weights)), graphs_(32) {}
+
+TensorValue NoteRepairNetwork::linear(ModuleBuildContext &ctx, const TensorValue &x, const LinearWeights &weights) {
+    return LinearModule(
+               {weights.weight.shape.dims[1], weights.weight.shape.dims[0], weights.bias.has_value(), GGML_PREC_F32})
+        .build(ctx, x, weights);
 }
 
-TensorValue EvidenceNetwork::linear(ModuleBuildContext &ctx, const TensorValue &x, const std::string &name) {
-    const auto weight = weights_.at(name + ".weight");
-    const auto bias = weights_.find(name + ".bias");
-    return LinearModule({weight.shape.dims[1], weight.shape.dims[0], bias != weights_.end(), GGML_PREC_F32})
-        .build(ctx, x, {weight, bias == weights_.end() ? std::nullopt : std::optional<TensorValue>(bias->second)});
+TensorValue NoteRepairNetwork::rms(ModuleBuildContext &ctx, const TensorValue &x, const NormWeights &weights) {
+    return RMSNormModule({192, 1e-6f, true, false}).build(ctx, x, weights);
 }
 
-TensorValue EvidenceNetwork::rms(ModuleBuildContext &ctx, const TensorValue &x, const std::string &name) {
-    return RMSNormModule({192, 1e-6f, true, false}).build(ctx, x, {weights_.at(name + ".w"), std::nullopt});
-}
-
-EvidenceNetwork::GraphState &EvidenceNetwork::prepare(int64_t notes) {
+NoteRepairNetwork::GraphState &NoteRepairNetwork::prepare(int64_t notes) {
     if (notes <= 0 || notes > 4096)
         throw std::runtime_error("Dettato repair graph expects 1..4096 notes");
-    if (auto *found = graphs_.find(notes)) return **found;
+    if (auto *found = graphs_.find(notes))
+        return **found;
     auto state = std::make_unique<GraphState>();
     auto &graph_ = state->graph;
     auto &inputs_ = state->inputs;
     auto &outputs_ = state->outputs;
     auto &probabilities_ = state->probabilities;
-    graph_ = std::make_unique<PreparedGraph>(execution_, PreparedGraphConfig{
-        "dettato.evidence", 2u * 1024 * 1024, 8192});
+    graph_ =
+        std::make_unique<PreparedGraph>(execution_, PreparedGraphConfig{"dettato.evidence", 2u * 1024 * 1024, 8192});
     auto &ctx = graph_->build_context();
     for (int i = 0; i < 3; ++i)
         inputs_[i] = make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({1, notes}));
@@ -298,12 +388,14 @@ EvidenceNetwork::GraphState &EvidenceNetwork::prepare(int64_t notes) {
         inputs_[i] = make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, 1, notes, 14}));
     for (const auto &value : inputs_)
         ggml_set_input(value.tensor);
-    auto x = EmbeddingModule({130, 192}).build(ctx, inputs_[0], weights_.at("emb.inst.weight"));
-    x = AddModule{}.build(ctx, x, EmbeddingModule({256, 192}).build(ctx, inputs_[1], weights_.at("emb.pitch.weight")));
-    x = AddModule{}.build(ctx, x, EmbeddingModule({16, 192}).build(ctx, inputs_[2], weights_.at("emb.vel.weight")));
-    const auto continuous = linear(ctx, SiluModule{}.build(ctx, linear(ctx, inputs_[3], "emb.cont.0")), "emb.cont.2");
-    const auto evidence = linear(ctx, SiluModule{}.build(ctx, linear(ctx, inputs_[4], "emb.evm.0")), "emb.evm.2");
-    x = rms(ctx, AddModule{}.build(ctx, AddModule{}.build(ctx, x, continuous), evidence), "emb.norm");
+    auto x = EmbeddingModule({130, 192}).build(ctx, inputs_[0], weights_.instrument_embedding);
+    x = AddModule{}.build(ctx, x, EmbeddingModule({256, 192}).build(ctx, inputs_[1], weights_.pitch_embedding));
+    x = AddModule{}.build(ctx, x, EmbeddingModule({16, 192}).build(ctx, inputs_[2], weights_.velocity_embedding));
+    const auto continuous =
+        linear(ctx, SiluModule{}.build(ctx, linear(ctx, inputs_[3], weights_.continuous[0])), weights_.continuous[1]);
+    const auto evidence =
+        linear(ctx, SiluModule{}.build(ctx, linear(ctx, inputs_[4], weights_.evidence[0])), weights_.evidence[1]);
+    x = rms(ctx, AddModule{}.build(ctx, AddModule{}.build(ctx, x, continuous), evidence), weights_.input_norm);
     // Two continuous position axes rotate 14 interleaved pairs; four head
     // channels pass through. Existing pair modules express the exact math.
     std::array<TensorValue, 2> tables;
@@ -320,11 +412,10 @@ EvidenceNetwork::GraphState &EvidenceNetwork::prepare(int64_t notes) {
         value = reshape_tensor(ctx, value, TensorShape::from_dims({1, 6, notes, 28}));
         return ConcatModule({3}).build(ctx, value, SliceModule({3, 28, 4}).build(ctx, original));
     };
-    for (int layer = 0; layer < 9; ++layer) {
-        const auto prefix = "bb.blocks." + std::to_string(layer);
-        const auto normalized = rms(ctx, x, prefix + ".n1");
-        const auto q = linear(ctx, normalized, prefix + ".att.q");
-        const auto kv = linear(ctx, normalized, prefix + ".att.kv");
+    for (const auto &block : weights_.blocks) {
+        const auto normalized = rms(ctx, x, block.attention_norm);
+        const auto q = linear(ctx, normalized, block.query);
+        const auto kv = linear(ctx, normalized, block.key_value);
         std::array<TensorValue, 3> heads{q, SliceModule({2, 0, 192}).build(ctx, kv),
                                          SliceModule({2, 192, 192}).build(ctx, kv)};
         for (auto &head : heads) {
@@ -339,22 +430,18 @@ EvidenceNetwork::GraphState &EvidenceNetwork::prepare(int64_t notes) {
                 .build(ctx, heads[0], heads[1], heads[2]);
         attended = reshape_tensor(ctx, ensure_backend_addressable_layout(ctx, attended),
                                   TensorShape::from_dims({1, notes, 192}));
-        x = AddModule{}.build(ctx, x, linear(ctx, attended, prefix + ".att.o"));
+        x = AddModule{}.build(ctx, x, linear(ctx, attended, block.output));
         GatedFeedForwardConfig cfg;
         cfg.hidden_size = 192;
         cfg.intermediate_size = 576;
         cfg.activation = GatedFeedForwardActivation::Silu;
         cfg.packed_gate_first = true;
         cfg.projection_precision = GGML_PREC_F32;
-        GatedFeedForwardWeights ff;
-        ff.up_gate_proj = {weights_.at(prefix + ".ff.w1.weight"), std::nullopt};
-        ff.down_proj = {weights_.at(prefix + ".ff.w2.weight"), std::nullopt};
-        x = AddModule{}.build(ctx, x, GatedFeedForwardModule(cfg).build(ctx, rms(ctx, x, prefix + ".n2"), ff));
+        x = AddModule{}.build(ctx, x, GatedFeedForwardModule(cfg).build(ctx, rms(ctx, x, block.ffn_norm), block.ffn));
     }
-    x = rms(ctx, x, "bb.norm");
-    const std::array<const char *, 5> names{"keep", "don", "dur", "ins.0", "ins.1"};
-    for (size_t i = 0; i < names.size(); ++i) {
-        outputs_[i] = linear(ctx, x, names[i]);
+    x = rms(ctx, x, weights_.final_norm);
+    for (size_t i = 0; i < weights_.heads.size(); ++i) {
+        outputs_[i] = linear(ctx, x, weights_.heads[i]);
         ggml_set_output(outputs_[i].tensor);
         // Linear's logical output can be a reshape view. Retain its storage
         // while probability heads consume it and callers inspect raw logits.
@@ -386,7 +473,8 @@ EvidenceNetwork::GraphState &EvidenceNetwork::prepare(int64_t notes) {
     while (graphs_.size()) {
         size_t retained = 0;
         graphs_.for_each_value([&](const auto &entry) { retained += entry->graph->workspace_bytes(); });
-        if (retained + required <= workspace_budget) break;
+        if (retained + required <= workspace_budget)
+            break;
         graphs_.set_capacity(graphs_.size() - 1);
         graphs_.set_capacity(32);
     }
@@ -395,7 +483,7 @@ EvidenceNetwork::GraphState &EvidenceNetwork::prepare(int64_t notes) {
     return *prepared;
 }
 
-std::array<std::vector<float>, 5> EvidenceNetwork::run(const EvidenceInputs &inputs, bool probabilities) {
+std::array<std::vector<float>, 5> NoteRepairNetwork::run(const NoteRepairInputs &inputs, bool probabilities) {
     auto &state = prepare(static_cast<int64_t>(inputs.instrument.size()));
     const auto &graph_ = state.graph;
     const auto &inputs_ = state.inputs;
@@ -417,8 +505,8 @@ std::array<std::vector<float>, 5> EvidenceNetwork::run(const EvidenceInputs &inp
     return result;
 }
 
-std::vector<Note> evidence_candidates(const EvidenceInputs &inputs,
-                                      const std::array<std::vector<float>, 5> &probabilities) {
+std::vector<Note> decode_repair_candidates(const NoteRepairInputs &inputs,
+                                           const std::array<std::vector<float>, 5> &probabilities) {
     const size_t count = inputs.pitch.size();
     if (inputs.onsets.size() != count || inputs.durations.size() != count)
         throw std::runtime_error("Dettato repair requires prepared note times");
@@ -487,8 +575,8 @@ std::vector<Note> evidence_candidates(const EvidenceInputs &inputs,
     return result;
 }
 
-RepairResult repair_notes(EvidenceNetwork &network, const std::vector<Note> &notes, const std::vector<float> &evidence,
-                          float keep_threshold, float insertion_threshold) {
+RepairResult repair_notes(NoteRepairNetwork &network, const std::vector<Note> &notes,
+                          const std::vector<float> &evidence, float keep_threshold, float insertion_threshold) {
     if (evidence.size() != notes.size() * 769)
         throw std::runtime_error("Repair evidence must align with decoded notes");
     if (notes.empty())
@@ -547,8 +635,8 @@ RepairResult repair_notes(EvidenceNetwork &network, const std::vector<Note> &not
         const auto first = static_cast<size_t>(begin - sorted.begin());
         const std::vector<Note> window(begin, finish);
         const std::vector<float> features(aligned.begin() + first * 769, aligned.begin() + (first + count) * 769);
-        const auto prepared = make_evidence_inputs(window, features, start);
-        const auto candidates = evidence_candidates(prepared, network.run(prepared, true));
+        const auto prepared = make_note_repair_inputs(window, features, start);
+        const auto candidates = decode_repair_candidates(prepared, network.run(prepared, true));
         for (size_t i = 0; i < candidates.size(); ++i) {
             auto note = candidates[i];
             if (note.onset < 0 || note.onset >= 8)
@@ -598,4 +686,4 @@ RepairResult repair_notes(EvidenceNetwork &network, const std::vector<Note> &not
     }
     return out;
 }
-} // namespace engine::models::dettato::detail
+} // namespace engine::community_models::dettato::detail

@@ -1,17 +1,14 @@
-#include "../../src/models/dettato/decode.h"
-#include "../../src/models/dettato/drums.h"
-#include "../../src/models/dettato/evidence.h"
-#include "../../src/models/dettato/frontend.h"
-#include "../../src/models/dettato/grouper.h"
-#include "../../src/models/dettato/grouping_decode.h"
-#include "../../src/models/dettato/transcriber.h"
-#include "../../src/models/dettato/windows.h"
+#include "engine/community_models/dettato/note_repair.h"
+#include "engine/community_models/dettato/drums.h"
+#include "engine/community_models/dettato/frontend.h"
+#include "engine/community_models/dettato/grouper.h"
+#include "engine/community_models/dettato/transcriber.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/json.h"
-#include "engine/models/dettato/runtime.h"
+#include "engine/community_models/dettato/pipeline.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -31,7 +28,7 @@ int main(int argc, char **argv) {
             options[key] = argv[++i];
         }
         engine::debug::configure_logging({true, options.at("--log-file")});
-        const auto assets = engine::models::dettato::load_dettato_assets(options.at("--model"));
+        const auto assets = engine::community_models::dettato::load_dettato_assets(options.at("--model"));
         const auto reference = engine::assets::open_tensor_source(options.at("--reference"));
         const auto check = [&](const std::string &key, const std::vector<float> &actual) {
             const auto expected = reference->require_f32(key);
@@ -61,12 +58,12 @@ int main(int argc, char **argv) {
                 const auto cases = reference->require_i64_scalar("case_count");
                 for (int64_t c = 0; c < cases; ++c) {
                     const auto key = "case." + std::to_string(c) + ".";
-                    engine::models::dettato::detail::DrumProbabilities p;
+                    engine::community_models::dettato::detail::DrumProbabilities p;
                     p.router = reference->require_f32(key + "router").at(0);
                     p.kit = reference->require_f32(key + "kit"); p.kit_velocity = reference->require_f32(key + "kit_vel");
                     p.orchestral = reference->require_f32(key + "drum"); p.timpani = reference->require_f32(key + "timpani");
                     p.velocity = reference->require_f32(key + "vel");
-                    const auto track = engine::models::dettato::detail::decode_drum_hits(p, assets->config.require("drums"));
+                    const auto track = engine::community_models::dettato::detail::decode_drum_hits(p, assets->config.require("drums"));
                     if (track.notes.size() != static_cast<size_t>(reference->require_i64_scalar(key + "hit_count")))
                         throw std::runtime_error(key + "drum hit count differs from upstream");
                     if (!track.notes.empty()) {
@@ -85,16 +82,16 @@ int main(int argc, char **argv) {
             }
             if (options.at("--network") == "grouping-decode") {
                 const auto cases = reference->require_i64_scalar("case_count");
-                engine::models::dettato::detail::GroupingDecoder decoder(*assets->weights[2], assets->config.require("grouper"));
+                engine::community_models::dettato::detail::GroupingDecoder decoder(engine::community_models::dettato::detail::load_grouping_decoder_weights(*assets->grouper), assets->config.require("grouper"));
                 for (int64_t c = 0; c < cases; ++c) {
                     const auto prefix = "case." + std::to_string(c) + ".";
                     const auto onset_f = reference->require_f32(prefix + "onsets");
                     std::vector<double> onsets(onset_f.begin(), onset_f.end());
                     const auto settings = reference->require_f32(prefix + "settings");
-                    std::vector<engine::models::dettato::detail::GroupingWindow> windows;
+                    std::vector<engine::community_models::dettato::detail::GroupingWindow> windows;
                     for (int64_t w = 0; w < reference->require_i64_scalar(prefix + "window_count"); ++w) {
                         const auto key = prefix + "window." + std::to_string(w) + ".";
-                        engine::models::dettato::detail::GroupingWindow window;
+                        engine::community_models::dettato::detail::GroupingWindow window;
                         window.start = reference->require_f32(key + "start").at(0);
                         if (reference->require_i64_scalar(key + "note_count") > 0) {
                             for (const auto id : reference->require_f32(key + "ids")) window.notes.push_back(static_cast<int>(id));
@@ -103,8 +100,8 @@ int main(int argc, char **argv) {
                         }
                         windows.push_back(std::move(window));
                     }
-                    const auto chain = engine::models::dettato::detail::chain_grouping_windows(windows, onsets, 24, settings[0], settings[1]);
-                    const auto merged = engine::models::dettato::detail::merge_grouping_tracklets(chain,
+                    const auto chain = engine::community_models::dettato::detail::chain_grouping_windows(windows, onsets, 24, settings[0], settings[1]);
+                    const auto merged = engine::community_models::dettato::detail::merge_grouping_tracklets(chain,
                         reference->require_f32(prefix + "embeddings"), reference->require_f32(prefix + "probabilities"), settings[2], settings[1]);
                     for (const auto & result : {std::make_pair("chain", chain), std::make_pair("merged", merged)}) {
                         const auto expected = reference->require_f32(prefix + result.first);
@@ -113,13 +110,13 @@ int main(int argc, char **argv) {
                             throw std::runtime_error(prefix + result.first + ": differing note " + std::to_string(i) +
                                 " actual=" + std::to_string(result.second[i]) + " expected=" + std::to_string(expected[i]));
                     }
-                    engine::models::dettato::detail::GroupingPrediction prediction;
+                    engine::community_models::dettato::detail::GroupingPrediction prediction;
                     prediction.windows = windows;
                     prediction.embeddings = reference->require_f32(prefix + "embeddings");
                     prediction.probabilities = reference->require_f32(prefix + "probabilities");
                     prediction.hidden = reference->require_f32(prefix + "hidden");
                     const auto rows = reference->require_f32(prefix + "notes");
-                    std::vector<engine::models::dettato::Note> notes;
+                    std::vector<engine::community_models::dettato::Note> notes;
                     for (size_t i = 0; i < onsets.size(); ++i) notes.push_back({rows[i * 4], rows[i * 4 + 1],
                         static_cast<int>(rows[i * 4 + 2]), 100, rows[i * 4 + 3], 0, false});
                     const auto tracks = decoder.decode(prediction, notes);
@@ -143,7 +140,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
             if(options.at("--network")=="grouping-features") {
-                engine::models::dettato::detail::WindowTranscription transcription;
+                engine::community_models::dettato::detail::WindowTranscription transcription;
                 const auto windows=engine::assets::open_tensor_source(options.at("--windows"));
                 transcription.frames=windows->require_metadata("maps.0").shape[0];
                 for(size_t i=0;i<6;++i) transcription.grouping_maps[i]=windows->require_f32("group.maps."+std::to_string(i));
@@ -153,9 +150,9 @@ int main(int argc, char **argv) {
                 const auto raw=reference->require_tensor_data("input.notes");
                 if(raw.metadata.dtype!="F64") throw std::runtime_error("Grouping source note times must retain F64");
                 std::vector<double> rows(raw.bytes.size()/sizeof(double));std::memcpy(rows.data(),raw.bytes.data(),raw.bytes.size());
-                std::vector<engine::models::dettato::Note> notes;
+                std::vector<engine::community_models::dettato::Note> notes;
                 for(size_t i=0;i<rows.size();i+=3) notes.push_back({rows[i],rows[i+1],static_cast<int>(rows[i+2]),100,1,1,false});
-                const auto gathered=engine::models::dettato::detail::collect_grouping_features(transcription,notes,{});
+                const auto gathered=engine::community_models::dettato::detail::collect_grouping_features(transcription,notes,{});
                 check("notes",gathered.notes);
                 std::vector<float> taps(gathered.taps.size());
                 for(size_t i=0;i<taps.size();++i) taps[i]=ggml_fp16_to_fp32(gathered.taps[i]);
@@ -164,7 +161,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
             if (options.at("--network") == "evidence-extract" || options.at("--network") == "repair") {
-                engine::models::dettato::detail::WindowTranscription transcription;
+                engine::community_models::dettato::detail::WindowTranscription transcription;
                 const auto windows = engine::assets::open_tensor_source(options.at("--windows"));
                 transcription.frames = windows->require_metadata("maps.0").shape[0];
                 for (size_t i = 0; i < 6; ++i)
@@ -178,20 +175,20 @@ int main(int argc, char **argv) {
                     throw std::runtime_error("Evidence reference notes must retain F64 timing");
                 std::vector<double> source_notes(raw_notes.bytes.size() / sizeof(double));
                 std::memcpy(source_notes.data(), raw_notes.bytes.data(), raw_notes.bytes.size());
-                std::vector<engine::models::dettato::Note> notes;
+                std::vector<engine::community_models::dettato::Note> notes;
                 for (size_t i = 0; i < source_notes.size(); i += 5)
                     notes.push_back({source_notes[i], source_notes[i + 1], static_cast<int>(source_notes[i + 2]), 100,
                                      static_cast<float>(source_notes[i + 3]), static_cast<int>(source_notes[i + 4]),
                                      false});
-                const auto features = engine::models::dettato::detail::extract_note_evidence(transcription, notes, 8);
+                const auto features = engine::community_models::dettato::detail::extract_note_evidence(transcription, notes, 8);
                 check("evidence", features);
-                if (features != engine::models::dettato::detail::extract_note_evidence(transcription, notes, 1))
+                if (features != engine::community_models::dettato::detail::extract_note_evidence(transcription, notes, 1))
                     throw std::runtime_error("Evidence gathering changed with thread count");
                 if (options.at("--network") == "repair") {
                     engine::core::ExecutionContext execution({engine::core::BackendType::Cpu, 0, 8});
-                    engine::models::dettato::detail::EvidenceNetwork network(*assets->weights[1], execution);
+                    engine::community_models::dettato::detail::NoteRepairNetwork network(engine::community_models::dettato::detail::bind_note_repair_weights(*assets->note_repair, execution), execution);
                     const auto order = reference->require_f32("order");
-                    std::vector<engine::models::dettato::Note> sorted_notes;
+                    std::vector<engine::community_models::dettato::Note> sorted_notes;
                     std::vector<float> sorted_evidence(features.size());
                     for (size_t i = 0; i < order.size(); ++i) {
                         const auto index = static_cast<size_t>(order[i]);
@@ -199,7 +196,7 @@ int main(int argc, char **argv) {
                         std::copy_n(features.begin() + index * 769, 769, sorted_evidence.begin() + i * 769);
                     }
                     const auto prepared =
-                        engine::models::dettato::detail::make_evidence_inputs(sorted_notes, sorted_evidence, 0);
+                        engine::community_models::dettato::detail::make_note_repair_inputs(sorted_notes, sorted_evidence, 0);
                     check("prepared.on", prepared.onsets);
                     check("prepared.duration", prepared.durations);
                     check("prepared.continuous", prepared.continuous);
@@ -209,7 +206,7 @@ int main(int argc, char **argv) {
                     const std::array<const char *, 5> head_names{"keep", "don", "dur", "ins.0", "ins.1"};
                     for (size_t i = 0; i < head_names.size(); ++i)
                         check(std::string("prepared.") + head_names[i], raw[i]);
-                    const auto result = engine::models::dettato::detail::repair_notes(network, notes, features);
+                    const auto result = engine::community_models::dettato::detail::repair_notes(network, notes, features);
                     const auto expected = reference->require_f32("repaired");
                     const auto stats = reference->require_f32("stats");
                     engine::debug::timing_log_scalar("dettato.repair.actual_notes", result.notes.size());
@@ -231,10 +228,10 @@ int main(int argc, char **argv) {
                             throw std::runtime_error("Repaired note event differs from upstream");
                     }
                     engine::debug::timing_log_scalar("dettato.evidence.matched_repaired_notes", result.notes.size());
-                    const std::vector<engine::models::dettato::Note> before_zero{
+                    const std::vector<engine::community_models::dettato::Note> before_zero{
                         {-0.01, 0.03, 60, 100, 0.3f, 1, false}};
                     const auto untouched =
-                        engine::models::dettato::detail::repair_notes(network, before_zero, std::vector<float>(769));
+                        engine::community_models::dettato::detail::repair_notes(network, before_zero, std::vector<float>(769));
                     if (untouched.notes.size() != 1 || untouched.dropped != 0 || untouched.inserted != 0 ||
                         std::abs(untouched.notes[0].onset + 0.01) > 1e-12 ||
                         std::abs(untouched.notes[0].offset - 0.03) > 1e-12 || untouched.notes[0].confidence != 1 ||
@@ -249,7 +246,7 @@ int main(int argc, char **argv) {
                 for (size_t i = 0; i < maps.size(); ++i)
                     maps[i] = reference->require_f32("maps." + std::to_string(i));
                 const auto frames = reference->require_metadata("maps.0").shape[0];
-                const auto notes = engine::models::dettato::detail::decode_notes(maps, frames, 0.02, {});
+                const auto notes = engine::community_models::dettato::detail::decode_notes(maps, frames, 0.02, {});
                 const auto expected = reference->require_f32("notes");
                 if (expected.size() != notes.size() * 5)
                     throw std::runtime_error("Note decoder count differs from Python");
@@ -280,13 +277,13 @@ int main(int argc, char **argv) {
             if (options.at("--network") == "pipeline") {
                 const auto wav = engine::audio::read_wav_f32(std::filesystem::path(options.at("--audio")));
                 const auto mono = engine::audio::mixdown_interleaved_to_mono_average(wav.samples, wav.channels);
-                engine::models::dettato::DettatoRuntime runtime(assets, execution,
+                engine::community_models::dettato::DettatoPipeline pipeline(assets, execution,
                     options.count("--window-hop-sec") ? std::stoi(options.at("--window-hop-sec")) : 2);
                 const int repeats = options.count("--repeats") ? std::stoi(options.at("--repeats")) : 2;
                 for (int i = 0; i <= repeats; ++i) {
                     ggml_backend_synchronize(execution.backend());
                     const auto measured = std::chrono::steady_clock::now();
-                    const auto result = runtime.transcribe(mono, wav.sample_rate);
+                    const auto result = pipeline.transcribe(mono, wav.sample_rate);
                     ggml_backend_synchronize(execution.backend());
                     const double ms = engine::debug::elapsed_ms(measured);
                     size_t notes = 0;
@@ -304,7 +301,7 @@ int main(int argc, char **argv) {
                 const auto full = reference->require_f32("features"), short_input = reference->require_f32("short.features");
                 bool router_mismatch = false;
                 for (size_t k = 0; k < 3; ++k) {
-                    engine::models::dettato::detail::OrchestralDrumExpert expert(*assets->weights[3], k, assets->config.require("drums"), execution);
+                    engine::community_models::dettato::detail::OrchestralDrumExpert expert(engine::community_models::dettato::detail::bind_drum_adapter_weights(*assets->drums, k, assets->config.require("drums"), execution), assets->config.require("drums"), execution);
                     const auto collect = [](const auto & values) {
                         std::array<std::vector<float>, 5> result;
                         for (size_t i = 0; i < result.size(); ++i) result[i] = engine::core::read_tensor_f32(values[i].tensor);
@@ -326,7 +323,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
             if (options.at("--network") == "drums") {
-                engine::models::dettato::detail::DrumTranscriber network(*assets->weights[3], assets->config.require("drums"), execution);
+                engine::community_models::dettato::detail::DrumTranscriber network(engine::community_models::dettato::detail::bind_drum_weights(*assets->drums, assets->config.require("drums"), execution), assets->config.require("drums"), execution);
                 const auto features = reference->require_f32("features");
                 const auto result = network.probabilities(features);
                 check("kit", result.kit); check("kit_vel", result.kit_velocity); check("drum", result.orchestral);
@@ -335,7 +332,7 @@ int main(int argc, char **argv) {
                 engine::debug::timing_log_scalar("dettato.drums.router_abs_error", std::abs(result.router - expected_router));
                 if (std::abs(result.router - expected_router) > 1e-5) throw std::runtime_error("Drum recording router differs from upstream");
                 const auto audio = reference->require_f32("audio44");
-                engine::models::dettato::detail::DrumFrontend frontend(*assets->weights[3], 8);
+                engine::community_models::dettato::detail::DrumFrontend frontend(engine::community_models::dettato::detail::load_drum_frontend(*assets->drums), 8);
                 const auto output = network.transcribe_features(frontend.extract(audio));
                 const auto expected = reference->require_f32("hits");
                 if (output.track.notes.size() * 4 != expected.size() || output.model != "drum-kit") throw std::runtime_error("Drum track count/route differs from upstream");
@@ -357,7 +354,7 @@ int main(int argc, char **argv) {
             if (options.at("--network") == "drum-trunk") {
                 const std::array<std::string, 2> prefixes{"drum_kit.", "orchestral.0.base."};
                 for (size_t k = 0; k < prefixes.size(); ++k) {
-                    engine::models::dettato::detail::DrumTrunk network(*assets->weights[3], prefixes[k], assets->config.require("drums").require("drum_kit"), execution);
+                    engine::community_models::dettato::detail::DrumTrunk network(engine::community_models::dettato::detail::bind_drum_trunk_weights(*assets->drums, prefixes[k], assets->config.require("drums").require("drum_kit"), execution), assets->config.require("drums").require("drum_kit"), execution);
                     const auto a = reference->require_f32_tensor("input." + std::to_string(k));
                     const auto b = reference->require_f32_tensor("short.input." + std::to_string(k));
                     const auto collect = [](const auto & values) {
@@ -371,7 +368,7 @@ int main(int argc, char **argv) {
                         check("short.trunk." + std::to_string(k) + "." + std::to_string(i), shorter[i]);
                     }
                     if (result != collect(network.run(a.values))) throw std::runtime_error("Drum trunk A/B/A reuse changed outputs");
-                    engine::models::dettato::detail::DrumEmbedder embedder(*assets->weights[3], prefixes[k], assets->config.require("drums").require("drum_kit"), execution);
+                    engine::community_models::dettato::detail::DrumEmbedder embedder(engine::community_models::dettato::detail::bind_drum_embedder_weights(*assets->drums, prefixes[k], assets->config.require("drums").require("drum_kit"), execution), assets->config.require("drums").require("drum_kit"), execution);
                     const auto composed = collect(network.run(embedder.run(reference->require_f32("mel"))));
                     for (size_t i = 0; i < composed.size(); ++i) check("trunk." + std::to_string(k) + "." + std::to_string(i), composed[i]);
                 }
@@ -381,7 +378,7 @@ int main(int argc, char **argv) {
             if (options.at("--network") == "drum-embed") {
                 const std::array<std::string, 2> prefixes{"drum_kit.", "orchestral.0.base."};
                 for (size_t k = 0; k < prefixes.size(); ++k) {
-                    engine::models::dettato::detail::DrumEmbedder network(*assets->weights[3], prefixes[k], assets->config.require("drums").require("drum_kit"), execution);
+                    engine::community_models::dettato::detail::DrumEmbedder network(engine::community_models::dettato::detail::bind_drum_embedder_weights(*assets->drums, prefixes[k], assets->config.require("drums").require("drum_kit"), execution), assets->config.require("drums").require("drum_kit"), execution);
                     const auto mel = reference->require_f32("mel");
                     const auto output = network.run(mel);
                     check("embed." + std::to_string(k), output);
@@ -394,12 +391,12 @@ int main(int argc, char **argv) {
                 return 0;
             }
             if (options.at("--network") == "grouping-windows") {
-                engine::models::dettato::detail::GroupingFeatures features;
+                engine::community_models::dettato::detail::GroupingFeatures features;
                 features.notes = reference->require_f32("notes");
                 const auto taps = reference->require_f32("taps");
                 features.taps.resize(taps.size());
                 for (size_t i = 0; i < taps.size(); ++i) features.taps[i] = ggml_fp32_to_fp16(taps[i]);
-                engine::models::dettato::detail::WindowGrouper network(*assets->weights[2], assets->config.require("grouper"), execution);
+                engine::community_models::dettato::detail::WindowGrouper network(engine::community_models::dettato::detail::bind_grouper_weights(*assets->grouper, execution), assets->config.require("grouper"), execution);
                 const auto audio = reference->require_f32("audio16");
                 const auto prediction = network.predict(audio, features);
                 const std::array<const std::vector<float> *, 3> actual{&prediction.probabilities, &prediction.embeddings, &prediction.hidden};
@@ -418,12 +415,12 @@ int main(int argc, char **argv) {
                 }
                 if (prediction.windows.size() != static_cast<size_t>(reference->require_i64_scalar("window_count")))
                     throw std::runtime_error("Grouping-window count differs from upstream");
-                std::vector<engine::models::dettato::Note> notes;
+                std::vector<engine::community_models::dettato::Note> notes;
                 for (size_t i = 0; i < features.notes.size(); i += 12) {
                     const auto * m = features.notes.data() + i;
                     notes.push_back({m[0], m[1], static_cast<int>(m[2]), 100, m[3] > .5f ? m[5] : m[4], 0, false});
                 }
-                engine::models::dettato::detail::GroupingDecoder decoder(*assets->weights[2], assets->config.require("grouper"));
+                engine::community_models::dettato::detail::GroupingDecoder decoder(engine::community_models::dettato::detail::load_grouping_decoder_weights(*assets->grouper), assets->config.require("grouper"));
                 const auto tracks = decoder.decode(prediction, notes);
                 if (tracks.size() != static_cast<size_t>(reference->require_i64_scalar("track_count")))
                     throw std::runtime_error("Grouping-window track count differs from upstream");
@@ -456,7 +453,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
             if (options.at("--network") == "windows") {
-                engine::models::dettato::detail::WindowTranscriber network(*assets->weights[0], execution,
+                engine::community_models::dettato::detail::WindowTranscriber network(engine::community_models::dettato::detail::bind_transcriber_weights(*assets->transcriber, execution), execution,
                     options.count("--window-hop-sec") ? std::stoi(options.at("--window-hop-sec")) : 2);
                 const auto audio = reference->require_f32("audio16");
                 network.run_device(audio);
@@ -500,12 +497,12 @@ int main(int argc, char **argv) {
                     network.run_device(audio, false);
                     auto compact = network.readback();
                     const double duration = compact.frames * .02;
-                    const std::vector<engine::models::dettato::Note> small{{0, .02, 21, 100, 1, 1, false}};
-                    const std::vector<engine::models::dettato::Note> larger{
+                    const std::vector<engine::community_models::dettato::Note> small{{0, .02, 21, 100, 1, 1, false}};
+                    const std::vector<engine::community_models::dettato::Note> larger{
                         {0, std::min(duration, 2.0), 21, 100, 1, 1, false},
                         {std::max(0.0, duration - .06), duration, 108, 100, 1, 1, false},
                         {.01, std::min(duration, .31), 21, 100, 1, 1, false}};
-                    for (const auto &selection : {small, larger, std::vector<engine::models::dettato::Note>{}, small}) {
+                    for (const auto &selection : {small, larger, std::vector<engine::community_models::dettato::Note>{}, small}) {
                         network.readback_grouping(compact, selection);
                         if (*compact.hidden != snapshot[0])
                             throw std::runtime_error("Compact grouping overwrote evidence hidden states");
@@ -536,7 +533,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
             if (options.at("--network") == "grouper") {
-                engine::models::dettato::detail::GrouperInputs inputs;
+                engine::community_models::dettato::detail::GrouperInputs inputs;
                 for (float value : reference->require_f32("pitch"))
                     inputs.pitch.push_back(static_cast<int32_t>(value));
                 inputs.scalars = reference->require_f32("scalars");
@@ -546,9 +543,9 @@ int main(int argc, char **argv) {
                 inputs.taps = reference->require_f32("taps");
                 inputs.cosine = reference->require_f32("cosine");
                 inputs.sine = reference->require_f32("sine");
-                engine::models::dettato::detail::GrouperNetwork network(*assets->weights[2], execution);
+                engine::community_models::dettato::detail::GrouperNetwork network(engine::community_models::dettato::detail::bind_grouper_weights(*assets->grouper, execution), execution);
                 const auto front_tensor=reference->require_f32_tensor("front.features");
-                engine::models::dettato::detail::HarmonicFeatures front;
+                engine::community_models::dettato::detail::HarmonicFeatures front;
                 front.batch=1;front.channels=9;front.frames=front_tensor.shape.dims[2];front.values=front_tensor.values;
                 const auto notes=reference->require_f32("notes");
                 const auto lanes=network.lane_features(front,notes);
@@ -565,21 +562,21 @@ int main(int argc, char **argv) {
                 for(size_t i=0;i<names.size();++i) check(names[i],composed[i]);
                 const auto power=reference->require_f32_tensor("front.power");
                 front.power=power.values;front.extended_bins=power.shape.dims[1];
-                const auto prior=assets->weights[2]->require_f32("hd.prior");
-                const auto prepared=engine::models::dettato::detail::make_grouper_inputs(front,notes,inputs.taps,prior,lanes);
+                const auto prior=assets->grouper->require_f32("hd.prior");
+                const auto prepared=engine::community_models::dettato::detail::make_grouper_inputs(front,notes,inputs.taps,prior,lanes);
                 check("scalars",prepared.scalars);check("harmonics",prepared.harmonics);check("profile",prepared.profile);
                 check("cosine",prepared.cosine);check("sine",prepared.sine);
                 const auto prepared_outputs=network.run(prepared);
                 for(size_t i=0;i<names.size();++i) check(names[i],prepared_outputs[i]);
-                engine::models::dettato::detail::HarmonicFrontend frontend(*assets->weights[2],"front.h",8);
+                engine::community_models::dettato::detail::HarmonicFrontend frontend(engine::community_models::dettato::detail::load_harmonic_frontend(*assets->grouper, "front.h"), 8);
                 const auto native_front=frontend.extract(reference->require_f32("audio"),1,true);
                 const auto native_lanes=network.lane_features(native_front,notes);
-                const auto native_inputs=engine::models::dettato::detail::make_grouper_inputs(native_front,notes,inputs.taps,prior,native_lanes);
+                const auto native_inputs=engine::community_models::dettato::detail::make_grouper_inputs(native_front,notes,inputs.taps,prior,native_lanes);
                 const auto native_outputs=network.run(native_inputs);
                 for(size_t i=0;i<names.size();++i) check(names[i],native_outputs[i]);
                 if (execution.backend_type() == engine::core::BackendType::Cuda) {
                     for (const int64_t count : {1, 768, 767, 766, 1}) {
-                        engine::models::dettato::detail::GrouperInputs varied;
+                        engine::community_models::dettato::detail::GrouperInputs varied;
                         varied.pitch.assign(count, 60);
                         varied.scalars.assign(count * 11, .1f);
                         varied.harmonics.assign(count * 150, .1f);
@@ -597,7 +594,7 @@ int main(int argc, char **argv) {
                 return 0;
             }
             if (options.at("--network") == "evidence") {
-                engine::models::dettato::detail::EvidenceInputs inputs;
+                engine::community_models::dettato::detail::NoteRepairInputs inputs;
                 for (float value : reference->require_f32("instrument"))
                     inputs.instrument.push_back(static_cast<int32_t>(value));
                 for (float value : reference->require_f32("pitch"))
@@ -608,7 +605,7 @@ int main(int argc, char **argv) {
                 inputs.evidence = reference->require_f32("evidence");
                 inputs.cosine = reference->require_f32("cosine");
                 inputs.sine = reference->require_f32("sine");
-                engine::models::dettato::detail::EvidenceNetwork network(*assets->weights[1], execution);
+                engine::community_models::dettato::detail::NoteRepairNetwork network(engine::community_models::dettato::detail::bind_note_repair_weights(*assets->note_repair, execution), execution);
                 const auto outputs = network.run(inputs);
                 const std::array<const char *, 5> names{"keep", "don", "dur", "ins.0", "ins.1"};
                 for (size_t i = 0; i < names.size(); ++i)
@@ -657,11 +654,11 @@ int main(int argc, char **argv) {
                         throw std::runtime_error("Evidence workspace growth/reprepare changed output");
                 }
                 const auto source_notes = reference->require_f32("source_notes");
-                std::vector<engine::models::dettato::Note> notes;
+                std::vector<engine::community_models::dettato::Note> notes;
                 for (size_t i = 0; i < source_notes.size(); i += 4)
                     notes.push_back({source_notes[i], source_notes[i + 1], static_cast<int>(source_notes[i + 2]), 100,
                                      source_notes[i + 3], 1, false});
-                const auto prepared = engine::models::dettato::detail::make_evidence_inputs(notes, inputs.evidence, 0);
+                const auto prepared = engine::community_models::dettato::detail::make_note_repair_inputs(notes, inputs.evidence, 0);
                 if (prepared.instrument != inputs.instrument || prepared.pitch != inputs.pitch ||
                     prepared.velocity_bin != inputs.velocity_bin)
                     throw std::runtime_error("Evidence note indices differ from upstream");
@@ -673,7 +670,7 @@ int main(int argc, char **argv) {
                     check(names[i], prepared_outputs[i]);
                 if (backend == engine::core::BackendType::Cpu) {
                     const auto candidates =
-                        engine::models::dettato::detail::evidence_candidates(prepared, network.run(prepared, true));
+                        engine::community_models::dettato::detail::decode_repair_candidates(prepared, network.run(prepared, true));
                     const auto expected = reference->require_f32("candidates");
                     if (expected.size() != candidates.size() * 5)
                         throw std::runtime_error("Repair candidate count differs");
@@ -689,7 +686,7 @@ int main(int argc, char **argv) {
                 engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
                 return 0;
             }
-            engine::models::dettato::detail::LaneTranscriber network(*assets->weights[0], execution);
+            engine::community_models::dettato::detail::LaneTranscriber network(engine::community_models::dettato::detail::bind_transcriber_weights(*assets->transcriber, execution), execution);
             const auto input = reference->require_f32_tensor("input");
             const auto result = network.run(input.values, input.shape.dims[0], input.shape.dims[2]);
             check("stem", result.stem);
@@ -710,13 +707,13 @@ int main(int argc, char **argv) {
             return 0;
         }
         const auto audio = reference->require_f32("audio16");
-        engine::models::dettato::detail::HarmonicFrontend transcriber(*assets->weights[0], "front", 8);
+        engine::community_models::dettato::detail::HarmonicFrontend transcriber(engine::community_models::dettato::detail::load_harmonic_frontend(*assets->transcriber, "front"), 8);
         check("hcqt", transcriber.extract(audio, 1).values);
-        engine::models::dettato::detail::HarmonicFrontend grouper(*assets->weights[2], "front.h", 8);
+        engine::community_models::dettato::detail::HarmonicFrontend grouper(engine::community_models::dettato::detail::load_harmonic_frontend(*assets->grouper, "front.h"), 8);
         const auto features = grouper.extract(audio, 1, true);
         check("grouper_front", features.values);
         check("grouper_power", features.power);
-        engine::models::dettato::detail::DrumFrontend drums(*assets->weights[3], 8);
+        engine::community_models::dettato::detail::DrumFrontend drums(engine::community_models::dettato::detail::load_drum_frontend(*assets->drums), 8);
         check("drum_front", drums.extract(reference->require_f32("audio44")));
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(start));
         return 0;

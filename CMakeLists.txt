@@ -1718,16 +1718,12 @@ audiocpp_add_model(moss_voicegen
 
 audiocpp_add_model(dettato
     SOURCES
-        src/models/dettato/assets.cpp src/models/dettato/frontend.cpp
-        src/models/dettato/transcriber.cpp src/models/dettato/decode.cpp
-        src/models/dettato/evidence.cpp src/models/dettato/grouper.cpp
-        src/models/dettato/windows.cpp src/models/dettato/grouper_features.cpp
-        src/models/dettato/grouping_decode.cpp src/models/dettato/grouper_windows.cpp
-        src/models/dettato/drums.cpp src/models/dettato/drum_transcriber.cpp
-        src/models/dettato/tuning.cpp src/models/dettato/runtime.cpp src/models/dettato/session.cpp
-        src/models/dettato/gru.cpp
-    INCLUDES engine/models/dettato/session.h
-    LOADERS engine::models::dettato::make_dettato_loader
+        src/community_models/dettato/assets.cpp src/community_models/dettato/frontend.cpp
+        src/community_models/dettato/transcriber.cpp src/community_models/dettato/note_repair.cpp
+        src/community_models/dettato/grouper.cpp src/community_models/dettato/drums.cpp
+        src/community_models/dettato/gru.cpp src/community_models/dettato/pipeline.cpp src/community_models/dettato/session.cpp
+    INCLUDES engine/community_models/dettato/session.h
+    LOADERS engine::community_models::dettato::make_dettato_loader
 )
 
 audiocpp_add_model(rosvot
@@ -4009,12 +4005,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
 
     if (ENGINE_BUILD_TESTS AND dettato IN_LIST AUDIOCPP_LINKED_MODELS)
-        add_engine_unittest(dettato_gru_test tests/dettato/gru_test.cpp)
+        add_engine_unittest(dettato_gru_test tests/community_models/dettato/gru_test.cpp)
         add_test(NAME dettato_gru_test COMMAND dettato_gru_test --log)
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND dettato IN_LIST AUDIOCPP_LINKED_MODELS)
-        add_engine_unittest(dettato_components tests/dettato/components.cpp)
+        add_engine_unittest(dettato_components tests/community_models/dettato/components.cpp)
     endif()
 
     if (ENGINE_BUILD_MODEL_TESTS AND rosvot IN_LIST AUDIOCPP_LINKED_MODELS)

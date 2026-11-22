@@ -412,6 +412,13 @@ audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v
 | `miocodec.global_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
 | `miocodec.wave_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
 
+## Dettato
+
+[Dettato](models/dettato.md) is an experimental multi-instrument audio-to-MIDI
+transcriber with instrument grouping and drum transcription. Its F16 package
+location is `audio-cpp/audio.cpp-gguf/Dettato-GGUF`. See its model guide for conversion,
+options and numerical-parity limitations.
+
 ## MuScriptor
 
 MuScriptor is an audio-to-symbolic tool that converts music audio into
