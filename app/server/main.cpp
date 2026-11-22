@@ -88,7 +88,7 @@ std::filesystem::path executable_directory(const char * argv0) {
 
 void print_help() {
     std::cout
-        << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
+        << "audiocpp_server [--config <server.json>] [--ui] [--host <ip|unix:path>] [--port <port>] [--backend <backend>]\n"
         << "                [--device <id>] [--list-devices [--json]] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory|embedded>] [--voice-dir <directory>]\n"
@@ -102,8 +102,8 @@ void print_help() {
         << "  --ui-management                  allow WebUI model management and downloads; requires\n"
         << "                                   AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON at build time\n"
         << "  --models-root <directory>         default WebUI models folder; overrides config models_root\n"
-        << "  --host <ip>                      server bind address; default 127.0.0.1\n"
-        << "  --port <port>                    server listening port; default 8080\n"
+        << "  --host <ip|unix:path>            IPv4 address or POSIX Unix socket; default 127.0.0.1\n"
+        << "  --port <port>                    TCP listening port; ignored for unix:; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu|sycl  default cuda (rocm is an alias for hip)\n"
         << "  --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "  --list-devices                   list available backend devices and exit; add --json\n"

@@ -25,6 +25,9 @@
 #endif
 
 #include "test_assert.h"
+#include "../../app/server/unix_socket_listener.h"
+#include <filesystem>
+#include <fstream>
 
 #include <atomic>
 #include <chrono>
@@ -52,6 +55,7 @@ using engine::test::require;
 using engine::test::require_eq;
 
 constexpr int kPort = 18094;
+std::string unix_path;
 constexpr const char * kLivePath = "/v1/audio/transcriptions/live";
 
 // The socket API's handle type is not `int` on Windows, and narrowing it there
@@ -74,6 +78,15 @@ bool stop_requested() {
 class EchoHandler final : public minitts::server::IHttpHandler {
 public:
     minitts::server::HttpResponse handle(const minitts::server::HttpRequest & request) override {
+        if (request.path == "/test/stream") {
+            minitts::server::HttpResponse response;
+            response.content_type = "text/event-stream";
+            response.stream_body = [](minitts::server::HttpStreamWriter & writer) {
+                writer.write("data: first\n\n");
+                writer.write("data: second\n\n");
+            };
+            return response;
+        }
         if (request.body_stream == nullptr) {
             return minitts::server::json_response(
                 "{\"stream\":false,\"buffered\":" + std::to_string(request.body.size()) + "}");
@@ -142,6 +155,23 @@ void close_socket(socket_t handle) {
 // on its own thread, and a sleep long enough to always win is either flaky or
 // wasteful.
 socket_t connect_to_server() {
+#ifndef _WIN32
+    if (!unix_path.empty()) {
+        sockaddr_un address{};
+        address.sun_family = AF_UNIX;
+        std::memcpy(address.sun_path, unix_path.c_str(), unix_path.size() + 1);
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            const socket_t handle = socket(AF_UNIX, SOCK_STREAM, 0);
+            require(handle != kInvalidSocket, "could not create Unix client socket");
+            if (connect(handle, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0) {
+                return handle;
+            }
+            close_socket(handle);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        }
+        throw std::runtime_error("could not connect to the Unix test server");
+    }
+#endif
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_port = htons(static_cast<uint16_t>(kPort));
@@ -251,7 +281,49 @@ size_t byte_sum(const std::string & data) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
+#ifndef _WIN32
+    std::filesystem::path directory;
+    if (argc == 2 && std::string(argv[1]) == "--unix") {
+        char pattern[] = "/tmp/audiocpp-uds-XXXXXX";
+        const auto created = ::mkdtemp(pattern);
+        require(created != nullptr, "could not create Unix socket test directory");
+        directory = created;
+        unix_path = (directory / "http.sock").string();
+        // Failure must not remove an existing file or an active listener.
+        const auto occupied = (directory / "occupied").string();
+        { std::ofstream file(occupied); file << "keep"; }
+        bool rejected = false;
+        try { minitts::server::UnixSocketListener listener(occupied); }
+        catch (const std::runtime_error &) { rejected = true; }
+        require(rejected, "existing file was accepted as a socket path");
+        std::ifstream file(occupied); std::string contents; file >> contents;
+        require(contents == "keep", "existing file changed after failed bind");
+        file.close(); std::filesystem::remove(occupied);
+        for (const auto & invalid : {std::string{}, std::string(256, 'x'), std::string("bad\0path", 8)}) {
+            rejected = false;
+            try { minitts::server::UnixSocketListener listener(invalid); }
+            catch (const std::runtime_error &) { rejected = true; }
+            require(rejected, "invalid Unix socket path was accepted");
+        }
+        {
+            minitts::server::UnixSocketListener owner(unix_path);
+            rejected = false;
+            try { minitts::server::UnixSocketListener duplicate(unix_path); }
+            catch (const std::runtime_error &) { rejected = true; }
+            require(rejected && std::filesystem::is_socket(unix_path), "failed bind removed active listener");
+        }
+        require(!std::filesystem::exists(unix_path), "listener did not clean up its socket");
+        {
+            minitts::server::UnixSocketListener owner(unix_path);
+            std::filesystem::remove(unix_path);
+            std::ofstream replacement(unix_path); replacement << "replacement";
+        }
+        require(std::filesystem::is_regular_file(unix_path), "cleanup removed a replacement file");
+        std::filesystem::remove(unix_path);
+    }
+#endif
+    const std::string host = unix_path.empty() ? "127.0.0.1" : "unix:" + unix_path;
 #if defined(AUDIOCPP_TEST_PARALLEL_HTTP) && defined(SIGPIPE)
     std::signal(SIGPIPE, SIG_IGN);
 #endif
@@ -266,13 +338,26 @@ int main() {
     constexpr uint64_t kMaxBufferedBody = 2ull * 1024ull * 1024ull * 1024ull;
     std::thread server([&] {
 #if defined(AUDIOCPP_TEST_PARALLEL_HTTP)
-        minitts::server::serve_parallel_http("127.0.0.1", kPort, handler, stop_requested, kMaxBufferedBody);
+        minitts::server::serve_parallel_http(host, kPort, handler, stop_requested, kMaxBufferedBody);
 #else
-        minitts::server::serve_http("127.0.0.1", kPort, handler, stop_requested, kMaxBufferedBody);
+        minitts::server::serve_http(host, kPort, handler, stop_requested, kMaxBufferedBody);
 #endif
     });
     try {
     // No startup sleep: connect_to_server() retries until the listener is up.
+
+    {
+        const auto handle = connect_to_server();
+        send_raw(handle, "GET /test/stream HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        const auto reply = read_reply(handle);
+        close_socket(handle);
+        require(contains(reply, "200 OK"), "stream request failed: " + reply);
+        require(contains(reply, "text/event-stream"), "stream content type was lost");
+        require(contains(reply, "data: first\n\n") && contains(reply, "data: second\n\n"),
+            "stream response lost an event: " + reply);
+        require(reply.size() >= 5 && reply.substr(reply.size() - 5) == "0\r\n\r\n",
+            "chunked stream did not terminate correctly");
+    }
 
     // A body split into several chunks must arrive byte-identical and complete.
     {
@@ -553,6 +638,14 @@ int main() {
     }
     g_stop.store(true);
     server.join();
+#ifndef _WIN32
+    if (!unix_path.empty()) {
+        require(!std::filesystem::exists(unix_path), "graceful shutdown left the Unix socket behind");
+        { minitts::server::UnixSocketListener restarted(unix_path); }
+        require(!std::filesystem::exists(unix_path), "restarted listener did not clean up");
+        std::filesystem::remove(directory);
+    }
+#endif
     std::cout << "http_live_body_test: all cases passed\n";
     return 0;
 }

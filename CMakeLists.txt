@@ -4923,6 +4923,13 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME parallel_http_live_body_test COMMAND parallel_http_live_body_test)
         set_tests_properties(http_live_body_test parallel_http_live_body_test PROPERTIES RESOURCE_LOCK http_live_body_port)
         set_tests_properties(parallel_http_live_body_test PROPERTIES TIMEOUT 120)
+        if(UNIX)
+            # Reuse all framing assertions against AF_UNIX, without changing the TCP cases.
+            add_test(NAME http_live_body_unix_test COMMAND http_live_body_test --unix)
+            add_test(NAME parallel_http_live_body_unix_test COMMAND parallel_http_live_body_test --unix)
+            set_tests_properties(http_live_body_unix_test parallel_http_live_body_unix_test
+                PROPERTIES TIMEOUT 120)
+        endif()
 
         add_executable(parallel_http_ownership_test
             tests/unittests/test_parallel_http_ownership.cpp app/server/http.cpp app/server/parallel_http.cpp)
