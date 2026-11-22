@@ -44,6 +44,20 @@ conversion is required:
 audiocpp_cli --task asr --family qwen3_asr --model models/Qwen3-ASR-1.7B-hf --backend cuda --audio speech_16k.wav --text "" --text-out transcript.txt
 ```
 
+### Oruk Fourier 2B (English)
+
+For local noncommercial English transcription, install Oruk’s native safetensors
+checkpoint and pass a speech WAV to the CLI:
+
+```bash
+python3 tools/model_manager_v2.py install oruk_fourier_2b_safetensors --models-root models
+audiocpp_cli --task asr --family qwen3_asr --model models/Oruk-Fourier-2B --backend cpu --audio speech_16k.wav --text "" --text-out transcript.txt
+```
+
+The package downloads the pinned checkpoint directly from Oruk. Credit Oruk under
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Hosted or API
+serving requires separate permission. See the [model license](https://huggingface.co/oruk/oruk-fourier-2b#license).
+
 ## Performance controls
 
 Performance settings are session options. `qwen3_asr.perf_mode=off` preserves

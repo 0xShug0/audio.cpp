@@ -365,6 +365,27 @@
       }
     },
     {
+      "id": "oruk_fourier_2b_safetensors",
+      "display_name": "Oruk Fourier 2B (English, local noncommercial use)",
+      "description": "English Qwen3-ASR fine-tune by Oruk. CC BY-NC 4.0. Hosted or API serving requires separate permission from Oruk.",
+      "format": "safetensors",
+      "precision": "native",
+      "target_directory": "Oruk-Fourier-2B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "processor_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "oruk/oruk-fourier-2b",
+        "revision": "8c2a8871f1304aa2f634da4fb95e24438c4945b9"
+      }
+    },
+    {
       "id": "qwencleo_asr_q8_0",
       "display_name": "QwenCleo-ASR Egyptian Arabic Q8_0 GGUF",
       "description": "Egyptian Arabic and Arabic-English code-switching fine-tune of Qwen3-ASR-1.7B from mohammedaly22/QwenCleo-ASR. Use language=Arabic.",
