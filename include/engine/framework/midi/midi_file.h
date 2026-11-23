@@ -16,12 +16,17 @@ struct MidiNote {
     double offset_seconds = 0.0;
     int pitch = 0;
     std::string track_name;
+    // Zero retains MidiFileOptions::velocity for existing callers.
+    int velocity = 0;
 };
 
 struct MidiFileOptions {
     int ticks_per_beat = 480;
     int tempo_us_per_beat = 500000;
     int velocity = 100;
+    // Already-decoded events: keep supplied durations/overlaps, including drums.
+    // Invalid times are rejected rather than repaired.
+    bool preserve_note_events = false;
 };
 
 // Raw note positions preserve metrical timing; no tempo conversion or cleanup.

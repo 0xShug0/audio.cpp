@@ -22,6 +22,7 @@ struct NoteEvent {
     int velocity = 0;
     int pitch = 0;
     std::string track_name;
+    int midi_velocity = 0;
 };
 
 void require_u7(int value, const char * name) {
@@ -94,11 +95,15 @@ int event_key_program(const NoteEvent & event) {
     return event.is_drum ? kDrumProgram : event.program;
 }
 
-std::vector<NoteEvent> note_events_from_notes(const std::vector<MidiNote> & notes) {
+std::vector<NoteEvent> note_events_from_notes(const std::vector<MidiNote> & notes, bool preserve) {
     std::vector<NoteEvent> events;
     events.reserve(notes.size() * 2);
     for (const auto & note : notes) {
         require_u7(note.pitch, "MIDI note pitch");
+        require_u7(note.velocity, "MIDI note velocity");
+        if (preserve && (!std::isfinite(note.onset_seconds) || !std::isfinite(note.offset_seconds) ||
+            note.onset_seconds < 0 || note.offset_seconds <= note.onset_seconds))
+            throw std::runtime_error("MIDI note times must be finite, non-negative and have positive duration");
         if (!note.is_drum) {
             require_u7(note.program, "MIDI program");
         }
@@ -109,11 +114,12 @@ std::vector<NoteEvent> note_events_from_notes(const std::vector<MidiNote> & note
             1,
             note.pitch,
             note.track_name,
+            note.velocity,
         });
         events.push_back(NoteEvent{
             note.is_drum,
             note.program,
-            note.is_drum ? note.onset_seconds + kMinimumNoteDurationSeconds : note.offset_seconds,
+            note.is_drum && !preserve ? note.onset_seconds + kMinimumNoteDurationSeconds : note.offset_seconds,
             0,
             note.pitch,
             note.track_name,
@@ -310,8 +316,8 @@ std::vector<std::byte> write_standard_midi_file(
     }
     require_u7(options.velocity, "MIDI velocity");
 
-    const auto clean_notes = clean_midi_notes(notes);
-    const auto events = note_events_from_notes(clean_notes);
+    const auto clean_notes = options.preserve_note_events ? notes : clean_midi_notes(notes);
+    const auto events = note_events_from_notes(clean_notes, options.preserve_note_events);
 
     std::vector<std::byte> meta_track;
     append_u8(meta_track, 0x00);
@@ -368,7 +374,7 @@ std::vector<std::byte> write_standard_midi_file(
         append_varlen(track, static_cast<uint32_t>(delta_tick));
         append_u8(track, static_cast<uint8_t>((event.velocity > 0 ? 0x90 : 0x80) | channels[key]));
         append_u8(track, static_cast<uint8_t>(event.pitch));
-        append_u8(track, static_cast<uint8_t>(event.velocity > 0 ? options.velocity : 0));
+        append_u8(track, static_cast<uint8_t>(event.velocity > 0 ? (event.midi_velocity ? event.midi_velocity : options.velocity) : 0));
     }
     for (const int key : track_order) {
         auto & track = tracks[key];
