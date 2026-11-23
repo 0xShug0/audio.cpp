@@ -43,11 +43,13 @@ class KittenTTSSession final : public runtime::RuntimeSessionBase, public runtim
     DecoderCapacityContract make_decoder_capacity_contract(int64_t decoder_frame_capacity) const;
     void prepare_graph_capacity(int64_t capacity);
     void prepare_decoder_graph_capacity(int64_t capacity);
+    const engine::audio::EspeakPhonemizer & phonemizer_for(const std::string & language);
 
     runtime::TaskSpec task_;
     std::shared_ptr<const KittenAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
     std::unique_ptr<engine::audio::EspeakPhonemizer> phonemizer_;
+    std::unordered_map<std::string, std::unique_ptr<engine::audio::EspeakPhonemizer>> language_phonemizers_;
     std::shared_ptr<const KittenWeights> weights_;
     runtime::GraphCapacityController graph_capacity_controller_;
     int64_t fixed_token_capacity_ = 0;

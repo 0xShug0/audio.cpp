@@ -2,6 +2,7 @@
 
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/text.h"
+#include "engine/framework/text/text_normalization.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -17,8 +18,6 @@ std::string lower_ascii(std::string value) {
     return value;
 }
 
-std::string default_voice_id() { return "expr-voice-5-m"; }
-
 std::string resolve_language_code_alias(const std::string &value) {
     const std::string normalized = lower_ascii(engine::io::trim_ascii_whitespace(value));
     if (normalized.empty()) {
@@ -31,10 +30,23 @@ std::string resolve_language_code_alias(const std::string &value) {
     throw std::runtime_error("unsupported Kitten language: " + value + " (English only: en-us)");
 }
 
-std::string resolve_voice_id(const std::optional<runtime::VoiceCondition> &voice, const KittenAssets &assets) {
-    std::string voice_id = default_voice_id();
+std::string resolve_voice_id(const std::optional<runtime::VoiceCondition> &voice, const KittenAssets &assets,
+                             const std::string & language = {}) {
+    std::string voice_id = assets.route->default_voice;
+    if (assets.route->variant == KittenVariant::Mini2) {
+        auto requested = language.empty() ? "en" : language;
+        if (voice && voice->style && voice->style->language) requested = *voice->style->language;
+        voice_id = assets.config.require("default_voices").require(requested).as_string();
+    }
     if (voice.has_value() && voice->speaker.has_value() && voice->speaker->cached_voice_id.has_value()) {
         voice_id = *voice->speaker->cached_voice_id;
+    }
+    if (assets.route->variant == KittenVariant::Mini2) {
+        voice_id = lower_ascii(std::move(voice_id));
+        auto requested = language;
+        if (voice && voice->style && voice->style->language) requested = *voice->style->language;
+        const auto qualified = requested + "." + voice_id;
+        if (!requested.empty() && assets.voices.count(qualified)) voice_id = qualified;
     }
     const auto alias = assets.voice_aliases.find(voice_id);
     if (alias != assets.voice_aliases.end()) {
@@ -47,7 +59,16 @@ std::string resolve_voice_id(const std::optional<runtime::VoiceCondition> &voice
 }
 
 std::string resolve_language_code(const runtime::Transcript &text, const std::optional<runtime::VoiceCondition> &voice,
-                                  const std::string &voice_id) {
+                                  const std::string &voice_id, const KittenAssets & assets) {
+    if (assets.route->variant == KittenVariant::Mini2) {
+        auto language = assets.voice_languages.at(voice_id);
+        if (voice && voice->style && voice->style->language) language = *voice->style->language;
+        else if (!text.language.empty()) language = text.language;
+        if (language != assets.voice_languages.at(voice_id)) {
+            throw std::runtime_error("Kitten voice " + voice_id + " does not belong to language " + language);
+        }
+        return language;
+    }
     std::string language_code;
     if (voice.has_value() && voice->style.has_value() && voice->style->language.has_value()) {
         language_code = resolve_language_code_alias(*voice->style->language);
@@ -323,6 +344,31 @@ PreparedFrontendText prepare_frontend_text(const runtime::Transcript &text, cons
     if (text.text.empty()) {
         throw std::runtime_error("KittenTTS requires non-empty text");
     }
+    if (assets.route->variant == KittenVariant::Mini2) {
+        if (language_code == "ja") {
+            throw std::runtime_error("Kitten Japanese text requires the upstream G2P; supply phonemes explicitly");
+        }
+        auto normalized = language_code == "en" ? engine::text::normalize_english_text(text.text) : text.text;
+        auto ps = engine::io::trim_ascii_whitespace(phonemize_preserve_punctuation(normalized, phonemizer));
+        // Upstream phonemizer v2 folds, plus the English eSpeak-to-model
+        // alphabet. English uses the portable eSpeak path, not Misaki's lexicon.
+        for (const auto & [from, to] : std::vector<std::pair<std::string, std::string>>{
+                 {"aɪ", "I"}, {"aʊ", "W"}, {"eɪ", "A"}, {"oʊ", "O"}, {"ɔɪ", "Y"},
+                 {"dʒ", "ʤ"}, {"tʃ", "ʧ"}, {"ɭ", "l"}, {"ɫ", "l"}, {"ɵ", "ø"},
+                 {"ε", "ɛ"}, {" ", " "}, {"\t", " "}, {"«", ""}, {"»", ""},
+                 {"‘", ""}, {"’", ""}, {"'", ""}, {"~", ""}, {"·", ""}, {"#", ""},
+                 {"g", "ɡ"}, {"̪", ""}, {"̩", ""}, {"̍", ""}, {"̯", ""}}) {
+            ps = engine::text::replace_all(std::move(ps), from, to);
+        }
+        if (language_code == "en") {
+            ps = engine::text::replace_all(std::move(ps), "ɚ", "əɹ");
+            ps = engine::text::replace_all(std::move(ps), "r", "ɹ");
+            ps = engine::text::replace_all(std::move(ps), "ː", "");
+            ps = engine::text::replace_all(std::move(ps), "ɾ", "T");
+            ps = engine::text::replace_all(std::move(ps), "ʔ", "t");
+        }
+        return {std::move(normalized), std::move(ps)};
+    }
     if (language_code != "en-us") {
         throw std::runtime_error("unsupported Kitten language code: " + language_code + " (English only: en-us)");
     }
@@ -367,7 +413,7 @@ EncodedInputIds encode_input_ids_and_count(const std::string &phonemes, const Ki
             }
         }
         const std::string symbol = phonemes.substr(i, width);
-        const auto it = assets.vocab.find(symbol);
+        const auto it = assets.vocab.find(assets.route->variant == KittenVariant::Mini2 && (symbol == "(" || symbol == ")") ? "," : symbol);
         if (it == assets.vocab.end()) {
             engine::debug::trace_log_scalar("kitten.skipped_phoneme", std::string_view(symbol));
             i += width;
@@ -425,8 +471,8 @@ KittenFrontendSessionState resolve_kitten_frontend_session_state(const std::opti
         transcript = *text;
     }
     KittenFrontendSessionState state;
-    state.voice_id = resolve_voice_id(voice, assets);
-    state.language_code = resolve_language_code(transcript, voice, state.voice_id);
+    state.voice_id = resolve_voice_id(voice, assets, transcript.language);
+    state.language_code = resolve_language_code(transcript, voice, state.voice_id, assets);
     const auto voice_it = assets.voices.find(state.voice_id);
     if (voice_it == assets.voices.end()) {
         throw std::runtime_error("unknown Kitten voice id: " + state.voice_id);
@@ -439,12 +485,12 @@ KittenFrontendSessionState resolve_kitten_frontend_session_state(const std::opti
 void validate_kitten_frontend_session_state(const runtime::Transcript &text,
                                             const std::optional<runtime::VoiceCondition> &voice,
                                             const KittenFrontendSessionState &state, const KittenAssets &assets) {
-    const std::string resolved_voice_id = resolve_voice_id(voice, assets);
+    const std::string resolved_voice_id = resolve_voice_id(voice, assets, text.language);
     if (resolved_voice_id != state.voice_id) {
         throw std::runtime_error("Kitten session voice_id changed after launch: " + state.voice_id + " -> " +
                                  resolved_voice_id);
     }
-    const std::string resolved_language_code = resolve_language_code(text, voice, state.voice_id);
+    const std::string resolved_language_code = resolve_language_code(text, voice, state.voice_id, assets);
     if (resolved_language_code != state.language_code) {
         throw std::runtime_error("Kitten session language_code changed after launch: " + state.language_code + " -> " +
                                  resolved_language_code);
@@ -461,11 +507,13 @@ void validate_kitten_frontend_session_state(const runtime::Transcript &text,
 
 KittenSynthesisInput build_kitten_synthesis_input(const runtime::Transcript &text,
                                                   const KittenFrontendSessionState &state, const KittenAssets &assets,
-                                                  const engine::audio::EspeakPhonemizer &phonemizer) {
+                                                  const engine::audio::EspeakPhonemizer &phonemizer,
+                                                  std::optional<std::string_view> phonemes) {
     if (state.voice_pack == nullptr) {
         throw std::runtime_error("Kitten frontend session voice pack was not prepared");
     }
-    const PreparedFrontendText prepared = prepare_frontend_text(text, state.language_code, assets, phonemizer);
+    const PreparedFrontendText prepared = phonemes ? PreparedFrontendText{text.text, std::string(*phonemes)} :
+        prepare_frontend_text(text, state.language_code, assets, phonemizer);
     const EncodedInputIds encoded = encode_input_ids_and_count(prepared.phonemes, assets);
     if (encoded.phoneme_count > 510) {
         throw std::runtime_error("Kitten phoneme string exceeds 510 symbols; segmenting is not "
@@ -477,7 +525,8 @@ KittenSynthesisInput build_kitten_synthesis_input(const runtime::Transcript &tex
     input.phonemes = prepared.phonemes;
     input.normalized_text_length = prepared.normalized.size();
     input.input_ids = encoded.ids;
-    input.style = style_for_phoneme_count(*state.voice_pack, prepared.normalized.size());
+    input.style = style_for_phoneme_count(*state.voice_pack,
+        assets.route->variant == KittenVariant::Mini2 ? encoded.ids.size() - 1 : prepared.normalized.size());
     input.speaking_rate = state.speaking_rate;
     if (static_cast<int64_t>(input.input_ids.size()) > assets.context_length) {
         throw std::runtime_error("Kitten tokenized input exceeds model context length");

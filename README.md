@@ -101,7 +101,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **index_tts2** | TTS, Clone, Ctrl | zh, en, ja, es, ar | [IndexTTS-2](docs/models/index_tts2.md)<br>IndexTTS-2.5 | GGUF 16/Q8 |
 | **inflect_v2** (C)<br>Jan [@JanWerder](https://github.com/JanWerder) | TTS | en | [Inflect Micro v2 and Nano v2](docs/models/inflect_v2.md) | GGUF FP32 |
 | **irodori_tts** | TTS, Clone, Design, Ctrl | ja | [Irodori-TTS-v4.1-Small (RF and MF)](docs/models/irodori_tts.md)<br>Irodori-TTS-v4.1-Anime<br>Irodori-TTS-500M-v3<br>Irodori-TTS-600M-v3-VoiceDesign | GGUF 16/Q8 |
-| **kitten_tts** (C)<br>Community | TTS | en | [KittenTTS Mini 0.8](docs/models/kitten_tts.md) | GGUF FP32 |
+| **kitten_tts** (C)<br>Community | TTS | en + 15 | [Mini 0.8, TTS2 Mini](docs/models/kitten_tts.md) | GGUF FP32 |
 | **kitten_tts2** (C)<br>[@dignome](https://github.com/dignome) | TTS, Clone | en, ar, zh, fr, de, hi, it, pt, ru, es, nl, id, ja, ko, pl, tr | [Kitten TTS 2](docs/models/kitten_tts2.md) | GGUF Q8/Q4 |
 | **kokoro_tts** | TTS | en-us, en-gb, es, fr, hi, it, ja, pt-br, zh | [Kokoro 82M](docs/models/kokoro_tts.md) | Safetensors, local GGUF BF16/Q8, Stream |
 | **kugelaudio** | TTS, Clone | European multilingual | [KugelAudio-0-Open](docs/models/kugelaudio.md) | GGUF BF16 / Q8_0 / Q4_K, Stream |

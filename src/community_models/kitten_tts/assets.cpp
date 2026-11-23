@@ -6,6 +6,7 @@
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/runtime/model_routing.h"
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,20 @@
 #include <vector>
 
 namespace engine::models::kitten_tts {
+
+// Family routing: Mini 0.8 and TTS2 Mini share the predictor/decoder runtimes.
+// Missing variant is the published Mini 0.8 package contract.
+const KittenRoute & resolve_kitten_route(const engine::io::json::Value & config) {
+    static const KittenRoute mini08{KittenVariant::Mini08, "expr-voice-5-m"};
+    static const KittenRoute mini2{KittenVariant::Mini2, "en.eleanor"};
+    static const runtime::ModelRouteEntry<std::string, KittenRoute> entries[] = {
+        {"mini_0_8", &mini08},
+        {"mini_2", &mini2},
+    };
+    static const runtime::ModelRouteTable<std::string, KittenRoute> routes("KittenTTS variant", entries);
+    const auto * variant = config.find("variant");
+    return routes.require(variant ? variant->as_string() : "mini_0_8");
+}
 
 namespace {
 
@@ -469,6 +484,7 @@ std::shared_ptr<const KittenWeights> load_kitten_weights(const engine::io::json:
                                                          size_t weight_context_bytes) {
     const auto config = parse_kitten_config_metadata(config_root);
     auto weights = std::make_shared<KittenWeights>();
+    weights->variant = resolve_kitten_route(config_root).variant;
     weights->store = std::make_shared<engine::core::BackendWeightStore>(backend, backend_type, "kitten.weights",
                                                                         weight_context_bytes);
     weights->n_token = config.n_token;
@@ -580,14 +596,18 @@ std::shared_ptr<const KittenWeights> load_kitten_weights(const engine::io::json:
         store, source, "decoder.generator.noise_res.0", 256, 7, {1, 3, 5}, matmul_storage_type, conv_storage_type));
     weights->decoder.generator.noise_res.push_back(load_generator_resblock(
         store, source, "decoder.generator.noise_res.1", 128, 11, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.0", 256, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.1", 256, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.2", 128, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.3", 128, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
+    const bool mini2 = resolve_kitten_route(config_root).variant == KittenVariant::Mini2;
+    const std::vector<int64_t> kernels = mini2 ? config.resblock_kernel_sizes : std::vector<int64_t>{3, 3};
+    for (size_t stage = 0; stage < weights->decoder.generator.ups.size(); ++stage) {
+        for (size_t branch = 0; branch < kernels.size(); ++branch) {
+            const auto index = stage * kernels.size() + branch;
+            weights->decoder.generator.resblocks.push_back(load_generator_resblock(
+                store, source, "decoder.generator.resblocks." + std::to_string(index),
+                weights->decoder.generator.ups[stage].out_channels, kernels[branch],
+                mini2 ? config.resblock_dilation_sizes.at(branch) : std::vector<int64_t>{1, 3, 5},
+                matmul_storage_type, conv_storage_type));
+        }
+    }
     weights->decoder.generator.conv_post = load_weight_norm_conv1d(store, source, "decoder.generator.conv_post", 22,
                                                                    128, 7, 1, 3, 1, 1, true, conv_storage_type);
     weights->decoder.generator.source_linear =
@@ -711,11 +731,22 @@ std::shared_ptr<const KittenAssets> load_kitten_assets(const std::filesystem::pa
     assets->resources = std::move(resources);
     assets->config = std::move(config);
     assets->model_weights = std::move(weights);
+    assets->route = &resolve_kitten_route(assets->config);
     assets->context_length = parse_kitten_config_metadata(assets->config).plbert_max_position_embeddings;
-    assets->vocab = make_kitten_symbol_vocab();
+    if (assets->route->variant == KittenVariant::Mini2) {
+        for (const auto & [symbol, id] : assets->config.require("vocab").as_object()) assets->vocab.emplace(symbol, id.as_i64());
+        for (const auto & [voice, language] : assets->config.require("voice_languages").as_object()) {
+            assets->voice_languages.emplace(voice, language.as_string());
+        }
+    } else {
+        assets->vocab = make_kitten_symbol_vocab();
+    }
     assets->voice_aliases = parse_voice_aliases(assets->config);
     assets->speed_priors = parse_speed_priors(assets->config);
     load_embedded_voices(*assets->model_weights, assets->voices);
+    for (auto & [voice, pack] : assets->voices) {
+        if (assets->route->variant == KittenVariant::Mini2) pack.language_code = assets->voice_languages.at(voice);
+    }
 
     return assets;
 }

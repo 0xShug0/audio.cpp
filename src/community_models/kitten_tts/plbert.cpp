@@ -276,7 +276,7 @@ struct PlbertSession {
                use_device_backend == use_device_backend_in;
     }
 
-    std::vector<float> run(const std::vector<int32_t> &input_ids) {
+    std::vector<float> run(const std::vector<int32_t> &input_ids, bool read_back = true) {
         if (input_ids.empty() || static_cast<int64_t>(input_ids.size()) > token_count) {
             throw std::runtime_error("Kitten PL-BERT input length exceeds prepared capacity");
         }
@@ -306,6 +306,12 @@ struct PlbertSession {
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error(std::string("kitten_plbert_encode graph compute failed: ") +
                                      ggml_status_to_string(status));
+        }
+        if (!read_back) {
+            engine::debug::timing_log_scalar("kitten.plbert.mask_build_ms", mask_build_ms);
+            engine::debug::timing_log_scalar("kitten.plbert.input_upload_ms", input_upload_ms);
+            engine::debug::timing_log_scalar("kitten.plbert.compute_ms", compute_ms);
+            return {};
         }
         std::vector<float> full;
         const double output_read_ms = measure_ms([&]() { full = core::read_tensor_f32(output); });
@@ -384,6 +390,14 @@ std::vector<float> KittenPlbertRuntime::encode(const std::vector<int32_t> &input
         throw std::runtime_error("kitten_plbert_encode input length exceeds PL-BERT context length");
     }
     return impl_->session_for(static_cast<int64_t>(input_ids.size()), project_hidden).run(input_ids);
+}
+
+const ggml_tensor * KittenPlbertRuntime::encode_tensor(const std::vector<int32_t> & input_ids, bool project_hidden) {
+    if (input_ids.empty() || static_cast<int64_t>(input_ids.size()) > impl_->weights->context_length)
+        throw std::runtime_error("Kitten PL-BERT input is outside the checkpoint context");
+    auto & session = impl_->session_for(static_cast<int64_t>(input_ids.size()), project_hidden);
+    session.run(input_ids, false);
+    return session.output;
 }
 
 } // namespace engine::models::kitten_tts

@@ -1055,7 +1055,9 @@ std::vector<float> KittenStyleTTS2DecoderRuntime::decode(const PredictorOutputs 
         std::vector<float> complex_spec(static_cast<size_t>(bins * frames * 2), 0.0f);
         for (int64_t f = 0; f < bins; ++f) {
             for (int64_t c = 0; c < frames; ++c) {
-                const float mag = std::exp(generator_output[static_cast<size_t>(f * generated_frames + c)]);
+                const float value = generator_output[static_cast<size_t>(f * generated_frames + c)];
+                const float mag = impl_->weights->variant == KittenVariant::Mini2 ?
+                    std::max(value, 0.0f) + std::log1p(std::exp(-std::abs(value))) : std::exp(value);
                 const float phase = std::sin(generator_output[static_cast<size_t>((f + bins) * generated_frames + c)]);
                 const size_t base = static_cast<size_t>((f * frames + c) * 2);
                 complex_spec[base] = mag * std::cos(phase);
@@ -1066,19 +1068,23 @@ std::vector<float> KittenStyleTTS2DecoderRuntime::decode(const PredictorOutputs 
         const int64_t samples = impl_->inverse_stft_config.hop_length * (frames - 1);
         waveform =
             audio::ISTFT().compute(complex_spec, window, 1, bins, frames, samples, impl_->inverse_stft_config).values;
-        const int64_t n_fft = impl_->inverse_stft_config.n_fft;
-        const int64_t hop = impl_->inverse_stft_config.hop_length;
-        const int64_t center_pad = n_fft / 2;
-        std::vector<float> overlap_scale(static_cast<size_t>(samples + 2 * center_pad), 0.0f);
-        for (int64_t frame = 0; frame < frames; ++frame) {
-            const int64_t start = frame * hop;
-            for (int64_t i = 0; i < n_fft; ++i) {
-                const float value = window[static_cast<size_t>(i)];
-                overlap_scale[static_cast<size_t>(start + i)] += value * value;
+        // Mini 0.8's exported decoder omits overlap normalization. The TTS2
+        // Mini training implementation uses torch.istft's normalized synthesis.
+        if (impl_->weights->variant == KittenVariant::Mini08) {
+            const int64_t n_fft = impl_->inverse_stft_config.n_fft;
+            const int64_t hop = impl_->inverse_stft_config.hop_length;
+            const int64_t center_pad = n_fft / 2;
+            std::vector<float> overlap_scale(static_cast<size_t>(samples + 2 * center_pad), 0.0f);
+            for (int64_t frame = 0; frame < frames; ++frame) {
+                const int64_t start = frame * hop;
+                for (int64_t i = 0; i < n_fft; ++i) {
+                    const float value = window[static_cast<size_t>(i)];
+                    overlap_scale[static_cast<size_t>(start + i)] += value * value;
+                }
             }
-        }
-        for (int64_t i = 0; i < samples; ++i) {
-            waveform[static_cast<size_t>(i)] *= overlap_scale[static_cast<size_t>(i + center_pad)];
+            for (int64_t i = 0; i < samples; ++i) {
+                waveform[static_cast<size_t>(i)] *= overlap_scale[static_cast<size_t>(i + center_pad)];
+            }
         }
     });
     const int64_t valid_waveform_samples =

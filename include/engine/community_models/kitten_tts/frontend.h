@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace engine::models::kitten_tts {
@@ -38,7 +39,8 @@ void validate_kitten_frontend_session_state(const runtime::Transcript &text,
 
 KittenSynthesisInput build_kitten_synthesis_input(const runtime::Transcript &text,
                                                   const KittenFrontendSessionState &state, const KittenAssets &assets,
-                                                  const engine::audio::EspeakPhonemizer &phonemizer);
+                                                  const engine::audio::EspeakPhonemizer &phonemizer,
+                                                  std::optional<std::string_view> phonemes = std::nullopt);
 
 int64_t estimate_kitten_request_tokens(const runtime::SessionPreparationRequest &request,
                                        const KittenFrontendSessionState &state, const KittenAssets &assets,
