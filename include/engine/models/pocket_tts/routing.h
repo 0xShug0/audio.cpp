@@ -16,8 +16,10 @@ struct PocketTTSAssets;
 enum class PromptPunctuation {
     // pocket-tts: a trailing comma, colon or dash becomes a period, any other unfinished prompt
     // gets one after its closing quotes, and those quotes stay with their sentence when it is split.
+    // The first letter after any opening quotes or brackets is upper-cased.
     PocketTTS,
-    // Gradium Phonon: only a final letter or digit gets a period.
+    // Gradium Phonon: only a final letter or digit gets a period, and only the first character is
+    // upper-cased.
     LetterOrDigit,
 };
 

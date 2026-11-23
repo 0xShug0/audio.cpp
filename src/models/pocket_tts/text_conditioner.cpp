@@ -276,9 +276,17 @@ std::string prepare_pocket_tts_text(
         std::replace(text.begin(), text.end(), ';', ',');
     }
     if (capitalize_first_letter) {
-        const CodePoint first = decode_utf8_at(text, 0);
+        // pocket-tts skips any opening quotes or brackets first ('"hello," she said').
+        size_t start = 0;
+        CodePoint first = decode_utf8_at(text, start);
+        while (punctuation == PromptPunctuation::PocketTTS && start + first.length < text.size() &&
+               (first.value == '"' || first.value == '\'' || first.value == 0x201C || first.value == 0x2018 ||
+                first.value == '(' || first.value == '[' || first.value == 0x00AB)) {
+            start += first.length;
+            first = decode_utf8_at(text, start);
+        }
         if (const uint32_t upper = latin_uppercase(first.value); upper != 0) {
-            text.replace(0, first.length, encode_utf8(upper));
+            text.replace(start, first.length, encode_utf8(upper));
         }
     }
     if (punctuation == PromptPunctuation::PocketTTS) {
