@@ -300,6 +300,15 @@ std::optional<std::array<int32_t, kMimiFrameCodebooks>> run_prepared_token_step(
 struct PersonaPlexSession::InferenceState {
     PersonaPlexGenerationOptions generation;
     PersonaPlexDelayState delay_state;
+    double user_encode_ms = 0.0;
+    double ar_generate_ms = 0.0;
+    double mimi_decode_ms = 0.0;
+
+    ~InferenceState() {
+        debug::timing_log_scalar("personaplex.user_encode_ms", user_encode_ms);
+        debug::timing_log_scalar("personaplex.ar.generate_ms", ar_generate_ms);
+        debug::timing_log_scalar("personaplex.mimi.decode_ms", mimi_decode_ms);
+    }
 
 };
 
@@ -339,8 +348,16 @@ PersonaPlexSession::PersonaPlexSession(
         kFrameSamples, static_cast<double>(kFrameSamples) / kSampleRate};
     bind_chat(kModelName, [this](const runtime::TaskRequest & request, chat::HistoryMode) {
         require_prepared("PersonaPlex chat");
+        const auto parse_start = Clock::now();
         runtime::validate_spec_backed_request_options(request.options, *contract_, kModelName);
-        std::shared_ptr<InferenceState> state = start_conversation(make_personaplex_generation_options(request, *assets_));
+        const auto generation = make_personaplex_generation_options(request, *assets_);
+        debug::timing_log_scalar("personaplex.request.parse_ms", debug::elapsed_ms(parse_start));
+        const auto graph_start = Clock::now();
+        ensure_runtime_graphs();
+        debug::timing_log_scalar("personaplex.graph_prepare_ms", debug::elapsed_ms(graph_start));
+        const auto prompt_start = Clock::now();
+        std::shared_ptr<InferenceState> state = start_conversation(generation);
+        debug::timing_log_scalar("personaplex.prompt_ms", debug::elapsed_ms(prompt_start));
         chat::UserTurn turn;
         turn.output_sample_rate = kSampleRate;
         turn.duplex = [this, state] {
@@ -348,16 +365,38 @@ PersonaPlexSession::PersonaPlexSession(
             source.sample_rate = kSampleRate;
             source.frame_samples = kFrameSamples;
             source.codebooks = kMimiFrameCodebooks;
-            source.encode = [this](const runtime::AudioBuffer & audio) { return mimi_encoder_->encode(audio); };
-            source.encode_stream = [this](const runtime::AudioBuffer & audio, bool flush) { return mimi_encoder_->encode_streaming(audio, flush); };
+            source.encode = [this, state](const runtime::AudioBuffer & audio) {
+                const auto start = Clock::now();
+                auto codes = mimi_encoder_->encode(audio);
+                state->user_encode_ms += debug::elapsed_ms(start);
+                return codes;
+            };
+            source.encode_stream = [this, state](const runtime::AudioBuffer & audio, bool flush) {
+                const auto start = Clock::now();
+                auto codes = mimi_encoder_->encode_streaming(audio, flush);
+                state->user_encode_ms += debug::elapsed_ms(start);
+                return codes;
+            };
             source.reset_codec = [this] { mimi_encoder_->reset_streaming(); mimi_decoder_->reset_streaming(); };
             source.predict = [this, state](const int32_t * input, int32_t * codes) {
+                const auto start = Clock::now();
                 const auto output = run_user_frame(*state, input);
+                state->ar_generate_ms += debug::elapsed_ms(start);
                 if (output) std::copy(output->begin(), output->end(), codes);
                 return output.has_value();
             };
-            source.decode = [this](const std::vector<int32_t> & codes, int64_t frames) { return mimi_decoder_->decode(codes, frames); };
-            source.decode_stream = [this](const std::vector<int32_t> & codes, int64_t frames) { return mimi_decoder_->decode_streaming(codes, frames); };
+            source.decode = [this, state](const std::vector<int32_t> & codes, int64_t frames) {
+                const auto start = Clock::now();
+                auto audio = mimi_decoder_->decode(codes, frames);
+                state->mimi_decode_ms += debug::elapsed_ms(start);
+                return audio;
+            };
+            source.decode_stream = [this, state](const std::vector<int32_t> & codes, int64_t frames) {
+                const auto start = Clock::now();
+                auto audio = mimi_decoder_->decode_streaming(codes, frames);
+                state->mimi_decode_ms += debug::elapsed_ms(start);
+                return audio;
+            };
             return std::make_unique<chat::Duplex>(std::move(source));
         };
         return turn;

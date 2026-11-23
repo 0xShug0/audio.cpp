@@ -62,7 +62,7 @@ struct Reply::Impl {
                 batch.tokens.push_back(step->token);
                 ++tokens;
                 // A text token must not wait for the next audio inference.
-                if (streaming && batch.frames.empty()) break;
+                if (streaming && config.publish_text_immediately && batch.frames.empty()) break;
             } else if (std::find(step->codes.begin(), step->codes.end(), config.end_of_audio) == step->codes.end()) {
                 batch.frames.push_back(std::move(step->codes));
                 ++frames;

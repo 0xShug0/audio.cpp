@@ -20,7 +20,7 @@ chat::HistoryFormat format() {
     return {"Synthetic", "test.question", "test.reply", "test.reply/1", 2, 10, 256, 64, {}, {}};
 }
 
-std::unique_ptr<chat::Reply> make_reply(const std::shared_ptr<Counts> & counts, bool ended = true, int64_t max_steps = 8) {
+std::unique_ptr<chat::Reply> make_reply(const std::shared_ptr<Counts> & counts, bool ended = true, int64_t max_steps = 8, bool publish_text_immediately = true) {
     const std::vector<chat::ReplyStep> sequence = {{1, {}}, {2, {}}, {3, {}}, {-1, {5, 6}}, {-1, {9, 8}}, {4, {}}};
     chat::ReplySource source;
     source.next = [counts, sequence]() -> std::optional<chat::ReplyStep> {
@@ -49,7 +49,7 @@ std::unique_ptr<chat::Reply> make_reply(const std::shared_ptr<Counts> & counts, 
         return std::vector<float>{5};
     };
     codec.finish = [counts] { ++counts->flush; return std::vector<float>{9}; };
-    return std::make_unique<chat::Reply>(std::move(source), std::move(codec), chat::ReplyConfig{9, 2, "en", max_steps});
+    return std::make_unique<chat::Reply>(std::move(source), std::move(codec), chat::ReplyConfig{9, 2, "en", max_steps, true, {}, publish_text_immediately});
 }
 
 void test_reply_and_wire_history() {
@@ -100,6 +100,19 @@ void test_reply_and_wire_history() {
     const auto offline_result = offline->finalize();
     require(offline_result.audio_output->samples == pcm, "independent whole decoder agrees with streamed PCM");
     require_eq(offline_result.text_output->text, transcript, "offline and streaming text");
+}
+
+void test_audio_batched_text_publication() {
+    auto counts = std::make_shared<Counts>();
+    auto reply = make_reply(counts, true, 8, false);
+    const auto event = reply->next();
+    require(event && event->audio_output && event->partial_text, "batched text arrives with audio");
+    require_eq(event->partial_text->text, std::string("\xe4\xb8\x80\xef\xbf\xbd"), "all batch text retained");
+    require(event->audio_output->samples == std::vector<float>({5, 9}), "batch includes speech and flush tail");
+    require_eq(counts->invocations, size_t{7}, "collect until frame batch or exhaustion");
+    require(!reply->next(), "one batch produces exactly one event");
+    require_eq(counts->push, 1, "codec receives spoken frames once");
+    require_eq(counts->flush, 1, "codec flushes once");
 }
 
 void test_partial_and_limited_completion() {
@@ -463,6 +476,7 @@ int main(int argc, char ** argv) {
     if (argc == 2 && std::string(argv[1]) == "--log") engine::debug::configure_logging({true, std::nullopt});
     try {
         test_reply_and_wire_history();
+        test_audio_batched_text_publication();
         test_partial_and_limited_completion();
         test_no_speech_fails_explicitly();
         test_conversation_lifecycle_and_endpoint();

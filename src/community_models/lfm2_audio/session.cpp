@@ -1074,8 +1074,9 @@ std::unique_ptr<chat::Reply> Lfm2AudioChatSession::bind_reply(std::shared_ptr<Lf
             return istft->value().push(detokenizer_.stream(frames), static_cast<int64_t>(frames.size()) * output_->detokenizer_config.upsample);
         },
         [istft] { return istft->value().finish(); }};
-    return std::make_unique<chat::Reply>(std::move(inference), std::move(audio),
-        chat::ReplyConfig{output_->depthformer.end_of_audio(), static_cast<size_t>(options.stream_frames_per_event), language_, options.reply.max_steps});
+    chat::ReplyConfig reply_config{output_->depthformer.end_of_audio(), static_cast<size_t>(options.stream_frames_per_event), language_, options.reply.max_steps};
+    reply_config.publish_text_immediately = false;
+    return std::make_unique<chat::Reply>(std::move(inference), std::move(audio), std::move(reply_config));
 }
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_lfm2_audio_loader() {

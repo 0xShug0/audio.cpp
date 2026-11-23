@@ -41,6 +41,8 @@ struct ReplyConfig {
     bool require_audio = true;
     // Whole-reply text EOS IDs, not interleaving/audio phase markers.
     std::vector<int32_t> eos_tokens = {};
+    // Otherwise collect text until frames_per_event or source exhaustion.
+    bool publish_text_immediately = true;
 };
 
 // The factory prepares a text source. Its bindings are destroyed after text
@@ -55,7 +57,7 @@ struct TextSpeechSource {
 };
 
 // Session-owned reply execution. Offline decoding retains the whole-sequence
-// codec path; streaming publishes text independently of audio-frame batching.
+// codec path; streaming groups audio frames and follows the text publication policy.
 // Neither path changes the generator's sampling or recurrent state updates.
 class Reply final {
 public:
