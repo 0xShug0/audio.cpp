@@ -3,3 +3,7 @@
 
 #define CUDA_CONV2D_DW_BLOCK_SIZE 256
 void ggml_cuda_op_conv2d_dw(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+void ggml_cuda_op_conv2d_dw_sparse(ggml_backend_cuda_context &ctx, ggml_tensor *dst);
+#endif

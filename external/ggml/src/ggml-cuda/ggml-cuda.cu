@@ -54,6 +54,8 @@
 #include "ggml-cuda/softmax.cuh"
 #include "ggml-cuda/ssm-conv.cuh"
 #include "ggml-cuda/ssm-scan.cuh"
+#include "ggml-cuda/gru-scan.cuh"
+#include "ggml-cuda/affine.cuh"
 #include "ggml-cuda/sum.cuh"
 #include "ggml-cuda/sumrows.cuh"
 #include "ggml-cuda/top-k.cuh"
@@ -3349,6 +3351,20 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_SSM_CONV:
             ggml_cuda_op_ssm_conv(ctx, dst);
             break;
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+        case GGML_OP_CONV_2D_DW_SPARSE:
+            ggml_cuda_op_conv2d_dw_sparse(ctx, dst);
+            break;
+        case GGML_OP_AFFINE:
+            ggml_cuda_op_affine(ctx, dst);
+            break;
+        case GGML_OP_GRU_CELL:
+            ggml_cuda_op_gru_cell(ctx, dst);
+            break;
+        case GGML_OP_GRU_SCAN:
+            ggml_cuda_op_gru_scan(ctx, dst);
+            break;
+#endif
         case GGML_OP_SSM_SCAN:
             ggml_cuda_op_ssm_scan(ctx, dst);
             break;
@@ -6113,6 +6129,20 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) &&
                    (op->src[1]->type == GGML_TYPE_F32 || op->src[1]->type == GGML_TYPE_F16) &&
                    (op->type         == GGML_TYPE_F32 || op->type         == GGML_TYPE_F16);
+        case GGML_OP_CONV_2D_DW_SPARSE:
+        case GGML_OP_AFFINE:
+        case GGML_OP_GRU_CELL:
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+            return true;
+#else
+            return false;
+#endif
+        case GGML_OP_GRU_SCAN:
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+            return 2*op->ne[0]*ggml_type_size(op->src[1]->type) <= ggml_cuda_info().devices[dev_ctx->device].smpb;
+#else
+            return false;
+#endif
         case GGML_OP_SSM_SCAN: {
             if (op->src[3]->ne[0] == 1) {
                 // Mamba2

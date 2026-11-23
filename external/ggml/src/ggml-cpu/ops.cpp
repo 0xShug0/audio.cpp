@@ -12562,3 +12562,115 @@ void ggml_compute_forward_im2col_asym(
         *ggml_inband_scale(dst) = *ggml_inband_scale_const(src1);
     }
 }
+
+void ggml_compute_forward_gru_scan(const ggml_compute_params *params,
+                                   ggml_tensor *dst) {
+  const auto *x = static_cast<const float *>(dst->src[0]->data);
+  const auto *bias = static_cast<const float *>(dst->src[2]->data);
+  const auto *initial = static_cast<const float *>(dst->src[3]->data);
+  auto *out = static_cast<float *>(dst->data);
+  const int64_t h = dst->ne[0], batches = dst->ne[1], frames = dst->ne[2];
+  const auto *wf = static_cast<const float *>(dst->src[1]->data);
+  for (int64_t seq = params->ith; seq < batches * dst->ne[3];
+       seq += params->nth) {
+    const int64_t d = seq / batches, b = seq % batches;
+    for (int64_t step = 0; step < frames; ++step) {
+      const int64_t t = d == 1 ? frames - 1 - step : step;
+      const float *prev =
+          step ? out +
+                     ((d * frames + (d == 1 ? t + 1 : t - 1)) * batches + b) * h
+               : initial + seq * h;
+      const float *gates = x + ((d * frames + t) * batches + b) * 3 * h;
+      float *next = out + ((d * frames + t) * batches + b) * h;
+      for (int64_t j = 0; j < h; ++j) {
+        float r = 0, z = 0, n = 0;
+        for (int64_t c = 0; c < h; ++c) {
+          const int64_t i = (d * h + c) * 3 * h + j;
+          const float v = prev[c];
+          r += v * wf[i];
+          z += v * wf[i + h];
+          n += v * wf[i + 2 * h];
+        }
+        r = 1.0f / (1.0f + expf(-(gates[j] + (r + bias[d * 3 * h + j]))));
+        z = 1.0f /
+            (1.0f + expf(-(gates[j + h] + (z + bias[d * 3 * h + j + h]))));
+        n = tanhf(gates[j + 2 * h] + r * (n + bias[d * 3 * h + j + 2 * h]));
+        next[j] = n + z * (prev[j] - n);
+      }
+    }
+  }
+}
+
+void ggml_compute_forward_gru_cell(const ggml_compute_params *params,
+                                   ggml_tensor *dst) {
+  const auto *x = dst->src[0];
+  const auto *recurrent = dst->src[1];
+  const auto *bias = dst->src[2];
+  const auto *previous = dst->src[3];
+  const int64_t h = previous->ne[0], batches = previous->ne[1], count = ggml_nelements(previous);
+  int64_t frame = 0;
+  memcpy(&frame, dst->op_params, sizeof(frame));
+  auto *output = static_cast<float *>(dst->data) + frame * count;
+  for (int64_t i = params->ith; i < count; i += params->nth) {
+    const int64_t j = i % h, b = i / h % batches, d = i / (h * batches);
+    const auto *a =
+        reinterpret_cast<const float *>(static_cast<const char *>(x->data) +
+                                        b * x->nb[1] + d * x->nb[2]) +
+        j;
+    const auto *q = reinterpret_cast<const float *>(
+                        static_cast<const char *>(recurrent->data) +
+                        b * recurrent->nb[1] + d * recurrent->nb[2]) +
+                    j;
+    const auto *v =
+        reinterpret_cast<const float *>(static_cast<const char *>(bias->data) +
+                                        d * bias->nb[2]) +
+        j;
+    const auto *p = reinterpret_cast<const float *>(
+                        static_cast<const char *>(previous->data) +
+                        b * previous->nb[1] + d * previous->nb[2]) +
+                    j;
+    const float r = 1.0f / (1.0f + expf(-(a[0] + (q[0] + v[0]))));
+    const float z = 1.0f / (1.0f + expf(-(a[h] + (q[h] + v[h]))));
+    const float n = tanhf(a[2 * h] + r * (q[2 * h] + v[2 * h]));
+    output[i] = n + z * (*p - n);
+  }
+}
+
+void ggml_compute_forward_affine(const struct ggml_compute_params *params, struct ggml_tensor *dst) {
+    const int axis = ggml_get_op_params_i32(dst, 0);
+    int64_t stride = 1;
+    for (int d = 0; d < axis; ++d) stride *= dst->ne[d];
+    const int64_t count = ggml_nelements(dst), channels = dst->ne[axis];
+    const auto *x = static_cast<const float *>(dst->src[0]->data);
+    const auto *scale = static_cast<const float *>(dst->src[1]->data);
+    const auto *bias = static_cast<const float *>(dst->src[2]->data);
+    auto *out = static_cast<float *>(dst->data);
+    const int64_t first = count * params->ith / params->nth;
+    const int64_t last = count * (params->ith + 1) / params->nth;
+    for (int64_t i = first; i < last; ++i) {
+        const int64_t c = i / stride % channels;
+        volatile float product = x[i] * scale[c];
+        out[i] = product + bias[c];
+    }
+}
+
+// Independent higher-precision scalar reference for the sparse stencil.
+void ggml_compute_forward_conv_2d_dw_sparse(const ggml_compute_params *params, ggml_tensor *dst) {
+    const auto *weights = static_cast<const float *>(dst->src[0]->data);
+    const auto *input = static_cast<const float *>(dst->src[1]->data);
+    const auto *offsets = static_cast<const int32_t *>(dst->src[2]->data);
+    const int64_t width = dst->ne[0], height = dst->ne[1], channels = dst->ne[2], taps = dst->src[0]->ne[0];
+    auto *output = static_cast<float *>(dst->data);
+    const int64_t count = ggml_nelements(dst);
+    for (int64_t i = count * params->ith / params->nth; i < count * (params->ith + 1) / params->nth; ++i) {
+        const int64_t x = i % width, y = i / width % height, plane = i / (width * height);
+        const int64_t channel = plane % channels;
+        double sum = 0;
+        for (int64_t k = 0; k < taps; ++k) {
+            const int64_t sx = x + offsets[2*k], sy = y + offsets[2*k+1];
+            if (sx >= 0 && sx < width && sy >= 0 && sy < height)
+                sum += double(input[(plane * height + sy) * width + sx]) * weights[channel * taps + k];
+        }
+        output[i] = static_cast<float>(sum);
+    }
+}
