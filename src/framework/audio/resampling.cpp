@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -165,10 +166,11 @@ void log_soxr_fallback(const SoxrResampleOptions & options, const std::string & 
     message += options.fallback_description;
     message += ": ";
     message += reason;
-    debug::log_message(
-        debug::LogLevel::Warning,
-        "audio.resample.soxr",
-        message);
+    if (debug::log_enabled()) {
+        debug::log_message(debug::LogLevel::Warning, "audio.resample.soxr", message);
+    } else {
+        std::fprintf(stderr, "[warning][audio.resample.soxr] %s\n", message.c_str());
+    }
 }
 
 struct TorchaudioSincHannResampleKey {
