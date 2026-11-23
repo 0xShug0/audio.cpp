@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/chat/session.h"
+
 // LFM2.5-Audio sessions. ASR: audio -> FastConformer -> adapter -> LFM2
 // backbone, prompted with the ASR system prompt from liquid-audio's README
 // and decoded greedily like LFM2AudioModel.generate_sequential
@@ -161,8 +163,7 @@ private:
 // audio of the next stream_frames_per_event frames and the text written since
 // the last event.
 class Lfm2AudioChatSession final : public runtime::RuntimeSessionBase,
-                                   public runtime::IOfflineVoiceTaskSession,
-                                   public runtime::IStreamingVoiceTaskSession {
+                                   public chat::TaskSession {
 public:
     Lfm2AudioChatSession(
         runtime::TaskSpec task,
@@ -175,17 +176,6 @@ public:
     runtime::VoiceTaskKind task_kind() const override;
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
-    runtime::TaskResult run(const runtime::TaskRequest & request) override;
-
-    runtime::StreamingPolicy streaming_policy() const override;
-    void start_stream(const runtime::TaskRequest & request) override;
-    std::optional<runtime::StreamEvent> next_stream_event() override;
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-    runtime::TaskResult finish_stream() override;
-    void reset() override;
-    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
-    runtime::TaskResult finalize() override;
-
     // Whether max_tokens cut the reply off, in the last run() or in the
     // stream since start_stream().
     [[nodiscard]] bool reached_max_tokens() const;
@@ -202,8 +192,8 @@ private:
         Lfm2InterleavedOptions reply;
         int64_t stream_frames_per_event = 0;
         bool return_codes = false;
-        std::vector<Lfm2ConversationTurn> history;
-        int64_t text_steps = 0;  // with history: prompt steps besides the questions' audio
+        bool retain_questions = false;
+        int64_t text_steps = 0;
     };
 
     // A question as the encoder took it, mono 16 kHz, and what it gave. Neither
@@ -214,10 +204,11 @@ private:
         std::shared_ptr<const Lfm2AudioEmbeddings> encoded;
     };
 
-    struct Stream;
 
+    std::unique_ptr<chat::Reply> bind_reply(std::shared_ptr<Lfm2InterleavedGenerator> generator, const RequestOptions & options);
     RequestOptions parse_request(const runtime::TaskRequest & request) const;
-    std::unique_ptr<Lfm2InterleavedGenerator> start_reply(const RequestOptions & options, const runtime::AudioBuffer & audio);
+    std::unique_ptr<Lfm2InterleavedGenerator> start_reply(const RequestOptions & options, const runtime::AudioBuffer & audio,
+        const std::vector<chat::ConversationTurn> & history);
     void keep_questions(std::vector<EncodedQuestion> questions);
     [[nodiscard]] Lfm2ReplyCheckpoint reply_checkpoint() const;
 
@@ -237,8 +228,6 @@ private:
     Lfm2DetokenizerRuntime detokenizer_;
     std::string language_;
     double max_pass_seconds_;
-    std::unique_ptr<Stream> stream_;
-    bool reached_max_tokens_ = false;
     // The questions of the last request with history or return_codes of each
     // of up to conversation_slots_ conversations, the most recent first.
     std::vector<std::vector<EncodedQuestion>> questions_;

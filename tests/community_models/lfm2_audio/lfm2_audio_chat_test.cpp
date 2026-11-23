@@ -857,24 +857,32 @@ Turns test_offline_turns(const Package & package) {
 void test_streamed_turns(const Package & package, const Turns & turns) {
     auto session = open(package, runtime::VoiceTaskKind::SpeechToSpeech, runtime::RunMode::Streaming);
     auto & s2s = streaming(*session);
-    const auto stream = [&](const runtime::TaskRequest & request, size_t max_events = std::numeric_limits<size_t>::max()) {
+    const auto stream = [&](const runtime::TaskRequest & request, size_t max_audio_events = std::numeric_limits<size_t>::max()) {
         send_question(s2s, request);
         Reply events;
-        for (size_t i = 0; i < max_events; ++i) {
+        size_t audio_events = 0;
+        bool text_before_audio = false;
+        while (audio_events < max_audio_events) {
             auto event = s2s.next_stream_event();
             if (!event.has_value()) {
                 break;
             }
 
             if (event->partial_text.has_value()) {
+                if (audio_events == 0 && !event->audio_output) text_before_audio = true;
                 events.text += event->partial_text->text;
             }
 
             if (event->audio_output.has_value()) {
+                ++audio_events;
                 events.audio.insert(events.audio.end(), event->audio_output->samples.begin(), event->audio_output->samples.end());
             }
         }
 
+        if (max_audio_events != std::numeric_limits<size_t>::max()) {
+            require_eq(audio_events, max_audio_events, "finish after the requested audio-event boundary");
+        }
+        if (max_audio_events != 0) require(text_before_audio, "text is independently published before the first audio frame");
         auto finished = reply_of(s2s.finish_stream());
         require(finished.text == events.text && finished.audio == events.audio, "a stream's result is its events");
         return finished;
@@ -907,8 +915,8 @@ void test_streamed_turns(const Package & package, const Turns & turns) {
     const auto third = stream(ask(turns.q3, "11", turns.after_second()));
     require(third.artifact().payload == turns.third.artifact().payload, "streamed turn 3 returns the offline reply artifact");
 
-    // The first event carries the text and the first frame, the second the
-    // next frame.
+    // Finish after the same two audio frames as before. Independently published
+    // text events do not advance this boundary; the prefix still has five steps.
     const auto early = stream(ask(turns.q2, "9", turns.after_first()), 2);
     const auto early_steps = steps_of(early);
     const auto all_steps = steps_of(turns.second);
@@ -931,6 +939,23 @@ void test_streamed_turns(const Package & package, const Turns & turns) {
     over.options["max_tokens"] = std::to_string(8192 - text_steps + 1);
     require_capacity_error([&] { s2s.start_stream(over); }, "needs at least " + std::to_string(text_steps) + " prompt steps",
         "a stream past the limit");
+}
+
+void test_native_chat(const Package & package, const Turns & turns) {
+    auto session = open(package);
+    auto & model = dynamic_cast<lfm2::Lfm2AudioChatSession &>(*session);
+    auto & chat = dynamic_cast<engine::chat::IConversationSession &>(*session).conversation();
+    const auto first = reply_of(chat.run(ask(turns.q1, "7", {}, false)));
+    require(first.artifacts.empty() && first.text == turns.plain.text && first.audio == turns.plain.audio,
+        "native first turn matches the legacy first turn without exporting artifacts");
+    const auto second = reply_of(chat.run(ask(turns.q2, "9", {}, false)));
+    require(second.text == turns.second.text && second.audio == turns.second.audio,
+        "framework-owned native history matches explicit artifact replay exactly");
+    require_eq(model.reused_questions(), int64_t{1}, "native history preserves the cached question encoder path");
+    require_eq(chat.history().size(), size_t{2}, "framework owns both exchanges");
+    chat.reset();
+    const auto again = reply_of(chat.run(ask(turns.q1, "7", {}, false)));
+    require(again.text == first.text && again.audio == first.audio, "native reset starts a clean conversation");
 }
 
 void test_rejects(const Package & package, const Turns & turns) {
@@ -1373,6 +1398,7 @@ int main() {
         const s2s::Package package;
         const auto turns = s2s::test_offline_turns(package);
         s2s::test_streamed_turns(package, turns);
+        s2s::test_native_chat(package, turns);
         s2s::test_rejects(package, turns);
         s2s::test_turns_reuse(package, runtime::RunMode::Offline);
         s2s::test_turns_reuse(package, runtime::RunMode::Streaming);

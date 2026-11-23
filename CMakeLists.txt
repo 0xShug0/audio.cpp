@@ -552,6 +552,9 @@ add_library(engine_core OBJECT
     src/framework/runtime/session.cpp
     src/framework/runtime/task_vocabulary.cpp
     src/framework/runtime/partial_text.cpp
+    src/framework/chat/history.cpp
+    src/framework/chat/reply.cpp
+    src/framework/chat/session.cpp
     src/framework/runtime/artifacts.cpp
     src/framework/runtime/cache.cpp
     src/framework/runtime/graph_executor.cpp
@@ -4645,6 +4648,9 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(audio_chunking_test tests/unittests/test_audio_chunking.cpp)
         add_test(NAME audio_chunking_test COMMAND audio_chunking_test)
 
+
+        add_engine_unittest(chat_session_test tests/unittests/test_chat_session.cpp)
+        add_test(NAME chat_session_test COMMAND chat_session_test --log)
 
         add_engine_unittest(partial_text_test tests/unittests/test_partial_text.cpp)
         add_test(NAME partial_text_test COMMAND partial_text_test)

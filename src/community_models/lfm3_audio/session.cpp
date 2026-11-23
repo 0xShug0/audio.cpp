@@ -9,6 +9,7 @@
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/weights.h"
 #include "engine/framework/audio/chunking.h"
+#include "engine/framework/chat/reply.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/filesystem.h"
@@ -744,7 +745,6 @@ void Lfm3TtsSession::start_stream(const runtime::TaskRequest & request) {
     reset();
     auto stream = std::make_unique<Impl::Stream>();
     stream->options = m.parse(request);
-    stream->audio = runtime::AudioBuffer{m.model.sample_rate(), 1, {}};
     m.stream = std::move(stream);
 }
 
@@ -828,24 +828,11 @@ struct Lfm3ChatSession::Impl {
         Lfm3GenerationOptions generation;
         int64_t stream_frames_per_event = 0;
         bool return_codes = false;
-        std::vector<Lfm3ConversationTurn> history;
-    };
-
-    struct Stream {
-        RequestOptions options;
-        runtime::AudioBuffer input;
-        std::unique_ptr<Lfm3Generator> generator;
-        bool done = false;
-        size_t frames = 0;
-        lfm2_audio::Lfm2StreamedText text;
-        runtime::AudioBuffer audio;  // everything emitted
     };
 
     runtime::TaskSpec task;
     std::shared_ptr<const engine::model_spec::ModelContract> contract;
     Model model;
-    std::unique_ptr<Stream> stream;
-    bool reached_max_tokens = false;
 
     RequestOptions parse(const runtime::TaskRequest & request) const {
         reject_options(request,
@@ -880,24 +867,15 @@ struct Lfm3ChatSession::Impl {
         out.stream_frames_per_event = runtime::parse_positive_i64_option(request.options, {"stream_frames_per_event"}, kDefaultStreamFramesPerEvent);
         out.return_codes = parse_request_bool(request, "return_codes");
 
-        // Read here, so that a stream turns away bad history before its audio comes.
-        out.history = read_lfm3_conversation(request.input_artifacts, model.reply_checkpoint(), generation.max_steps);
-        for (size_t turn = 0; turn < out.history.size(); ++turn) {
-            const auto & question = out.history[turn].question;
-            require_one_pass(frame_count(question), question.sample_rate, model.max_pass_seconds,
-                             "the question of earlier turn " + std::to_string(turn + 1) + " is", "leave that turn out, or raise the limit");
-        }
-
         return out;
     }
 
     // shortcut: no encoder or prefix cache across turns; add one when multi-turn latency matters.
-    std::unique_ptr<Lfm3Generator> start_reply(const RequestOptions & options, const runtime::AudioBuffer & audio) {
-        require_one_pass(frame_count(audio), audio.sample_rate, model.max_pass_seconds, "the question is", "send a shorter one, or raise the limit");
+    std::unique_ptr<Lfm3Generator> start_reply(const RequestOptions & options, const runtime::AudioBuffer & audio, const std::vector<chat::ConversationTurn> & history) {
         // The prompt is built from the questions' lengths, so that one past the room is turned away before any encoding.
         std::vector<int64_t> question_tokens;
         std::vector<std::vector<Lfm3Step>> replies;
-        for (const auto & turn : options.history) {
+        for (const auto & turn : history) {
             question_tokens.push_back(lfm3_question_tokens(turn.question));
             replies.push_back(turn.reply);
         }
@@ -921,7 +899,7 @@ struct Lfm3ChatSession::Impl {
             return samples;
         };
 
-        for (const auto & turn : options.history) {
+        for (const auto & turn : history) {
             add(turn.question);
         }
 
@@ -930,19 +908,49 @@ struct Lfm3ChatSession::Impl {
         return model.generate(std::move(prompt), embeddings, options.generation);
     }
 
-    runtime::Transcript transcript(std::string text) const {
-        return runtime::Transcript{std::move(text), ""};
+    std::unique_ptr<chat::Reply> bind_reply(std::shared_ptr<Lfm3Generator> generator, const RequestOptions & options) {
+        auto source = std::move(generator);
+        chat::ReplySource inference{
+            [source] { return source->next(); },
+            [source] { return source->ended(); },
+            [this](const std::vector<int32_t> & tokens) { return model.tokenizer.decode(tokens); }, {}};
+        inference.history = [source]() -> const std::vector<chat::ReplyStep> & { return source->steps(); };
+        auto * codec = model.codec.get();
+        chat::ReplyCodec audio{model.sample_rate(), 1,
+            [codec](const chat::AudioCodes & frames) { return codec->decode(frames); },
+            [codec] { codec->start_stream(); },
+            [codec](const chat::AudioCodes & frames) { return codec->push(frames); },
+            [codec] { return codec->finish(); }};
+        return std::make_unique<chat::Reply>(std::move(inference), std::move(audio),
+            chat::ReplyConfig{model.end_of_audio(), static_cast<size_t>(options.stream_frames_per_event), "", options.generation.max_steps});
     }
+
+
 };
 
 Lfm3ChatSession::Lfm3ChatSession(runtime::TaskSpec task, runtime::SessionOptions options, std::shared_ptr<const Lfm3AudioAssets> assets,
                                  std::shared_ptr<const engine::model_spec::ModelContract> contract)
     : RuntimeSessionBase(validate_session_setup(task, std::move(options), require_contract(contract), runtime::VoiceTaskKind::SpeechToSpeech)) {
     impl_.reset(new Impl{task, std::move(contract),
-                         Model(require_assets(std::move(assets)), RuntimeSessionBase::options(), execution_context(), true, true), nullptr, false});
+                         Model(require_assets(std::move(assets)), RuntimeSessionBase::options(), execution_context(), true, true)});
+    bind_chat("LFM3-Audio", [this](const runtime::TaskRequest & request, chat::HistoryMode) {
+        require_prepared("LFM3-Audio chat");
+        auto & m = *impl_;
+        auto options = m.parse(request);
+        chat::UserTurn turn;
+        turn.max_audio_seconds = m.model.max_pass_seconds;
+        turn.output_sample_rate = m.model.sample_rate();
+        turn.history_format = lfm3_history_format(m.model.reply_checkpoint());
+        turn.max_reply_steps = options.generation.max_steps;
+        turn.return_codes = options.return_codes;
+        turn.reply = [this, options = std::move(options)](const runtime::AudioBuffer & input, const std::vector<chat::ConversationTurn> & history) {
+            return impl_->bind_reply(impl_->start_reply(options, input, history), options);
+        };
+        return turn;
+    });
 }
 
-Lfm3ChatSession::~Lfm3ChatSession() = default;
+Lfm3ChatSession::~Lfm3ChatSession() { chat::TaskSession::reset(); }
 
 std::string Lfm3ChatSession::family() const {
     return kFamily;
@@ -960,170 +968,8 @@ void Lfm3ChatSession::prepare(const runtime::SessionPreparationRequest &) {
     mark_prepared();
 }
 
-runtime::TaskResult Lfm3ChatSession::run(const runtime::TaskRequest & request) {
-    require_prepared("LFM3-Audio run()");
-    auto & m = *impl_;
-    m.reached_max_tokens = false;
-    if (!request.audio_input.has_value()) {
-        throw runtime::InvalidRequestError("LFM3-Audio s2s requires audio_input");
-    }
-
-    const auto wall_start = std::chrono::steady_clock::now();
-    const auto options = m.parse(request);
-    const auto generator = m.start_reply(options, *request.audio_input);
-    const auto reply = pull_steps(*generator, m.model.end_of_audio());
-    m.reached_max_tokens = check_speech_end(*generator, reply.frames.size(), options.generation.max_steps, "the reply");
-    debug::trace_log_scalar("lfm3_audio.session.text_tokens", static_cast<int64_t>(reply.tokens.size()));
-    debug::trace_log_scalar("lfm3_audio.session.audio_frames", static_cast<int64_t>(reply.frames.size()));
-
-    auto bytes = m.model.tokenizer.decode(reply.tokens);
-    runtime::TaskResult result;
-    result.audio_output = runtime::AudioBuffer{m.model.sample_rate(), 1, m.model.codec->decode(reply.frames)};
-    result.text_output = m.transcript(lfm2_audio::lfm2_take_text(bytes));
-    if (options.return_codes) {
-        result.output_artifacts.push_back(make_lfm3_reply_artifact(generator->steps(), generator->ended(), m.model.reply_checkpoint()));
-    }
-
-    debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
-    return result;
-}
-
-runtime::StreamingPolicy Lfm3ChatSession::streaming_policy() const {
-    runtime::StreamingPolicy policy;
-    policy.input = runtime::StreamingInputKind::AudioChunks;
-    policy.output = runtime::StreamingOutputKind::PullEvents;
-    // The user's turn is only collected, so the chunk size does not matter.
-    policy.preferred_audio_chunk_seconds = 0.1;
-    return policy;
-}
-
-void Lfm3ChatSession::start_stream(const runtime::TaskRequest & request) {
-    require_prepared("LFM3-Audio start_stream()");
-    auto & m = *impl_;
-    m.reached_max_tokens = false;
-    if (m.task.mode != runtime::RunMode::Streaming) {
-        throw std::runtime_error("LFM3-Audio start_stream() needs a streaming session");
-    }
-
-    reset();
-    auto stream = std::make_unique<Impl::Stream>();
-    stream->options = m.parse(request);
-    stream->audio = runtime::AudioBuffer{m.model.sample_rate(), 1, {}};
-    m.stream = std::move(stream);
-}
-
-runtime::StreamEvent Lfm3ChatSession::process_audio_chunk(const runtime::AudioChunk & chunk) {
-    auto & m = *impl_;
-    if (m.stream == nullptr) {
-        throw std::runtime_error("LFM3-Audio streaming has not been started");
-    }
-
-    auto & st = *m.stream;
-    if (st.generator != nullptr || st.done) {
-        throw std::runtime_error("LFM3-Audio s2s takes no more audio once the reply has started");
-    }
-
-    if (chunk.sample_rate <= 0 || chunk.channels <= 0 || chunk.samples.size() % static_cast<size_t>(chunk.channels) != 0) {
-        throw std::runtime_error("LFM3-Audio audio chunks need a positive sample rate and channel count and whole frames");
-    }
-
-    if (st.input.samples.empty() && st.input.sample_rate == 0) {
-        st.input.sample_rate = chunk.sample_rate;
-        st.input.channels = chunk.channels;
-    } else if (chunk.sample_rate != st.input.sample_rate || chunk.channels != st.input.channels) {
-        throw std::runtime_error("LFM3-Audio audio chunk format changed during the stream");
-    }
-
-    st.input.samples.insert(st.input.samples.end(), chunk.samples.begin(), chunk.samples.end());
-    require_one_pass(frame_count(st.input), st.input.sample_rate, m.model.max_pass_seconds, "the question so far is",
-                     "send a shorter one, or raise the limit");
-    return {};
-}
-
-// The reply starts once the driver pulls, after the user's audio has all come. Each event's samples are final
-// (see the TTS stream) and its text is what the reply wrote since the last event, in whole characters.
-std::optional<runtime::StreamEvent> Lfm3ChatSession::next_stream_event() {
-    auto & m = *impl_;
-    if (m.stream == nullptr) {
-        throw std::runtime_error("LFM3-Audio streaming has not been started");
-    }
-
-    auto & st = *m.stream;
-    if (st.done) {
-        return std::nullopt;
-    }
-
-    auto & codec = *m.model.codec;
-    if (st.generator == nullptr) {
-        if (st.input.samples.empty()) {
-            throw runtime::InvalidRequestError("LFM3-Audio s2s streaming received no audio");
-        }
-
-        st.generator = m.start_reply(st.options, st.input);
-        codec.start_stream();
-    }
-
-    // Text is independently consumable; do not wait for the next speech frame.
-    const auto pulled = pull_steps(*st.generator, m.model.end_of_audio(), static_cast<size_t>(st.options.stream_frames_per_event), true);
-    st.frames += pulled.frames.size();
-    auto samples = codec.push(pulled.frames);
-    if (pulled.done) {
-        m.reached_max_tokens = check_speech_end(*st.generator, st.frames, st.options.generation.max_steps, "the reply");
-        const auto rest = codec.finish();
-        samples.insert(samples.end(), rest.begin(), rest.end());
-        st.done = true;
-    }
-
-    runtime::StreamEvent event;
-    if (auto delta = st.text.add(m.model.tokenizer.decode(pulled.tokens)); !delta.empty()) {
-        event.partial_text = m.transcript(std::move(delta));
-    }
-
-    if (!samples.empty()) {
-        runtime::AudioBuffer chunk{m.model.sample_rate(), 1, std::move(samples)};
-        runtime::append_audio_buffer(st.audio, chunk);
-        event.audio_output = std::move(chunk);
-    }
-
-    return event;
-}
-
-void Lfm3ChatSession::set_stream_event_sink(runtime::StreamEventCallback) {
-    // As for TTS: the driver forwards what next_stream_event returns.
-}
-
-runtime::TaskResult Lfm3ChatSession::finish_stream() {
-    auto & m = *impl_;
-    if (m.stream == nullptr) {
-        throw std::runtime_error("LFM3-Audio streaming has not been started");
-    }
-
-    // A stream finished before its reply is over keeps the text and audio of its events, and its reply artifact
-    // holds the steps so far, as not ended.
-    auto & st = *m.stream;
-    runtime::TaskResult result;
-    result.audio_output = std::move(st.audio);
-    result.text_output = m.transcript(st.text.text());
-    if (st.options.return_codes) {
-        const bool ended = st.generator != nullptr && st.generator->ended();
-        const auto steps = st.generator != nullptr ? st.generator->steps() : std::vector<Lfm3Step>{};
-        result.output_artifacts.push_back(make_lfm3_reply_artifact(steps, ended, m.model.reply_checkpoint()));
-    }
-
-    reset();
-    return result;
-}
-
-void Lfm3ChatSession::reset() {
-    impl_->stream.reset();
-}
-
-runtime::TaskResult Lfm3ChatSession::finalize() {
-    return {};
-}
-
 bool Lfm3ChatSession::reached_max_tokens() const {
-    return impl_->reached_max_tokens;
+    return reply_limited();
 }
 
 namespace {

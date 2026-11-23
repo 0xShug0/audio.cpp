@@ -46,6 +46,10 @@ private:
     std::string published_;
 };
 
+// Consume complete UTF-8 characters, replacing malformed maximal subparts with
+// U+FFFD. An incomplete trailing character remains in bytes for the next update.
+std::string consume_utf8_prefix(std::string & bytes);
+
 // Longest common prefix of two transcripts, backed off so the result never
 // lands inside a UTF-8 sequence. Exposed for tests and for callers that need
 // the offset rather than the text.

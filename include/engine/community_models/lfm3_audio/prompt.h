@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/chat/history.h"
+
 #include "engine/framework/tokenizers/llama_bpe.h"
 #include <cstdint>
 #include <filesystem>
@@ -62,10 +64,7 @@ void require_lfm3_no_audio_placeholders(const std::vector<int32_t> & ids, const 
 enum class Lfm3Mode { Text, Audio, Interleaved };
 Lfm3Mode lfm3_initial_mode(const Lfm3Prompt & prompt, const Lfm3TokenIds & ids, int32_t end_of_audio);
 
-struct Lfm3Step {  // codes non-empty <=> frame (EOS frame = all 2016)
-    int32_t token = -1;
-    std::vector<int32_t> codes;
-};
+using Lfm3Step = chat::ReplyStep;
 
 inline constexpr const char * kLfm3QuestionArtifactId = "lfm3_audio.question";
 inline constexpr const char * kLfm3ReplyArtifactId = "lfm3_audio.reply";
@@ -76,16 +75,15 @@ struct Lfm3ReplyCheckpoint {
     int64_t codebooks = 12, audio_vocab_size = 2017, text_vocab_size = 128000;
 };
 
+chat::HistoryFormat lfm3_history_format(const Lfm3ReplyCheckpoint & checkpoint);
+
 // Payload: little-endian int32 per step. A text step is its token id (>= 0); a frame is -1 followed by
 // `codebooks` codes, each in [0, audio_vocab_size). Meta keys: format, codebooks, audio_vocab_size,
 // text_vocab_size, steps, ended.
 runtime::VoiceArtifact make_lfm3_reply_artifact(const std::vector<Lfm3Step> & reply, bool ended, const Lfm3ReplyCheckpoint &);
 std::vector<Lfm3Step> read_lfm3_reply_artifact(const runtime::VoiceArtifact &, const Lfm3ReplyCheckpoint &);
 
-struct Lfm3ConversationTurn {
-    runtime::AudioBuffer question;
-    std::vector<Lfm3Step> reply;
-};
+using Lfm3ConversationTurn = chat::ConversationTurn;
 
 // The <|audio|> slots the encoder gives a question, counted from its length before any resampling; 0 for no audio.
 int64_t lfm3_question_tokens(const runtime::AudioBuffer & question);
