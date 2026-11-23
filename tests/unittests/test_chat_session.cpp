@@ -207,6 +207,84 @@ void test_native_history_needs_no_wire_format() {
     require(history_sizes == std::vector<size_t>({0, 1}), "native replay independent of transport serialization");
 }
 
+void test_imported_history_continuation() {
+    // Independent PCM16 WAV: two samples, +0.25 and -0.25, at 8 Hz.
+    const char wav[] = "RIFF\x28\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0"
+                       "\x08\0\0\0\x10\0\0\0\x02\0\x10\0data\x04\0\0\0\0\x20\0\xe0";
+    const auto * bytes = reinterpret_cast<const std::byte *>(wav);
+    const auto question = runtime::make_voice_artifact(runtime::ArtifactKind::Custom, "test.question",
+        std::vector<std::byte>(bytes, bytes + sizeof(wav) - 1));
+    runtime::TaskRequest imported;
+    imported.audio_input = runtime::AudioBuffer{8, 1, {0.5f, 0.75f}};
+    imported.input_artifacts = {question, chat::encode_reply(format(), {{42, {}}}, false)};
+    runtime::TaskRequest next;
+    next.audio_input = runtime::AudioBuffer{8, 1, {-0.5f, -0.75f}};
+
+    for (int completion = 0; completion < 3; ++completion) {
+        imported.input_artifacts[1] = chat::encode_reply(format(), {{42, {}}}, completion != 2);
+        std::vector<std::vector<chat::ConversationTurn>> observed;
+        chat::Session session("Imported", [&](const runtime::TaskRequest &, chat::HistoryMode) {
+            chat::UserTurn turn;
+            turn.output_sample_rate = 8;
+            turn.history_format = format();
+            turn.reply = [&](const runtime::AudioBuffer &, const std::vector<chat::ConversationTurn> & history) {
+                observed.push_back(history);
+                return make_reply(std::make_shared<Counts>());
+            };
+            return turn;
+        });
+        if (completion == 0) {
+            session.run(imported);
+        } else {
+            session.begin(imported);
+            session.push_audio({8, 1, 0, imported.audio_input->samples});
+            session.end_turn();
+            if (completion == 1) {
+                while (session.poll()) {}
+                session.finish();
+            } else {
+                session.poll();
+                session.interrupt();
+            }
+        }
+        session.run(next);
+        require_eq(observed[0].size(), size_t{1}, "B receives imported A");
+        require_eq(observed[1].size(), size_t{2}, "C receives imported A and retained B");
+        require(observed[1][0].question.samples == std::vector<float>({0.25f, -0.25f}), "imported question retained exactly");
+        require_eq(observed[1][0].reply.at(0).token, int32_t{42}, "imported reply retained exactly");
+        require(observed[1][1].question.samples == imported.audio_input->samples, "new exchange follows imported prefix");
+        require_eq(observed[1][1].reply.size(), completion == 2 ? size_t{1} : size_t{6}, "only generated B steps retained");
+        require_eq(session.history().size(), size_t{3}, "native history exposes A, B and C once each");
+        require_eq(session.history()[0].complete, completion != 2, "imported completion status preserved");
+
+        // A later import must preserve already-retained native exchanges too.
+        imported.input_artifacts[1] = chat::encode_reply(format(), {{43, {}}}, false);
+        session.run(imported);
+        session.run(next);
+        require_eq(observed.back().size(), size_t{5}, "later import retains prefix and existing conversation");
+        require_eq(observed.back()[0].reply.at(0).token, int32_t{43}, "new imported prefix stays first");
+        require_eq(observed.back()[1].reply.at(0).token, int32_t{42}, "earlier imported prefix survives another import");
+
+        session.reset();
+        session.begin(imported);
+        session.push_audio({8, 1, 0, imported.audio_input->samples});
+        session.end_turn();
+        session.poll();
+        session.cancel();
+        require(session.history().empty(), "cancellation does not commit imported prefix");
+        session.run(next);
+        require(observed.back().empty(), "cancelled import does not leak into continuation");
+
+        const auto retained = session.history().size();
+        session.run(imported, chat::HistoryMode::Request);
+        require_eq(observed.back().size(), size_t{1}, "legacy request uses only explicit artifacts");
+        session.run(next, chat::HistoryMode::Request);
+        require(observed.back().empty(), "legacy request does not retain imported artifacts");
+        require_eq(session.history().size(), retained, "legacy requests leave native history untouched");
+        imported.input_artifacts[1] = chat::encode_reply(format(), {{42, {}}}, false);
+    }
+}
+
 void test_text_stage_is_shared_and_released_before_speech() {
     struct Lease {
         bool & alive;
@@ -383,6 +461,7 @@ int main(int argc, char ** argv) {
         test_no_speech_fails_explicitly();
         test_conversation_lifecycle_and_endpoint();
         test_native_history_needs_no_wire_format();
+        test_imported_history_continuation();
         test_text_stage_is_shared_and_released_before_speech();
         test_task_adapter_preserves_native_history();
         test_duplex_clock_and_bounded_reuse();

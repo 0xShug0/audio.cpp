@@ -220,6 +220,7 @@ struct Session::Impl {
         std::unique_ptr<Reply> reply;
         std::unique_ptr<Duplex> duplex;
         std::vector<ConversationTurn> history;
+        size_t imported_turns = 0;
         std::unique_ptr<std::deque<runtime::StreamEvent>> ready;
         size_t published_samples = 0;
         int64_t received_frames = 0;
@@ -229,6 +230,31 @@ struct Session::Impl {
     Active & require_active() {
         if (!active) throw std::logic_error(model_name + " chat has not been started");
         return *active;
+    }
+
+    void commit_exchange(Exchange exchange) {
+        auto & a = require_active();
+        if (a.imported_turns == 0) {
+            history.push_back(std::move(exchange));
+            return;
+        }
+        // The decoded prefix precedes existing native history. Commit it only
+        // with the new exchange, so cancellation/failure cannot import history.
+        std::vector<Exchange> retained;
+        retained.reserve(a.imported_turns + history.size() + 1);
+        for (size_t index = 0; index < a.imported_turns; ++index) {
+            // decode_conversation validated ordered question/reply pairs.
+            const auto & artifact = exchange.user.input_artifacts[2 * index + 1];
+            Exchange imported;
+            imported.user.audio_input = a.history[index].question;
+            imported.assistant.output_artifacts.push_back(artifact);
+            imported.complete = artifact.meta.at("ended") == "true";
+            imported.steps = a.history[index].reply;
+            retained.push_back(std::move(imported));
+        }
+        for (auto & previous : history) retained.push_back(std::move(previous));
+        retained.push_back(std::move(exchange));
+        history = std::move(retained);
     }
 
     void start_reply(const runtime::AudioBuffer & input) {
@@ -269,6 +295,7 @@ void Session::begin_user(const runtime::TaskRequest & request, bool streaming, H
     }
     if (next->turn.history_format) {
         next->history = decode_conversation(*next->turn.history_format, request.input_artifacts, next->turn.max_reply_steps);
+        next->imported_turns = next->history.size();
     }
     if (next->retain_history) {
         for (const auto & exchange : impl_->history) {
@@ -377,7 +404,7 @@ runtime::TaskResult Session::finish() {
     }
     if (a.retain_history && !a.input.samples.empty()) {
         a.user.audio_input = std::move(a.input);
-        impl_->history.push_back({std::move(a.user), result, a.duplex || (a.reply && a.reply->done()), a.reply ? a.reply->steps() : std::vector<ReplyStep>{}});
+        impl_->commit_exchange({std::move(a.user), result, a.duplex || (a.reply && a.reply->done()), a.reply ? a.reply->steps() : std::vector<ReplyStep>{}});
     }
     impl_->active.reset();
     return result;
@@ -394,7 +421,7 @@ runtime::TaskResult Session::run(const runtime::TaskRequest & request, HistoryMo
         const auto & input = *request.audio_input;
         if (impl_->active->duplex) {
             auto result = impl_->active->duplex->run(input);
-            if (impl_->active->retain_history) impl_->history.push_back({request, result, true, {}});
+            if (impl_->active->retain_history) impl_->commit_exchange({request, result, true, {}});
             impl_->active.reset();
             return result;
         }
@@ -417,7 +444,7 @@ void Session::interrupt() {
         auto prefix = a.duplex->interrupt();
         if (prefix.audio_output) prefix.audio_output->samples.resize(a.published_samples);
         a.user.audio_input = std::move(a.input);
-        impl_->history.push_back({std::move(a.user), std::move(prefix), false, {}});
+        impl_->commit_exchange({std::move(a.user), std::move(prefix), false, {}});
         impl_->active.reset();
     } else if (impl_->active && impl_->active->retain_history && impl_->active->reply) {
         (void)finish();
