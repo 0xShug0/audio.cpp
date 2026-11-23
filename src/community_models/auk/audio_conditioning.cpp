@@ -167,18 +167,16 @@ audio::WhisperLogMelFeatures extract_audio_features(
     options.require_full_input = true;
     options.reject_empty_output = true;
     options.warning_context = "auk";
-    options.fallback_description = "AuK requires Soxr HQ; resampling will fail";
-    auto resampled = audio::try_resample_mono_soxr(mono, sample_rate, 16000, options);
-    if (!resampled) throw std::runtime_error("AuK audio conditioning requires Soxr HQ resampling");
+    auto resampled = audio::resample_mono_soxr_or_sinc(mono, sample_rate, 16000, options);
     constexpr size_t maximum_samples = 4800000;
-    if (resampled->size() > maximum_samples) resampled->resize(maximum_samples);
-    const int64_t valid_frames = (resampled->size() + 159) / 160;
+    if (resampled.size() > maximum_samples) resampled.resize(maximum_samples);
+    const int64_t valid_frames = (resampled.size() + 159) / 160;
     // Python pads to 300 seconds. Past the finite 400-sample STFT support,
     // padding is silent and cannot increase the global log-mel maximum.
-    resampled->resize(std::min(maximum_samples, resampled->size() + 400), 0.0F);
+    resampled.resize(std::min(maximum_samples, resampled.size() + 400), 0.0F);
     // The existing Kokoro policy selects periodic Hann, matching torch.hann_window.
     static const audio::WhisperLogMelExtractor extractor({16000, 400, 160, 128, audio::STFTFamily::Kokoro});
-    auto padded = extractor.compute(*resampled, threads);
+    auto padded = extractor.compute(resampled, threads);
     audio::WhisperLogMelFeatures output;
     output.frames = valid_frames;
     output.mel_bins = 128;

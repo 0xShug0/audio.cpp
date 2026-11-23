@@ -1,5 +1,8 @@
 # IndexTTS
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 IndexTTS is wired as `--family index_tts2` for offline text to speech and voice
 cloning. The same model family handles IndexTTS2 and IndexTTS2.5; the runtime
 selects the variant from the model config.

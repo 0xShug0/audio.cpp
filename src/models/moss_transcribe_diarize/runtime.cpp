@@ -191,11 +191,7 @@ public:
             audio::SoxrResampleOptions options;
             options.output_length_policy = audio::SoxrOutputLengthPolicy::ExactExpected;
             options.require_full_input = true;
-            auto resampled = audio::try_resample_mono_soxr(samples, audio.sample_rate, 16000, options);
-            if (!resampled) {
-                throw std::runtime_error("MOSS-Transcribe-Diarize requires SOXR for non-16-kHz audio");
-            }
-            samples = std::move(*resampled);
+            samples = audio::resample_mono_soxr_or_sinc(samples, audio.sample_rate, 16000, options);
         }
         if (samples.empty() || max_tokens <= 0) {
             throw std::runtime_error("MOSS-Transcribe-Diarize requires nonempty audio and positive max_tokens");

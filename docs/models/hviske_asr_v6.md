@@ -1,5 +1,8 @@
 # Hviske v6
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 `hviske_asr_v6` is a separate family from the Conformer-based `hviske_asr`.
 It uses a Whisper encoder with partial rotary positions, four-frame stacking,
 an RMSNorm/linear projector, and a Qwen3 causal decoder.

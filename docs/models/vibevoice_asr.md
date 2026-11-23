@@ -1,5 +1,8 @@
 # VibeVoice ASR Models
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 audio.cpp supports two VibeVoice ASR families:
 
 | Model | Family | Mode(s) | Recommended package |

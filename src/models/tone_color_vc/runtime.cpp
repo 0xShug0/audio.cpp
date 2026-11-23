@@ -243,9 +243,7 @@ private:
 std::vector<float> spectrum(const runtime::AudioBuffer & audio, size_t threads) {
     auto mono = audio::mixdown_interleaved_to_mono_average(audio.samples, audio.channels);
     if (audio.sample_rate != kSampleRate) {
-        auto resampled = audio::try_resample_mono_soxr(mono, audio.sample_rate, kSampleRate, {});
-        if (!resampled) throw std::runtime_error("Tone Color VC resampling requires libsoxr or 22050 Hz input");
-        mono = std::move(*resampled);
+        mono = audio::resample_mono_soxr_or_sinc(mono, audio.sample_rate, kSampleRate, {});
     }
     if (mono.size() <= 384) throw std::runtime_error("Tone color converter requires more than 384 samples at 22050 Hz");
     std::vector<float> padded(mono.size() + 768);

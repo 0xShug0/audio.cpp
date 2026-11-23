@@ -1,5 +1,8 @@
 # VoxCPM1
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 VoxCPM1 is a **tokenizer-free TTS model** from [OpenBMB](https://github.com/OpenBMB/VoxCPM) that generates 16 kHz mono speech. The audio.cpp package uses a native GGUF layout with audio.cpp tensor names, embedded config/tokenizer sidecars, folded AudioVAE weights, and materialized SR-conditioning tensors.
 
 ## Model Package

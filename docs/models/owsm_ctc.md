@@ -1,5 +1,8 @@
 # OWSM-CTC
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 OWSM-CTC is ESPnet's non-autoregressive multilingual speech recognition and
 speech translation family. The v4 checkpoint is
 [espnet/owsm_ctc_v4_1B](https://huggingface.co/espnet/owsm_ctc_v4_1B).

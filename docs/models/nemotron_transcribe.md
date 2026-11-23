@@ -1,5 +1,8 @@
 # NVIDIA Nemotron 3.5 Transcribe
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 `nemotron_transcribe` is an experimental community port of
 [NVIDIA Nemotron 3.5 Transcribe 30B-A4B](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B).
 It accepts complete recordings through the `asr` task. Instructions select

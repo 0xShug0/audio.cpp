@@ -1,5 +1,8 @@
 # SAMSONE
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 SAMSONE is a compact English audio-language model for captioning, question answering, and sound, music, and speech understanding. The native port supports the upstream 99M, 134M, and 356M variants with audio clips up to 30 seconds.
 
 BF16 and Q8_0 packages are available for each variant.

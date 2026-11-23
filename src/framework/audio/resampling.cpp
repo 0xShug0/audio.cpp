@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -165,10 +166,11 @@ void log_soxr_fallback(const SoxrResampleOptions & options, const std::string & 
     message += options.fallback_description;
     message += ": ";
     message += reason;
-    debug::log_message(
-        debug::LogLevel::Warning,
-        "audio.resample.soxr",
-        message);
+    if (debug::log_enabled()) {
+        debug::log_message(debug::LogLevel::Warning, "audio.resample.soxr", message);
+    } else {
+        std::fprintf(stderr, "[warning][audio.resample.soxr] %s\n", message.c_str());
+    }
 }
 
 struct TorchaudioSincHannResampleKey {
@@ -506,6 +508,20 @@ std::vector<float> resample_mono_soxr_or_linear(
         return *output;
     }
     return resample_mono_linear(mono_samples, source_sample_rate_hz, target_sample_rate_hz);
+}
+
+std::vector<float> resample_mono_soxr_or_sinc(
+    const std::vector<float> & mono_samples,
+    int source_sample_rate_hz,
+    int target_sample_rate_hz,
+    const SoxrResampleOptions & options) {
+    auto soxr_options = options;
+    soxr_options.fallback_description = "torchaudio-compatible sinc resampling";
+    if (auto output = try_resample_mono_soxr(
+            mono_samples, source_sample_rate_hz, target_sample_rate_hz, soxr_options)) {
+        return std::move(*output);
+    }
+    return resample_mono_torchaudio_sinc_hann(mono_samples, source_sample_rate_hz, target_sample_rate_hz);
 }
 
 std::vector<float> resample_mono_linear(

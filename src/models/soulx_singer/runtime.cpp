@@ -182,13 +182,12 @@ class SoulXSingerRuntime::Impl {
 
     std::vector<float> pitch_contour(const runtime::AudioBuffer &input) {
         const auto mono = audio::mixdown_interleaved_to_mono_average(input.samples, input.channels);
-        const auto waveform = audio::try_resample_mono_soxr(
-            mono, input.sample_rate, 16000,
-            {audio::SoxrResampleProfile::QualityOnly, audio::SoxrOutputLengthPolicy::ExactExpected});
-        if (!waveform)
-            throw std::runtime_error("SoulX-Singer-SVC F0 preprocessing requires libsoxr");
+        audio::SoxrResampleOptions options;
+        options.output_length_policy = audio::SoxrOutputLengthPolicy::ExactExpected;
+        options.warning_context = "soulx_singer.svc";
+        const auto waveform = audio::resample_mono_soxr_or_sinc(mono, input.sample_rate, 16000, options);
         const auto raw =
-            components.pitch->infer_16k_mono(*waveform, 0.03f, static_cast<size_t>(execution.config().threads));
+            components.pitch->infer_16k_mono(waveform, 0.03f, static_cast<size_t>(execution.config().threads));
         const auto frames =
             static_cast<size_t>(std::ceil(static_cast<double>(mono.size()) / input.sample_rate * 50));
         std::vector<float> out(frames, 0);

@@ -1,5 +1,8 @@
 # Voice Isolator
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 `voice_isolator` ports Inworld's Voice Isolator v1, a 48 kHz speech isolation model: it keeps the foreground voice and removes background sound. The release has two checkpoints that share one network. The offline checkpoint is two-sided and renders a recording in overlapping windows; the realtime checkpoint is causal and streams with a trained look-ahead.
 
 Upstream: [inworld/voice-isolator, pinned revision](https://huggingface.co/inworld/voice-isolator/tree/9b0285b3fe8403aa8e2f1dbb2165a80a4294c970). The weights are Apache-2.0; see [model licenses](../model_licenses.md).

@@ -1,5 +1,8 @@
 # MuLaCover
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 MuLaCover generates cover songs from reference audio or melody/chord MIDI,
 with new lyrics and musical style. It uses a Llama-derived causal backbone with gated
 symbolic cross attention, a Qwen3 style encoder and HeartCodec.
@@ -69,7 +72,8 @@ For reference-audio conditioning, replace the MIDI options with
 Reference audio and MIDI inputs are mutually exclusive.
 
 Upstream selects the transcribed lead-singing track as melody; audio without
-a detected melody is rejected. Reference-audio preprocessing requires SOXR.
+a detected melody is rejected. Reference-audio preprocessing prefers SOXR and
+uses the built-in sinc resampler with a warning when it is unavailable.
 MIDI inputs use musical ticks, so changing MIDI tempo metadata does not impose
 a target generation tempo.
 

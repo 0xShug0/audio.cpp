@@ -1,5 +1,8 @@
 # Tone Color VC
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 Tone Color VC is the standalone tone color converter from OpenVoice V2.
 It converts source speech to the speaker in a reference recording.
 The standalone converter includes its reference encoder, flow model, and waveform
@@ -15,7 +18,7 @@ audiocpp_cli --task vc --family tone_color_vc \
 ```
 
 The output is mono, 22,050 Hz audio. Inputs are mixed down to mono. Other sample
-rates require libsoxr; otherwise resample the input WAVs to 22,050 Hz first.
+rates prefer SOXR, with a warning and the built-in sinc fallback when it is unavailable.
 Conversion is offline. No separate watermark model is applied.
 
 F32 and F16 packages are available. F16 keeps biases and normalization vectors

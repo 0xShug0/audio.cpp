@@ -144,11 +144,7 @@ private:
         audio_ = audio::convert_interleaved_audio_to_mono_linear_resampled(
             audio.samples, audio.sample_rate, audio.channels, audio.sample_rate);
         if (sample_rate_ != 16000) {
-            const auto resampled = audio::try_resample_mono_soxr(audio_, sample_rate_, 16000, {});
-            if (!resampled) {
-                throw std::runtime_error("CrisperWhisper requires SOXR for resampling; provide 16 kHz audio");
-            }
-            audio_ = *resampled;
+            audio_ = audio::resample_mono_soxr_or_sinc(audio_, sample_rate_, 16000, {});
         }
         if (transcription_mode_ == "verbatimize" && audio_.size() > 480000) {
             throw std::runtime_error("CrisperWhisper verbatimize requires audio no longer than 30 seconds");

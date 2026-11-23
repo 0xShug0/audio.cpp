@@ -1,5 +1,8 @@
 # OWSM
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 OWSM is ESPnet's multilingual speech recognition and speech translation family.
 The supported version is v4.
 Base (102M), Small (370M), and Medium (1B) use an E-Branchformer audio encoder
@@ -28,7 +31,7 @@ and `--segments-out segments.json`.
 
 | Option | Description |
 | --- | --- |
-| `--audio` | Input audio. Non-16 kHz input is resampled with SOXR. |
+| `--audio` | Input audio. Non-16 kHz input prefers SOXR, with a built-in sinc fallback. |
 | `--backend` | Execution backend. |
 | `--mode` | `offline` (default) or `streaming` text output from a complete audio file. |
 | `--threads` | CPU thread count. |

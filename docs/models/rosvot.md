@@ -1,5 +1,8 @@
 # ROSVOT
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 ROSVOT transcribes singing audio into musical notes. It predicts note pitches,
 boundaries and word-to-note alignment; it does not synthesize singing or transcribe
 lyrics. The package includes ROSVOT, the RWBD word-boundary predictor and RMVPE
