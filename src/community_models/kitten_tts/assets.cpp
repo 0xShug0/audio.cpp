@@ -224,14 +224,77 @@ load_weight_norm_conv_transpose1d(engine::core::BackendWeightStore &store, const
                                       {groups == in_channels ? in_channels : out_channels});
     }
     if (groups == in_channels && in_channels == out_channels && grouped_out_channels == 1) {
-        std::vector<float> dense(static_cast<size_t>(in_channels * out_channels * kernel), 0.0f);
+        // Depthwise convolution reads taps in the opposite order to transposed convolution.
+        std::vector<float> reversed = normalized;
         for (int64_t channel = 0; channel < in_channels; ++channel) {
-            const float *src = normalized.data() + static_cast<ptrdiff_t>(channel * kernel);
-            float *dst = dense.data() + static_cast<ptrdiff_t>((channel * out_channels + channel) * kernel);
-            std::memcpy(dst, src, static_cast<size_t>(kernel) * sizeof(float));
+            auto begin = reversed.begin() + channel * kernel;
+            std::reverse(begin, begin + kernel);
         }
-        conv.dense_weight = store.make_from_f32(
-            engine::core::TensorShape::from_dims({in_channels, out_channels, kernel}), storage_type, std::move(dense));
+        conv.depthwise_weight = store.make_from_f32(
+            engine::core::TensorShape::from_dims({in_channels, 1, 1, kernel}),
+            storage_type,
+            std::move(reversed));
+    }
+    if (groups == 1 && output_padding == 0 && kernel == stride * 2 && padding > 0 && padding < stride) {
+        auto phase_conv = std::make_shared<KittenWeights::Conv1dWeights>();
+        phase_conv->in_channels = in_channels;
+        phase_conv->out_channels = out_channels * stride;
+        phase_conv->kernel = 3;
+        phase_conv->stride = 1;
+        phase_conv->padding = 1;
+        phase_conv->dilation = 1;
+        phase_conv->groups = 1;
+        phase_conv->use_bias = use_bias;
+        std::vector<float> phase_weight(
+            static_cast<size_t>(phase_conv->out_channels * phase_conv->in_channels * phase_conv->kernel),
+            0.0f);
+        std::vector<float> phase_bias;
+        if (use_bias) {
+            phase_bias.assign(static_cast<size_t>(phase_conv->out_channels), 0.0f);
+        }
+        auto source_weight = [&](int64_t in_channel, int64_t out_channel, int64_t kernel_index) -> float {
+            const size_t offset = static_cast<size_t>((in_channel * out_channels + out_channel) * kernel + kernel_index);
+            return normalized[offset];
+        };
+        auto target_weight = [&](int64_t phase_channel, int64_t in_channel, int64_t kernel_index) -> float & {
+            const size_t offset = static_cast<size_t>(
+                (phase_channel * phase_conv->in_channels + in_channel) * phase_conv->kernel + kernel_index);
+            return phase_weight[offset];
+        };
+        const int64_t split_phase = stride - padding;
+        for (int64_t out_channel = 0; out_channel < out_channels; ++out_channel) {
+            for (int64_t phase = 0; phase < stride; ++phase) {
+                const int64_t phase_channel = out_channel * stride + phase;
+                if (use_bias) {
+                    phase_bias[static_cast<size_t>(phase_channel)] = bias_values[static_cast<size_t>(out_channel)];
+                }
+                for (int64_t in_channel = 0; in_channel < in_channels; ++in_channel) {
+                    const int64_t center_kernel = padding + phase;
+                    target_weight(phase_channel, in_channel, 1) =
+                        source_weight(in_channel, out_channel, center_kernel);
+                    if (phase < split_phase) {
+                        const int64_t previous_kernel = stride + padding + phase;
+                        target_weight(phase_channel, in_channel, 0) =
+                            source_weight(in_channel, out_channel, previous_kernel);
+                    } else {
+                        const int64_t next_kernel = phase + padding - stride;
+                        target_weight(phase_channel, in_channel, 2) =
+                            source_weight(in_channel, out_channel, next_kernel);
+                    }
+                }
+            }
+        }
+        phase_conv->weight = store.make_from_f32(
+            engine::core::TensorShape::from_dims({phase_conv->out_channels, phase_conv->in_channels, phase_conv->kernel}),
+            storage_type,
+            std::move(phase_weight));
+        if (use_bias) {
+            phase_conv->bias = store.make_from_f32(
+                engine::core::TensorShape::from_dims({phase_conv->out_channels}),
+                vector_storage_type(storage_type),
+                std::move(phase_bias));
+        }
+        conv.phase_shuffle_conv = std::move(phase_conv);
     }
     return conv;
 }

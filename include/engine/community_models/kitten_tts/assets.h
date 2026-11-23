@@ -77,7 +77,8 @@ struct KittenWeights {
 
     struct WeightNormConvTranspose1dWeights {
         engine::core::TensorValue weight;
-        engine::core::TensorValue dense_weight;
+        engine::core::TensorValue depthwise_weight;
+        std::shared_ptr<Conv1dWeights> phase_shuffle_conv;
         std::optional<engine::core::TensorValue> bias;
         int64_t in_channels = 0;
         int64_t out_channels = 0;
