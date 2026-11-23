@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/chat/session.h"
+
 // LFM3-Audio sessions. ASR: audio -> log-mel -> encoder -> backbone, greedy
 // text; with the chat request option the spoken input is answered instead of
 // transcribed. TTS: text -> backbone -> MaskGIT depth decoder, one audio
@@ -91,8 +93,7 @@ private:
 };
 
 class Lfm3ChatSession final : public runtime::RuntimeSessionBase,
-                              public runtime::IOfflineVoiceTaskSession,
-                              public runtime::IStreamingVoiceTaskSession {
+                              public chat::TaskSession {
 public:
     Lfm3ChatSession(
         runtime::TaskSpec task,
@@ -105,17 +106,6 @@ public:
     runtime::VoiceTaskKind task_kind() const override;
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
-    runtime::TaskResult run(const runtime::TaskRequest & request) override;
-
-    runtime::StreamingPolicy streaming_policy() const override;
-    void start_stream(const runtime::TaskRequest & request) override;
-    std::optional<runtime::StreamEvent> next_stream_event() override;
-    void set_stream_event_sink(runtime::StreamEventCallback sink) override;
-    runtime::TaskResult finish_stream() override;
-    void reset() override;
-    runtime::StreamEvent process_audio_chunk(const runtime::AudioChunk & chunk) override;
-    runtime::TaskResult finalize() override;
-
     // Whether max_tokens cut the reply off, in the last run() or in the stream since start_stream().
     [[nodiscard]] bool reached_max_tokens() const;
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/chat/reply.h"
+
 // LFM2.5-Audio interleaved generation, the speech-to-speech chat mode of
 // liquid-audio's README (LFM2AudioModel.generate_interleaved,
 // model/lfm2_audio.py). The reply alternates a fixed number of text tokens
@@ -38,10 +40,7 @@ struct Lfm2InterleavedOptions {
 };
 
 // One step of a reply: a text token, or the codes of an audio frame.
-struct Lfm2ReplyStep {
-    int32_t token = -1;          // -1 for an audio frame
-    std::vector<int32_t> codes;  // empty for a text token
-};
+using Lfm2ReplyStep = chat::ReplyStep;
 
 // The backbone and depthformer are borrowed and must outlive the generator;
 // one generator runs at a time.

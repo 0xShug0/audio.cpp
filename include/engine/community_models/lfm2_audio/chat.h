@@ -75,6 +75,8 @@ struct Lfm2ReplyCheckpoint {
     int64_t text_vocab_size = 0;
 };
 
+chat::HistoryFormat lfm2_history_format(const Lfm2ReplyCheckpoint & checkpoint);
+
 // Kind AcousticTokens, id lfm2_audio.reply. The payload is little-endian
 // int32: a text step is its token id, and a frame is -1 followed by one code
 // per codebook. The meta holds format (lfm2_audio.reply/1), the checkpoint's
@@ -91,10 +93,7 @@ runtime::VoiceArtifact make_lfm2_reply_artifact(
 std::vector<Lfm2ReplyStep> read_lfm2_reply_artifact(const runtime::VoiceArtifact & artifact, const Lfm2ReplyCheckpoint & checkpoint);
 
 // An earlier turn as a request carries it.
-struct Lfm2ConversationTurn {
-    runtime::AudioBuffer question;  // as the WAV holds it
-    std::vector<Lfm2ReplyStep> reply;
-};
+using Lfm2ConversationTurn = chat::ConversationTurn;
 
 // The earlier turns in a request's input artifacts: a question and then a
 // reply for each turn, in order. Throws InvalidRequestError on any other
