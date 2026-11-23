@@ -291,6 +291,7 @@ const PocketTTSImplementation kGradiumPhononImplementation{
             voice_root,
             contract);
     },
+    PromptPunctuation::LetterOrDigit,
 };
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_gradium_phonon_loader() {
