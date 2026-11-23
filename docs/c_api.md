@@ -58,6 +58,17 @@ requests.
 - **Handles are not individually thread-safe.** Separate handles may be used
   concurrently from separate threads.
 
+### Random seeds
+
+For a model supporting `seed`, set `audiocpp_request_set_option(request,
+"seed", "-1")` to request a fresh random seed. The shared request resolver
+chooses an integer in `0..2147483647` before preparation and execution.
+An explicit `audiocpp_session_prepare` followed by execution of the same,
+unchanged request reuses that resolution. Another execution draws again;
+request mutation or stream reset invalidates pending preparation. The caller's
+stored option remains `-1`. Omitted and explicit nonnegative seeds retain
+existing behavior. Enable logging to record `request.seed` for replay.
+
 ### Lifetime
 
 Handles hold their parents alive internally: a session holds its model, and a

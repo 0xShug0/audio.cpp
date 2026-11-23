@@ -114,6 +114,10 @@ assets::TensorStorageType parse_tensor_storage_option(
     assets::TensorStorageType fallback,
     std::initializer_list<assets::TensorStorageType> allowed);
 
+// Resolve canonical seed=-1 once on a finalized request, before preparation.
+// Returns true when resolved; omitted/explicit seeds and aliases are unchanged.
+bool resolve_random_seed(std::unordered_map<std::string, std::string> & options);
+
 uint32_t random_u32_seed();
 uint64_t random_u64_seed();
 

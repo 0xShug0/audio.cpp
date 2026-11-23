@@ -1080,6 +1080,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             request.options["export_voice_state_file"] = voice_state_out->string();
         }
         require_known_args(argc, argv);
+        engine::runtime::resolve_random_seed(request.options);
         const auto session_start = std::chrono::steady_clock::now();
         session->prepare(engine::runtime::build_preparation_request(request));
         if (voice_state_out.has_value()) {

@@ -1,6 +1,7 @@
 #include "cli_recipe.h"
 
 #include "engine/framework/core/load_progress.h"
+#include "engine/framework/runtime/options.h"
 
 #include <stdexcept>
 #include <utility>
@@ -66,18 +67,20 @@ CliRecipeModelExecutor::ModelEntry & CliRecipeModelExecutor::model_for(
 }
 
 engine::runtime::TaskResult CliRecipeModelExecutor::run(std::string_view role,
-    const engine::runtime::TaskSpec & task, const engine::runtime::TaskRequest & request) {
+    const engine::runtime::TaskSpec & task, engine::runtime::TaskRequest & request) {
     auto & entry = model_for(role, task);
     if (!entry.offline) throw std::runtime_error("recipe role requires offline execution");
+    engine::runtime::resolve_random_seed(request.options);
     entry.session->prepare(engine::runtime::build_preparation_request(request));
     return entry.offline->run(request);
 }
 
 engine::runtime::TaskResult CliRecipeModelExecutor::stream(std::string_view role,
-    const engine::runtime::TaskSpec & task, const engine::runtime::TaskRequest & request,
+    const engine::runtime::TaskSpec & task, engine::runtime::TaskRequest & request,
     const RecipeEventSink & sink, const AudioChunkStream * source) {
     auto & entry = model_for(role, task);
     if (!entry.streaming) throw std::runtime_error("recipe role requires streaming execution");
+    engine::runtime::resolve_random_seed(request.options);
     entry.session->prepare(engine::runtime::build_preparation_request(request));
     return source ? run_streaming_task(*entry.streaming, request, sink, *source)
                   : run_streaming_task(*entry.streaming, request, sink);

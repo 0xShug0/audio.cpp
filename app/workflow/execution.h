@@ -50,7 +50,7 @@ AudioMergeMode parse_audio_merge_mode(const std::string & value);
 AppBatchResult run_offline_batch(
     engine::runtime::IVoiceTaskSession & session,
     engine::runtime::IOfflineVoiceTaskSession & offline,
-    const AppBatchRequest & batch,
+    AppBatchRequest & batch,
     AudioMergeMode audio_merge_mode,
     const std::function<void(size_t, const AppRequestResult &)> & on_result = {});
 

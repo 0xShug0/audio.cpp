@@ -5,6 +5,7 @@
 #include "parallel_runtime.h"
 #include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/runtime/options.h"
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
@@ -75,6 +76,8 @@ struct Gate {
     void release() { std::lock_guard<std::mutex> lock(mutex); released = true; cv.notify_all(); }
 };
 struct Control {
+    bool record_seeds = false;
+    std::vector<std::unordered_map<std::string, std::string>> prepared_options, executed_options;
     Gate load, run, destroy;
     std::atomic<int> loads{0}, destructions{0}, runs{0}, finishes{0};
     std::atomic<int> sessions{0}, clones{0}, final_text{0};
@@ -93,7 +96,8 @@ public:
     std::string family() const override { return "lifecycle_fixture"; }
     rt::VoiceTaskKind task_kind() const override { return task_.task; }
     rt::RunMode run_mode() const override { return task_.mode; }
-    void prepare(const rt::SessionPreparationRequest &) override {
+    void prepare(const rt::SessionPreparationRequest & request) override {
+        if (control_->record_seeds) control_->prepared_options.push_back(request.options);
         if (control_->fail_prepare) { throw std::runtime_error("controlled preparation failure"); }
     }
     size_t parallel_session_capacity() const noexcept override { return capacity_; }
@@ -105,6 +109,7 @@ public:
     }
     rt::TaskResult run(const rt::TaskRequest & request) override {
         control_->run.wait();
+        if (control_->record_seeds) control_->executed_options.push_back(request.options);
         ++control_->runs;
         if (control_->fail_run) { throw std::runtime_error("controlled inference failure"); }
         if (control_->reject_run) { throw rt::InvalidRequestError("controlled request rejection"); }
@@ -285,6 +290,43 @@ struct Fixture {
             quote(task) + ",\"slots\":" + std::to_string(count) + "}");
     }
 };
+
+void random_seed_paths() {
+    for (const int slots : {1, 2}) {
+        Fixture f(slots);
+        auto c = f.add("seed");
+        c->record_seeds = true;
+        auto & defaults = Access::model(*f.state, "seed").config.default_request_options;
+        defaults["seed"] = "-1";
+        success(post(*f.state, "/v1/tasks/run", R"({"model":"seed","text":"hello"})"));
+        require(c->prepared_options.back() == c->executed_options.back(), "server preparation/execution seed mismatch");
+        const auto seed = rt::parse_u32_option(c->executed_options.back(), {"seed"});
+        require(seed && *seed <= 2147483647U, "server default seed unresolved");
+        require(defaults.at("seed") == "-1", "server changed shared defaults");
+        success(post(*f.state, "/v1/audio/speech", R"({"model":"seed","input":"hello","seed":42})"));
+        require(c->executed_options.back().at("seed") == "42", "OpenAI seed override lost");
+        defaults.clear();
+        auto batch = post(*f.state, "/v1/tasks/batch",
+            R"({"model":"seed","requests":[{"text":"a","seed":-1},{"text":"b","seed":42},{"text":"c","seed":-1},{"text":"d"}]})");
+        success(batch);
+        Writer writer; batch.stream_body(writer); batch.stream_body = {};
+        require(c->executed_options.size() == 6, "native batch did not run four items");
+        require(rt::parse_u32_option(c->executed_options[2], {"seed"}).has_value() &&
+                rt::parse_u32_option(c->executed_options[4], {"seed"}).has_value(), "native batch sentinel unresolved");
+        require(c->executed_options[3].at("seed") == "42" && c->executed_options[5].count("seed") == 0,
+                "native batch fixed/omitted neighbors changed");
+        require(c->prepared_options.back() == c->executed_options[2], "native batch preparation seed mismatch");
+
+        auto stream_control = f.add("stream", "streaming");
+        stream_control->record_seeds = true;
+        auto stream = post(*f.state, "/v1/tasks/stream",
+            R"({"model":"stream","request":{"text":"hello","seed":-1},"stream_format":"sse"})");
+        success(stream);
+        if (stream.stream_body) { Writer sink; stream.stream_body(sink); stream.stream_body = {}; }
+        require(stream_control->prepared_options.back() == stream_control->executed_options.back(), "stream preparation seed mismatch");
+        require(rt::parse_u32_option(stream_control->executed_options.back(), {"seed"}).has_value(), "stream sentinel unresolved");
+    }
+}
 
 void per_model_device_selection() {
     Fixture f(1, 0, 3);
@@ -1171,6 +1213,14 @@ void generic_task_stream_sse(int count) {
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
+        if (argc >= 2 && std::string(argv[1]) == "seed") {
+            engine::debug::configure_logging({true});
+            const auto started = std::chrono::steady_clock::now();
+            random_seed_paths();
+            engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
+            std::cout << "serial-slot and multi-slot seed routing passed\n";
+            return 0;
+        }
         if (argc >= 2 && std::string(argv[1]) == "stream-artifacts") {
             engine::debug::configure_logging({true});
             const auto started = std::chrono::steady_clock::now();
