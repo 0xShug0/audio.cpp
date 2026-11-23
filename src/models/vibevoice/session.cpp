@@ -314,7 +314,11 @@ VibeVoiceRequest VibeVoiceSession::make_request(const runtime::TaskRequest & req
         throw std::runtime_error("VibeVoice requires non-empty text input");
     }
     if (request.voice.has_value() && request.voice->style.has_value()) {
-        throw std::runtime_error("VibeVoice C++ session does not consume style conditions");
+        const auto & style = *request.voice->style;
+        if (style.speaking_rate != 1.0F || style.language.has_value() || style.emotion.has_value()
+            || style.pitch_shift.has_value() || style.energy_scale.has_value() || !style.tags.empty()) {
+            throw std::runtime_error("VibeVoice C++ session does not consume style conditions");
+        }
     }
     if (!request.input_artifacts.empty()) {
         throw runtime::InvalidRequestError("VibeVoice C++ session does not consume input artifacts");
