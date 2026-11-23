@@ -8,6 +8,7 @@
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/conv_modules.h"
+#include "engine/framework/modules/streaming_conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
 #include "engine/framework/modules/norm_modules.h"
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -141,56 +143,11 @@ void upload_time_masks(const std::vector<TimeMaskInputs> &masks, int64_t valid_b
     }
 }
 
-std::vector<float> expand_tc_by_durations(const std::vector<float> &values, int64_t rows, int64_t cols,
-                                          const std::vector<int32_t> &durations, int64_t total_rows) {
-    if (rows != static_cast<int64_t>(durations.size())) {
-        throw std::runtime_error("kitten predictor tc expansion shape mismatch");
-    }
-    std::vector<float> out(static_cast<size_t>(total_rows * cols), 0.0f);
-    int64_t dst_row = 0;
-    for (int64_t src_row = 0; src_row < rows; ++src_row) {
-        const int32_t repeat = durations[static_cast<size_t>(src_row)];
-        const float *src = values.data() + static_cast<ptrdiff_t>(src_row * cols);
-        for (int32_t i = 0; i < repeat; ++i) {
-            std::memcpy(out.data() + static_cast<ptrdiff_t>(dst_row * cols), src,
-                        static_cast<size_t>(cols) * sizeof(float));
-            ++dst_row;
-        }
-    }
-    if (dst_row != total_rows) {
-        throw std::runtime_error("kitten predictor tc expansion produced unexpected frame count");
-    }
-    return out;
-}
-
-std::vector<float> expand_ct_by_durations(const std::vector<float> &values, int64_t rows, int64_t cols,
-                                          const std::vector<int32_t> &durations, int64_t total_cols) {
-    if (cols != static_cast<int64_t>(durations.size())) {
-        throw std::runtime_error("kitten predictor ct expansion shape mismatch");
-    }
-    std::vector<float> out(static_cast<size_t>(rows * total_cols), 0.0f);
-    for (int64_t row = 0; row < rows; ++row) {
-        const float *src_row = values.data() + static_cast<ptrdiff_t>(row * cols);
-        float *dst_row = out.data() + static_cast<ptrdiff_t>(row * total_cols);
-        int64_t dst_col = 0;
-        for (int64_t src_col = 0; src_col < cols; ++src_col) {
-            const float value = src_row[src_col];
-            const int32_t repeat = durations[static_cast<size_t>(src_col)];
-            for (int32_t i = 0; i < repeat; ++i) {
-                dst_row[dst_col++] = value;
-            }
-        }
-        if (dst_col != total_cols) {
-            throw std::runtime_error("kitten predictor ct expansion produced unexpected frame count");
-        }
-    }
-    return out;
-}
-
 core::TensorValue make_zero_lstm_state(core::ModuleBuildContext &ctx, int64_t hidden_size,
                                        std::vector<ggml_tensor *> &zero_state_inputs) {
     auto tensor = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, hidden_size}));
     ggml_set_input(tensor.tensor);
+    ggml_set_output(tensor.tensor);
     zero_state_inputs.push_back(tensor.tensor);
     return tensor;
 }
@@ -279,11 +236,16 @@ build_lstm_sequence_combined_input_bias(core::ModuleBuildContext &ctx, const cor
         steps[static_cast<size_t>(t)] = hidden;
     }
 
-    auto sequence = steps[0];
-    for (int64_t t = 1; t < frames; ++t) {
-        sequence = concat_rows.build(ctx, sequence, steps[static_cast<size_t>(t)]);
+    // The framework's batched sequence path uses the same balanced assembly:
+    // copy each row O(log T) times, rather than recopying every growing prefix.
+    while (steps.size() > 1) {
+        std::vector<core::TensorValue> merged;
+        merged.reserve((steps.size() + 1) / 2);
+        for (size_t i = 0; i < steps.size(); i += 2)
+            merged.push_back(i + 1 < steps.size() ? concat_rows.build(ctx, steps[i], steps[i + 1]) : steps[i]);
+        steps = std::move(merged);
     }
-    return modules::LSTMSequenceOutputs{sequence, hidden, cell};
+    return modules::LSTMSequenceOutputs{steps.front(), hidden, cell};
 }
 
 modules::LSTMSequenceOutputs build_lstm_sequence_combined_input_bias(core::ModuleBuildContext &ctx,
@@ -323,7 +285,7 @@ template <typename ConvWeightsT> modules::Conv1dWeights make_conv1d_weights(cons
 modules::ConvTranspose1dWeights
 make_conv_transpose1d_weights(const KittenWeights::WeightNormConvTranspose1dWeights &conv) {
     modules::ConvTranspose1dWeights weights = {};
-    weights.weight = conv.groups == 1 ? conv.weight : conv.dense_weight;
+    weights.weight = conv.weight;
     if (conv.use_bias) {
         weights.bias = conv.bias;
     }
@@ -363,13 +325,16 @@ ggml_tensor *build_grouped_conv_transpose1d_ct_predictor(ggml_context *ctx, ggml
         const auto input_bct =
             modules::ReshapeModule({core::TensorShape::from_dims({1, conv.in_channels, input->ne[0]})})
                 .build(build_ctx, input_ct);
-        modules::ConvTranspose1dWeights weights = {};
-        weights.weight = conv.dense_weight;
+        modules::DepthwiseConvTranspose1dWeights weights = {};
+        weights.weight = conv.depthwise_weight;
+        if (weights.weight.type != GGML_TYPE_F32) {
+            weights.weight = core::wrap_tensor(ggml_cast(ctx, weights.weight.tensor, GGML_TYPE_F32), weights.weight.shape, GGML_TYPE_F32);
+        }
         if (conv.use_bias) {
             weights.bias = conv.bias;
         }
-        auto output_bct = modules::ConvTranspose1dModule({conv.in_channels, conv.out_channels, conv.kernel,
-                                                          static_cast<int>(conv.stride), 0, 1, conv.use_bias})
+        auto output_bct = modules::DepthwiseConvTranspose1dModule({conv.in_channels, conv.kernel,
+                                                                   static_cast<int>(conv.stride), conv.use_bias})
                               .build(build_ctx, input_bct, weights);
         const int64_t cropped_len =
             (input->ne[0] - 1) * conv.stride - 2 * conv.padding + conv.kernel + conv.output_padding;
@@ -491,12 +456,9 @@ ggml_tensor *build_adain_resblock_ct_predictor(ggml_context *ctx, ggml_tensor *x
 
 struct PredictorPreTailOutputs {
     std::vector<int32_t> durations;
-    std::vector<float> expanded_encoder_tc;
+    const ggml_tensor * duration_tokens = nullptr;
+    const ggml_tensor * text_tokens = nullptr;
     int64_t expanded_encoder_rows = 0;
-    int64_t expanded_encoder_cols = 0;
-    std::vector<float> asr_ct;
-    int64_t asr_rows = 0;
-    int64_t asr_cols = 0;
 };
 
 class PredictorPreTailGraphRuntime {
@@ -510,92 +472,27 @@ class PredictorPreTailGraphRuntime {
 
     ~PredictorPreTailGraphRuntime() = default;
 
-    PredictorPreTailOutputs run(const std::vector<float> &plbert_hidden_tc, const std::vector<int32_t> &input_ids,
-                                const std::vector<float> &style_predictor, float speed, int64_t token_capacity) {
-        const int64_t valid_token_count = static_cast<int64_t>(input_ids.size());
-        if (valid_token_count <= 0 || valid_token_count > token_capacity) {
-            throw std::runtime_error("kitten predictor pre-tail input length exceeds prepared capacity");
-        }
-        auto &prepared = session_for_capacity(token_capacity, token_capacity != valid_token_count);
-        const int64_t graph_token_count = prepared.token_count;
-        const int64_t predictor_feature_cols = weights_->predictor.lstm.input_size;
-        const int64_t text_feature_rows = weights_->text_encoder.lstm.hidden_size * 2;
-
-        std::vector<float> padded_hidden;
-        const std::vector<float> *hidden_for_graph = &plbert_hidden_tc;
-        if (valid_token_count != graph_token_count) {
-            padded_hidden.assign(static_cast<size_t>(graph_token_count * weights_->hidden_dim), 0.0f);
-            std::memcpy(padded_hidden.data(), plbert_hidden_tc.data(),
-                        static_cast<size_t>(valid_token_count * weights_->hidden_dim) * sizeof(float));
-            hidden_for_graph = &padded_hidden;
-        }
-        std::vector<int32_t> padded_ids;
-        const std::vector<int32_t> *ids_for_graph = &input_ids;
-        if (valid_token_count != graph_token_count) {
-            padded_ids.assign(static_cast<size_t>(graph_token_count), 0);
-            std::memcpy(padded_ids.data(), input_ids.data(), static_cast<size_t>(valid_token_count) * sizeof(int32_t));
-            ids_for_graph = &padded_ids;
-        }
-
-        PredictorPreTailOutputs out = {};
-        std::vector<float> duration_features_tc;
-        auto &duration = duration_session(prepared);
-        const double duration_ms = measure_ms([&]() {
-            duration.run(*hidden_for_graph, valid_token_count, style_predictor, speed, out.durations,
-                         duration_features_tc);
-        });
-        engine::debug::timing_log_scalar("kitten.predictor.duration_compute_ms", duration_ms);
-        auto &text = text_session(prepared);
-        std::vector<float> text_features_ct;
-        const double text_ms = measure_ms([&]() { text_features_ct = text.run(*ids_for_graph, valid_token_count); });
-        engine::debug::timing_log_scalar("kitten.predictor.text_compute_ms", text_ms);
-        if (valid_token_count != graph_token_count) {
-            out.durations.resize(static_cast<size_t>(valid_token_count));
-            std::vector<float> valid_duration_features(static_cast<size_t>(valid_token_count * predictor_feature_cols),
-                                                       0.0f);
-            for (int64_t row = 0; row < valid_token_count; ++row) {
-                std::memcpy(valid_duration_features.data() + static_cast<ptrdiff_t>(row * predictor_feature_cols),
-                            duration_features_tc.data() + static_cast<ptrdiff_t>(row * predictor_feature_cols),
-                            static_cast<size_t>(predictor_feature_cols) * sizeof(float));
-            }
-            duration_features_tc = std::move(valid_duration_features);
-            std::vector<float> valid_text_features(static_cast<size_t>(text_feature_rows * valid_token_count), 0.0f);
-            for (int64_t row = 0; row < text_feature_rows; ++row) {
-                std::memcpy(valid_text_features.data() + static_cast<ptrdiff_t>(row * valid_token_count),
-                            text_features_ct.data() + static_cast<ptrdiff_t>(row * graph_token_count),
-                            static_cast<size_t>(valid_token_count) * sizeof(float));
-            }
-            text_features_ct = std::move(valid_text_features);
-        }
-
-        int64_t total_frames = 0;
-        for (int32_t duration : out.durations) {
-            total_frames += duration;
-        }
-        const int64_t max_output_frames = valid_token_count * weights_->max_dur;
-        if (total_frames > max_output_frames) {
-            throw std::runtime_error("kitten predictor produced durations beyond prepared capacity");
-        }
-
-        const double expand_ms = measure_ms([&]() {
-            out.expanded_encoder_tc =
-                expand_tc_by_durations(duration_features_tc, valid_token_count, weights_->predictor.lstm.input_size,
-                                       out.durations, total_frames);
-            out.asr_ct = expand_ct_by_durations(text_features_ct, text_feature_rows, valid_token_count, out.durations,
-                                                total_frames);
-        });
-        engine::debug::timing_log_scalar("kitten.predictor.expand_ms", expand_ms);
-        out.expanded_encoder_rows = total_frames;
-        out.expanded_encoder_cols = predictor_feature_cols;
-        out.asr_rows = text_feature_rows;
-        out.asr_cols = total_frames;
+    PredictorPreTailOutputs run(const ggml_tensor * hidden, const std::vector<int32_t> & input_ids,
+                                const std::vector<float> & style_predictor, float speed, int64_t token_capacity) {
+        const auto count = static_cast<int64_t>(input_ids.size());
+        if (count <= 0 || count > token_capacity) throw std::runtime_error("Kitten input exceeds predictor capacity");
+        auto & prepared = session_for_capacity(token_capacity, true);
+        auto & duration = duration_session(prepared);
+        auto & text = text_session(prepared);
+        PredictorPreTailOutputs out;
+        duration.run(hidden, count, style_predictor, speed, out.durations);
+        std::vector<int32_t> padded_ids(static_cast<size_t>(token_capacity), 0);
+        std::copy(input_ids.begin(), input_ids.end(), padded_ids.begin());
+        text.run(padded_ids, count);
+        out.durations.resize(static_cast<size_t>(count));
+        out.expanded_encoder_rows = std::accumulate(out.durations.begin(), out.durations.end(), int64_t{0});
+        out.duration_tokens = duration.duration_features_tc.tensor;
+        out.text_tokens = text.text_features_tc.tensor;
         return out;
     }
 
-    int64_t token_count() const { return session_.token_count; }
-
-    void prepare_capacity(int64_t token_count) {
-        auto &prepared = session_for_capacity(token_count, true);
+    void prepare_capacity(int64_t count) {
+        auto & prepared = session_for_capacity(count, true);
         (void)duration_session(prepared);
         (void)text_session(prepared);
     }
@@ -637,6 +534,7 @@ class PredictorPreTailGraphRuntime {
 
                 core::ModuleBuildContext build_ctx = {};
                 build_ctx.ggml = ctx;
+                build_ctx.backend_type = core::backend_type(backend);
                 build_ctx.module_instance_name = "kitten_predictor_pretail";
 
                 plbert_hidden_tc = core::make_tensor(build_ctx, GGML_TYPE_F32,
@@ -732,6 +630,7 @@ class PredictorPreTailGraphRuntime {
                 ggml_build_forward_expand(graph, durations_scaled.tensor);
                 ggml_build_forward_expand(graph, duration_features_tc.tensor);
 
+
                 core::set_backend_threads(backend, n_threads);
                 const double alloc_ms = measure_ms([&]() {
                     gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
@@ -790,15 +689,14 @@ class PredictorPreTailGraphRuntime {
             }
         }
 
-        void run(const std::vector<float> &plbert_hidden_tc_host, int64_t valid_token_count,
-                 const std::vector<float> &style_predictor_host, float speed_host, std::vector<int32_t> &durations_out,
-                 std::vector<float> &duration_features_out) {
+        void run(const ggml_tensor * hidden_tensor, int64_t valid_token_count,
+                 const std::vector<float> &style_predictor_host, float speed_host, std::vector<int32_t> &durations_out) {
             if (valid_token_count <= 0 || valid_token_count > token_count) {
                 throw std::runtime_error("kitten predictor duration valid token count "
                                          "exceeds prepared capacity");
             }
             const double input_upload_ms = measure_ms([&]() {
-                core::write_tensor_f32(plbert_hidden_tc, plbert_hidden_tc_host);
+                ggml_backend_tensor_copy(hidden_tensor, plbert_hidden_tc.tensor);
                 if (use_valid_mask) {
                     std::vector<float> valid_mask(static_cast<size_t>(token_count), 0.0f);
                     std::fill(valid_mask.begin(), valid_mask.begin() + valid_token_count, 1.0f);
@@ -825,12 +723,9 @@ class PredictorPreTailGraphRuntime {
                 durations_out[static_cast<size_t>(i)] =
                     std::clamp<int32_t>(rounded, 1, static_cast<int32_t>(weights->max_dur));
             }
-            const double feature_read_ms =
-                measure_ms([&]() { duration_features_out = core::read_tensor_f32(duration_features_tc.tensor); });
             engine::debug::timing_log_scalar("kitten.predictor_duration.input_upload_ms", input_upload_ms);
             engine::debug::timing_log_scalar("kitten.predictor_duration.graph.compute_ms", graph_compute_ms);
             engine::debug::timing_log_scalar("kitten.predictor_duration.duration_read_ms", duration_read_ms);
-            engine::debug::timing_log_scalar("kitten.predictor_duration.feature_read_ms", feature_read_ms);
         }
     };
 
@@ -848,7 +743,7 @@ class PredictorPreTailGraphRuntime {
         core::TensorValue input_ids = {};
         core::TensorValue valid_mask_tc = {};
         core::TensorValue valid_mask_bct = {};
-        core::TensorValue text_features_ct = {};
+        core::TensorValue text_features_tc = {};
 
         TextSession(const KittenWeights &weights_in, ggml_backend_t backend_in, int64_t token_count_in,
                     bool use_valid_mask_in, int n_threads_in, KittenPredictorGraphConfig graph_config_in)
@@ -868,6 +763,7 @@ class PredictorPreTailGraphRuntime {
 
                 core::ModuleBuildContext build_ctx = {};
                 build_ctx.ggml = ctx;
+                build_ctx.backend_type = core::backend_type(backend);
                 build_ctx.module_instance_name = "kitten_predictor_text";
 
                 input_ids = core::make_tensor(build_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({token_count}));
@@ -925,14 +821,12 @@ class PredictorPreTailGraphRuntime {
                                                     build_ctx, text_x_tc_for_lstm, weights->text_encoder.lstm,
                                                     use_valid_mask ? &valid_mask_tc : nullptr, zero_state_inputs)
                                                     .sequence;
-                text_features_ct = modules::TransposeModule({{1, 0, 2, 3}, 2}).build(build_ctx, text_lstm_sequence);
-                ggml_set_output(text_features_ct.tensor);
-                if (text_features_ct.tensor->view_src != nullptr) {
-                    ggml_set_output(text_features_ct.tensor->view_src);
-                }
+                text_features_tc = text_lstm_sequence;
+                ggml_set_output(text_features_tc.tensor);
 
                 graph = ggml_new_graph_custom(ctx, graph_config.graph_node_capacity, false);
-                ggml_build_forward_expand(graph, text_features_ct.tensor);
+                ggml_build_forward_expand(graph, text_features_tc.tensor);
+
 
                 core::set_backend_threads(backend, n_threads);
                 const double alloc_ms = measure_ms([&]() {
@@ -989,7 +883,7 @@ class PredictorPreTailGraphRuntime {
             }
         }
 
-        std::vector<float> run(const std::vector<int32_t> &input_ids_host, int64_t valid_token_count) {
+        void run(const std::vector<int32_t> &input_ids_host, int64_t valid_token_count) {
             if (valid_token_count <= 0 || valid_token_count > token_count) {
                 throw std::runtime_error("kitten predictor text valid token count "
                                          "exceeds prepared capacity");
@@ -1011,13 +905,8 @@ class PredictorPreTailGraphRuntime {
                 throw std::runtime_error(std::string("kitten predictor text compute failed: ") +
                                          ggml_status_to_string(status));
             }
-            std::vector<float> text_features;
-            const double output_read_ms =
-                measure_ms([&]() { text_features = core::read_tensor_f32(text_features_ct.tensor); });
             engine::debug::timing_log_scalar("kitten.predictor_text.input_upload_ms", input_upload_ms);
             engine::debug::timing_log_scalar("kitten.predictor_text.graph.compute_ms", graph_compute_ms);
-            engine::debug::timing_log_scalar("kitten.predictor_text.output_read_ms", output_read_ms);
-            return text_features;
         }
     };
 
@@ -1075,287 +964,31 @@ class PredictorPreTailGraphRuntime {
     }
 };
 
-class TailSharedLstmBlockRuntime {
-  public:
-    TailSharedLstmBlockRuntime(const KittenWeights &weights, ggml_backend_t backend, int n_threads,
-                               KittenPredictorGraphConfig graph_config)
-        : weights_(&weights), backend_(backend), n_threads_(std::max(1, n_threads)), graph_config_(graph_config) {}
-
-    std::vector<float> run(const std::vector<float> &encoder_tc, int64_t frames, int64_t cols) {
-        if (frames <= 0) {
-            throw std::runtime_error("kitten tail shared LSTM requires positive frame count");
-        }
-        if (cols != weights_->predictor.shared.input_size) {
-            throw std::runtime_error("kitten tail shared LSTM input width changed");
-        }
-        const int64_t hidden_size = weights_->predictor.shared.hidden_size;
-        std::vector<float> forward(static_cast<size_t>(frames * hidden_size), 0.0f);
-        std::vector<float> reverse(static_cast<size_t>(frames * hidden_size), 0.0f);
-        run_direction(false, encoder_tc, frames, cols, forward);
-        run_direction(true, encoder_tc, frames, cols, reverse);
-
-        std::vector<float> shared_ct(static_cast<size_t>(2 * hidden_size * frames), 0.0f);
-        for (int64_t t = 0; t < frames; ++t) {
-            for (int64_t h = 0; h < hidden_size; ++h) {
-                shared_ct[static_cast<size_t>(h * frames + t)] = forward[static_cast<size_t>(t * hidden_size + h)];
-                shared_ct[static_cast<size_t>((hidden_size + h) * frames + t)] =
-                    reverse[static_cast<size_t>(t * hidden_size + h)];
-            }
-        }
-        return shared_ct;
-    }
-
-  private:
-    static constexpr int64_t kBlockFrames = 64;
-
-    struct DirectionResult {
-        std::vector<float> sequence;
-        std::vector<float> hidden;
-        std::vector<float> cell;
-    };
-
-    struct DirectionSession {
-        const KittenWeights *weights = nullptr;
-        ggml_backend_t backend = nullptr;
-        int n_threads = 1;
-        bool reverse = false;
-        KittenPredictorGraphConfig graph_config = {};
-        ggml_context *ctx = nullptr;
-        ggml_gallocr_t gallocr = nullptr;
-        ggml_backend_graph_plan_t plan = nullptr;
-        ggml_cgraph *graph = nullptr;
-        core::TensorValue input = {};
-        core::TensorValue valid_mask = {};
-        core::TensorValue hidden_in = {};
-        core::TensorValue cell_in = {};
-        core::TensorValue sequence_out = {};
-        core::TensorValue hidden_out = {};
-        core::TensorValue cell_out = {};
-
-        DirectionSession(const KittenWeights &weights_in, ggml_backend_t backend_in, int n_threads_in, bool reverse_in,
-                         KittenPredictorGraphConfig graph_config_in)
-            : weights(&weights_in), backend(backend_in), n_threads(n_threads_in), reverse(reverse_in),
-              graph_config(graph_config_in) {
-            ggml_init_params params{
-                /*.mem_size   =*/graph_config.tail_graph_bytes,
-                /*.mem_buffer =*/nullptr,
-                /*.no_alloc   =*/true,
-            };
-            ctx = ggml_init(params);
-            if (!ctx) {
-                throw std::runtime_error("failed to initialize Kitten tail shared LSTM block context");
-            }
-            try {
-                core::ModuleBuildContext build_ctx = {};
-                build_ctx.ggml = ctx;
-                input = core::make_tensor(
-                    build_ctx, GGML_TYPE_F32,
-                    core::TensorShape::from_dims({kBlockFrames, weights->predictor.shared.input_size}));
-                valid_mask =
-                    core::make_tensor(build_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({kBlockFrames, 1}));
-                hidden_in = core::make_tensor(build_ctx, GGML_TYPE_F32,
-                                              core::TensorShape::from_dims({1, weights->predictor.shared.hidden_size}));
-                cell_in = core::make_tensor(build_ctx, GGML_TYPE_F32,
-                                            core::TensorShape::from_dims({1, weights->predictor.shared.hidden_size}));
-                ggml_set_input(input.tensor);
-                ggml_set_input(valid_mask.tensor);
-                ggml_set_input(hidden_in.tensor);
-                ggml_set_input(cell_in.tensor);
-
-                const auto outputs = build_lstm_sequence_combined_input_bias(
-                    build_ctx, input, weights->predictor.shared, reverse, hidden_in, cell_in, &valid_mask, true);
-                sequence_out = outputs.sequence;
-                hidden_out = outputs.hidden;
-                cell_out = outputs.cell;
-                ggml_set_output(sequence_out.tensor);
-                if (sequence_out.tensor->view_src != nullptr) {
-                    ggml_set_output(sequence_out.tensor->view_src);
-                }
-                ggml_set_output(hidden_out.tensor);
-                if (hidden_out.tensor->view_src != nullptr) {
-                    ggml_set_output(hidden_out.tensor->view_src);
-                }
-                ggml_set_output(cell_out.tensor);
-                if (cell_out.tensor->view_src != nullptr) {
-                    ggml_set_output(cell_out.tensor->view_src);
-                }
-                graph = ggml_new_graph_custom(ctx, graph_config.graph_node_capacity, false);
-                ggml_build_forward_expand(graph, sequence_out.tensor);
-                ggml_build_forward_expand(graph, hidden_out.tensor);
-                ggml_build_forward_expand(graph, cell_out.tensor);
-
-                core::set_backend_threads(backend, n_threads);
-                gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-                if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) ||
-                    !ggml_gallocr_alloc_graph(gallocr, graph)) {
-                    throw std::runtime_error("failed to allocate Kitten tail shared LSTM block graph tensors");
-                }
-                if (engine::core::uses_host_graph_plan(backend)) {
-                    plan = engine::core::create_backend_graph_plan_if_host(backend, graph);
-                    if (!plan) {
-                        throw std::runtime_error("failed to create Kitten tail shared LSTM block plan");
-                    }
-                }
-                std::vector<float> zeros_input(static_cast<size_t>(kBlockFrames * weights->predictor.shared.input_size),
-                                               0.0f);
-                std::vector<float> zeros_mask(static_cast<size_t>(kBlockFrames), 0.0f);
-                std::vector<float> zeros_state(static_cast<size_t>(weights->predictor.shared.hidden_size), 0.0f);
-                core::write_tensor_f32(input, zeros_input);
-                core::write_tensor_f32(valid_mask, zeros_mask);
-                core::write_tensor_f32(hidden_in, zeros_state);
-                core::write_tensor_f32(cell_in, zeros_state);
-            } catch (...) {
-                if (plan) {
-                    engine::core::free_backend_graph_plan(backend, plan);
-                    plan = nullptr;
-                }
-                core::release_backend_graph_resources(backend, graph);
-                if (gallocr) {
-                    ggml_gallocr_free(gallocr);
-                    gallocr = nullptr;
-                }
-                if (ctx) {
-                    ggml_free(ctx);
-                    ctx = nullptr;
-                }
-                throw;
-            }
-        }
-
-        ~DirectionSession() {
-            if (plan) {
-                engine::core::free_backend_graph_plan(backend, plan);
-            }
-            core::release_backend_graph_resources(backend, graph);
-            if (gallocr) {
-                ggml_gallocr_free(gallocr);
-            }
-            if (ctx) {
-                ggml_free(ctx);
-            }
-        }
-
-        DirectionResult run(const std::vector<float> &block, int64_t valid_frames, const std::vector<float> &hidden,
-                            const std::vector<float> &cell) {
-            if (valid_frames <= 0 || valid_frames > kBlockFrames) {
-                throw std::runtime_error("kitten tail shared LSTM block valid frame count is out of range");
-            }
-            std::vector<float> mask(static_cast<size_t>(kBlockFrames), 0.0f);
-            std::fill(mask.begin(), mask.begin() + valid_frames, 1.0f);
-            const double input_upload_ms = measure_ms([&]() {
-                core::write_tensor_f32(input, block);
-                core::write_tensor_f32(valid_mask, mask);
-                core::write_tensor_f32(hidden_in, hidden);
-                core::write_tensor_f32(cell_in, cell);
-            });
-
-            core::set_backend_threads(backend, n_threads);
-            ggml_status status = GGML_STATUS_SUCCESS;
-            const double compute_ms = measure_ms([&]() { status = core::compute_backend_graph(backend, graph, plan); });
-            if (status != GGML_STATUS_SUCCESS) {
-                throw std::runtime_error(std::string("kitten tail shared LSTM block compute failed: ") +
-                                         ggml_status_to_string(status));
-            }
-            DirectionResult result;
-            const double output_read_ms = measure_ms([&]() {
-                result = {
-                    core::read_tensor_f32(sequence_out.tensor),
-                    core::read_tensor_f32(hidden_out.tensor),
-                    core::read_tensor_f32(cell_out.tensor),
-                };
-            });
-            engine::debug::timing_log_scalar(reverse ? "kitten.predictor_tail.shared_lstm.reverse.input_upload_ms"
-                                                     : "kitten.predictor_tail.shared_lstm.forward.input_upload_ms",
-                                             input_upload_ms);
-            engine::debug::timing_log_scalar(reverse ? "kitten.predictor_tail.shared_lstm.reverse.compute_ms"
-                                                     : "kitten.predictor_tail.shared_lstm.forward.compute_ms",
-                                             compute_ms);
-            engine::debug::timing_log_scalar(reverse ? "kitten.predictor_tail.shared_lstm.reverse.output_read_ms"
-                                                     : "kitten.predictor_tail.shared_lstm.forward.output_read_ms",
-                                             output_read_ms);
-            return result;
-        }
-    };
-
-    DirectionSession &direction_session(bool reverse) {
-        auto &session = reverse ? reverse_session_ : forward_session_;
-        if (!session) {
-            const double build_ms = measure_ms([&]() {
-                session = std::make_unique<DirectionSession>(*weights_, backend_, n_threads_, reverse, graph_config_);
-            });
-            engine::debug::timing_log_scalar(reverse ? "kitten.graph.build.predictor_tail_shared_lstm_reverse_ms"
-                                                     : "kitten.graph.build.predictor_tail_shared_lstm_forward_ms",
-                                             build_ms);
-        }
-        return *session;
-    }
-
-    void run_direction(bool reverse, const std::vector<float> &encoder_tc, int64_t frames, int64_t cols,
-                       std::vector<float> &output_tc) {
-        DirectionSession &session = direction_session(reverse);
-        const int64_t hidden_size = weights_->predictor.shared.hidden_size;
-        std::vector<float> hidden(static_cast<size_t>(hidden_size), 0.0f);
-        std::vector<float> cell(static_cast<size_t>(hidden_size), 0.0f);
-        const int64_t chunks = (frames + kBlockFrames - 1) / kBlockFrames;
-
-        for (int64_t chunk_index = 0; chunk_index < chunks; ++chunk_index) {
-            const int64_t logical_chunk = reverse ? (chunks - 1 - chunk_index) : chunk_index;
-            const int64_t start = logical_chunk * kBlockFrames;
-            const int64_t valid = std::min<int64_t>(kBlockFrames, frames - start);
-            std::vector<float> block(static_cast<size_t>(kBlockFrames * cols), 0.0f);
-            for (int64_t t = 0; t < valid; ++t) {
-                std::memcpy(block.data() + static_cast<ptrdiff_t>(t * cols),
-                            encoder_tc.data() + static_cast<ptrdiff_t>((start + t) * cols),
-                            static_cast<size_t>(cols) * sizeof(float));
-            }
-            DirectionResult result = session.run(block, valid, hidden, cell);
-            hidden = std::move(result.hidden);
-            cell = std::move(result.cell);
-            for (int64_t t = 0; t < valid; ++t) {
-                std::memcpy(output_tc.data() + static_cast<ptrdiff_t>((start + t) * hidden_size),
-                            result.sequence.data() + static_cast<ptrdiff_t>(t * hidden_size),
-                            static_cast<size_t>(hidden_size) * sizeof(float));
-            }
-        }
-    }
-
-    const KittenWeights *weights_ = nullptr;
-    ggml_backend_t backend_ = nullptr;
-    int n_threads_ = 1;
-    KittenPredictorGraphConfig graph_config_ = {};
-    std::unique_ptr<DirectionSession> forward_session_;
-    std::unique_ptr<DirectionSession> reverse_session_;
-};
-
 class PredictorTailGraphRuntime {
   public:
     PredictorTailGraphRuntime(const KittenWeights &weights, ggml_backend_t backend, int n_threads,
                               bool use_device_backend, KittenPredictorGraphConfig graph_config)
         : weights_(&weights), backend_(backend), n_threads_(std::max(1, n_threads)),
-          use_device_backend_(use_device_backend), graph_config_(graph_config),
-          shared_lstm_(weights, backend, n_threads, graph_config) {}
+          use_device_backend_(use_device_backend), graph_config_(graph_config) {}
 
     PredictorOutputs run(const PredictorPreTailOutputs &pre_tail, const std::vector<float> &style_predictor,
                          const std::vector<float> &style_decoder) {
-        std::vector<float> shared_ct;
-        const double shared_lstm_ms = measure_ms([&]() {
-            shared_ct = shared_lstm_.run(pre_tail.expanded_encoder_tc, pre_tail.expanded_encoder_rows,
-                                         pre_tail.expanded_encoder_cols);
-        });
-        engine::debug::timing_log_scalar("kitten.predictor_tail.shared_lstm_block_ms", shared_lstm_ms);
-        return session_for(pre_tail.expanded_encoder_rows)
-            .run(shared_ct, pre_tail.expanded_encoder_rows, pre_tail.asr_ct, pre_tail.asr_rows, pre_tail.asr_cols,
-                 pre_tail.durations, style_predictor, style_decoder);
+        return session_for(pre_tail.expanded_encoder_rows, pre_tail.duration_tokens->ne[1])
+            .run(pre_tail, style_predictor, style_decoder);
     }
 
   private:
     struct Session {
         const KittenWeights *weights = nullptr;
         int64_t frames = 0;
+        int64_t token_count = 0;
         int n_threads = 1;
         bool use_device_backend = false;
         KittenPredictorGraphConfig graph_config = {};
         ggml_context *ctx = nullptr;
+        ggml_tensor * encoder_tokens = nullptr;
+        ggml_tensor * text_tokens = nullptr;
+        ggml_tensor * frame_ids = nullptr;
         ggml_tensor *shared_in = nullptr;
         ggml_tensor *asr_in = nullptr;
         ggml_tensor *style_predictor_in = nullptr;
@@ -1369,8 +1002,8 @@ class PredictorTailGraphRuntime {
         ggml_backend_graph_plan_t plan = nullptr;
 
         Session(const KittenWeights &weights_in, ggml_backend_t backend_in, int64_t frames_in, int n_threads_in,
-                bool use_device_backend_in, KittenPredictorGraphConfig graph_config_in)
-            : weights(&weights_in), frames(frames_in), n_threads(n_threads_in),
+                bool use_device_backend_in, KittenPredictorGraphConfig graph_config_in, int64_t token_count_in)
+            : weights(&weights_in), frames(frames_in), token_count(token_count_in), n_threads(n_threads_in),
               use_device_backend(use_device_backend_in), graph_config(graph_config_in), backend(backend_in) {
             ggml_init_params params{
                 /*.mem_size   =*/graph_config.tail_graph_bytes,
@@ -1386,23 +1019,37 @@ class PredictorTailGraphRuntime {
                 double define_prosody_ms = 0.0;
                 double define_decoder_ms = 0.0;
                 double define_expand_ms = 0.0;
+                std::vector<ggml_tensor *> zero_states;
                 const double define_ms = measure_ms([&]() {
-                    shared_in =
-                        ggml_new_tensor_2d(ctx, GGML_TYPE_F32, frames, weights->predictor.shared.hidden_size * 2);
-                    asr_in = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, frames, 512);
+                    encoder_tokens = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, weights->predictor.shared.input_size, token_count);
+                    text_tokens = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, weights->hidden_dim, token_count);
+                    frame_ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, frames);
+                    ggml_set_input(encoder_tokens);
+                    ggml_set_input(text_tokens);
+                    ggml_set_input(frame_ids);
                     style_predictor_in = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, weights->style_dim, 1);
                     style_decoder_in = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, weights->style_dim, 1);
-                    ggml_set_input(shared_in);
-                    ggml_set_input(asr_in);
                     ggml_set_input(style_predictor_in);
                     ggml_set_input(style_decoder_in);
                     core::ModuleBuildContext build_ctx = {};
                     build_ctx.ggml = ctx;
+                build_ctx.backend_type = core::backend_type(backend);
                     const auto style_predictor = core::wrap_tensor(
                         style_predictor_in, core::TensorShape::from_dims({1, weights->style_dim}), GGML_TYPE_F32);
                     const auto style_decoder = core::wrap_tensor(
                         style_decoder_in, core::TensorShape::from_dims({1, weights->style_dim}), GGML_TYPE_F32);
 
+                    const auto ids = core::wrap_tensor(frame_ids, core::TensorShape::from_dims({frames}), GGML_TYPE_I32);
+                    const auto encoded = modules::EmbeddingModule({token_count, weights->predictor.shared.input_size}).build(
+                        build_ctx, ids, core::wrap_tensor(encoder_tokens,
+                            core::TensorShape::from_dims({token_count, weights->predictor.shared.input_size}), GGML_TYPE_F32));
+                    const auto shared = build_bidirectional_lstm_combined_input_bias(
+                        build_ctx, encoded, weights->predictor.shared, nullptr, zero_states).sequence;
+                    shared_in = ggml_cont(ctx, ggml_transpose(ctx, shared.tensor));
+                    const auto asr = modules::EmbeddingModule({token_count, weights->hidden_dim}).build(
+                        build_ctx, ids, core::wrap_tensor(text_tokens,
+                            core::TensorShape::from_dims({token_count, weights->hidden_dim}), GGML_TYPE_F32));
+                    asr_in = ggml_cont(ctx, ggml_transpose(ctx, asr.tensor));
                     ggml_tensor *shared_ct = shared_in;
 
                     ggml_tensor *f0 = shared_ct;
@@ -1489,26 +1136,7 @@ class PredictorTailGraphRuntime {
                     }
                 }
                 const double materialize_ms = measure_ms([&]() {
-                    std::vector<float> shared(static_cast<size_t>(weights->predictor.shared.hidden_size * 2 * frames),
-                                              0.0f);
-                    std::vector<float> asr(static_cast<size_t>(512 * frames), 0.0f);
-                    std::vector<float> style_predictor(static_cast<size_t>(weights->style_dim), 0.0f);
-                    std::vector<float> style_decoder(static_cast<size_t>(weights->style_dim), 0.0f);
-                    core::write_tensor_f32(core::wrap_tensor(shared_in,
-                                                             core::TensorShape::from_dims(
-                                                                 {weights->predictor.shared.hidden_size * 2, frames}),
-                                                             GGML_TYPE_F32),
-                                           shared);
-                    core::write_tensor_f32(
-                        core::wrap_tensor(asr_in, core::TensorShape::from_dims({512, frames}), GGML_TYPE_F32), asr);
-                    core::write_tensor_f32(core::wrap_tensor(style_predictor_in,
-                                                             core::TensorShape::from_dims({weights->style_dim}),
-                                                             GGML_TYPE_F32),
-                                           style_predictor);
-                    core::write_tensor_f32(core::wrap_tensor(style_decoder_in,
-                                                             core::TensorShape::from_dims({weights->style_dim}),
-                                                             GGML_TYPE_F32),
-                                           style_decoder);
+                    upload_zero_state_inputs(zero_states);
                     upload_time_masks(time_masks, frames, frames);
                 });
                 engine::debug::timing_log_scalar("kitten.graph.build.predictor_tail_define_ms", define_ms);
@@ -1547,59 +1175,22 @@ class PredictorTailGraphRuntime {
             }
         }
 
-        PredictorOutputs run(const std::vector<float> &shared_ct, int64_t expanded_encoder_rows,
-                             const std::vector<float> &asr_ct, int64_t asr_rows, int64_t asr_cols,
-                             const std::vector<int32_t> &durations, const std::vector<float> &style_predictor,
-                             const std::vector<float> &style_decoder) {
-            if (expanded_encoder_rows <= 0 || expanded_encoder_rows > frames || asr_cols != expanded_encoder_rows) {
-                throw std::runtime_error("kitten predictor tail input frame count "
-                                         "exceeds prepared capacity");
-            }
-            if (static_cast<int64_t>(shared_ct.size()) !=
-                    weights->predictor.shared.hidden_size * 2 * expanded_encoder_rows ||
-                asr_rows != 512) {
-                throw std::runtime_error("kitten predictor tail input shape changed");
-            }
+        PredictorOutputs run(const PredictorPreTailOutputs & input, const std::vector<float> & style_predictor,
+                             const std::vector<float> & style_decoder) {
+            const auto expanded_encoder_rows = input.expanded_encoder_rows;
+            const auto & durations = input.durations;
+            if (expanded_encoder_rows != frames || static_cast<int64_t>(durations.size()) > token_count)
+                throw std::runtime_error("Kitten tail input does not match its prepared shape");
+            std::vector<int32_t> indices;
+            indices.reserve(static_cast<size_t>(frames));
+            for (size_t token = 0; token < durations.size(); ++token)
+                indices.insert(indices.end(), static_cast<size_t>(durations[token]), static_cast<int32_t>(token));
             const double upload_ms = measure_ms([&]() {
-                double pad_ms = 0.0;
-                double tensor_upload_ms = 0.0;
-                std::vector<float> padded_shared(
-                    static_cast<size_t>(weights->predictor.shared.hidden_size * 2 * frames), 0.0f);
-                const int64_t shared_rows = weights->predictor.shared.hidden_size * 2;
-                std::vector<float> padded_asr(static_cast<size_t>(512 * frames), 0.0f);
-                pad_ms = measure_ms([&]() {
-                    for (int64_t row = 0; row < shared_rows; ++row) {
-                        std::memcpy(padded_shared.data() + static_cast<ptrdiff_t>(row * frames),
-                                    shared_ct.data() + static_cast<ptrdiff_t>(row * expanded_encoder_rows),
-                                    static_cast<size_t>(expanded_encoder_rows) * sizeof(float));
-                    }
-                    for (int64_t row = 0; row < 512; ++row) {
-                        std::memcpy(padded_asr.data() + static_cast<ptrdiff_t>(row * frames),
-                                    asr_ct.data() + static_cast<ptrdiff_t>(row * expanded_encoder_rows),
-                                    static_cast<size_t>(expanded_encoder_rows) * sizeof(float));
-                    }
-                });
-                tensor_upload_ms = measure_ms([&]() {
-                    core::write_tensor_f32(core::wrap_tensor(shared_in,
-                                                             core::TensorShape::from_dims(
-                                                                 {weights->predictor.shared.hidden_size * 2, frames}),
-                                                             GGML_TYPE_F32),
-                                           padded_shared);
-                    core::write_tensor_f32(
-                        core::wrap_tensor(asr_in, core::TensorShape::from_dims({512, frames}), GGML_TYPE_F32),
-                        padded_asr);
-                    core::write_tensor_f32(core::wrap_tensor(style_predictor_in,
-                                                             core::TensorShape::from_dims({weights->style_dim}),
-                                                             GGML_TYPE_F32),
-                                           style_predictor);
-                    core::write_tensor_f32(core::wrap_tensor(style_decoder_in,
-                                                             core::TensorShape::from_dims({weights->style_dim}),
-                                                             GGML_TYPE_F32),
-                                           style_decoder);
-                    upload_time_masks(time_masks, expanded_encoder_rows, frames);
-                });
-                engine::debug::timing_log_scalar("kitten.predictor_tail.input_pad_ms", pad_ms);
-                engine::debug::timing_log_scalar("kitten.predictor_tail.tensor_upload_ms", tensor_upload_ms);
+                ggml_backend_tensor_copy(input.duration_tokens, encoder_tokens);
+                ggml_backend_tensor_copy(input.text_tokens, text_tokens);
+                ggml_backend_tensor_set(frame_ids, indices.data(), 0, indices.size() * sizeof(int32_t));
+                ggml_backend_tensor_set(style_predictor_in, style_predictor.data(), 0, style_predictor.size() * sizeof(float));
+                ggml_backend_tensor_set(style_decoder_in, style_decoder.data(), 0, style_decoder.size() * sizeof(float));
             });
             engine::debug::timing_log_scalar("kitten.predictor_tail.input_upload_ms", upload_ms);
             core::set_backend_threads(backend, n_threads);
@@ -1640,15 +1231,15 @@ class PredictorTailGraphRuntime {
         }
     };
 
-    Session &session_for(int64_t frames) {
-        if (session_ && session_->weights == weights_ && session_->frames == frames &&
+    Session &session_for(int64_t frames, int64_t token_count) {
+        if (session_ && session_->weights == weights_ && session_->frames == frames && session_->token_count == token_count &&
             session_->n_threads == n_threads_ && session_->use_device_backend == use_device_backend_) {
             return *session_;
         }
         session_.reset();
         const double build_ms = measure_ms([&]() {
             session_ =
-                std::make_unique<Session>(*weights_, backend_, frames, n_threads_, use_device_backend_, graph_config_);
+                std::make_unique<Session>(*weights_, backend_, frames, n_threads_, use_device_backend_, graph_config_, token_count);
         });
         engine::debug::timing_log_scalar("kitten.graph.build.predictor_tail_ms", build_ms);
         return *session_;
@@ -1659,7 +1250,6 @@ class PredictorTailGraphRuntime {
     int n_threads_ = 1;
     bool use_device_backend_ = false;
     KittenPredictorGraphConfig graph_config_ = {};
-    TailSharedLstmBlockRuntime shared_lstm_;
     std::unique_ptr<Session> session_;
 };
 
@@ -1681,11 +1271,11 @@ struct KittenPredictorRuntime::Impl {
          KittenPredictorGraphConfig graph_config_in)
         : weights(std::move(weights_in)), n_threads(std::max(1, n_threads_in)),
           use_device_backend(use_device_backend_in), backend(backend_in),
-          pre_tail_token_capacity(pre_tail_token_capacity_in), graph_config(graph_config_in),
-          plbert(weights, backend, n_threads, use_device_backend, plbert_fixed_token_capacity),
+          pre_tail_token_capacity(std::max(pre_tail_token_capacity_in, plbert_fixed_token_capacity)), graph_config(graph_config_in),
+          plbert(weights, backend, n_threads, use_device_backend, std::max(plbert_fixed_token_capacity, pre_tail_token_capacity_in)),
           pre_tail_graph(*weights, backend, n_threads, use_device_backend, graph_config),
           tail_graph(*weights, backend, n_threads, use_device_backend, graph_config) {
-        plbert.prepare(true);
+        if (std::max(plbert_fixed_token_capacity, pre_tail_token_capacity_in) > 0) plbert.prepare(true);
         if (pre_tail_token_capacity > 0) {
             pre_tail_graph.prepare_capacity(pre_tail_token_capacity);
         }
@@ -1712,15 +1302,17 @@ PredictorOutputs KittenPredictorRuntime::predict(const std::vector<int32_t> &inp
     const int64_t token_count = static_cast<int64_t>(input_ids.size());
     const std::vector<float> style_decoder(ref_s.begin(), ref_s.begin() + 128);
     const std::vector<float> style_predictor(ref_s.begin() + 128, ref_s.end());
-    std::vector<float> plbert_hidden_tc;
-    const double plbert_ms = measure_ms([&]() { plbert_hidden_tc = impl_->plbert.encode(input_ids, true); });
+    const ggml_tensor * plbert_tensor = nullptr;
+    const double plbert_ms = measure_ms([&]() {
+        plbert_tensor = impl_->plbert.encode_tensor(input_ids, true);
+    });
     engine::debug::timing_log_scalar("kitten.predictor.plbert_ms", plbert_ms);
 
     const int64_t pre_tail_capacity =
         checked_capacity(std::max(token_count, impl_->pre_tail_token_capacity), impl_->weights->context_length);
     PredictorPreTailOutputs pre_tail;
     const double pretail_ms = measure_ms([&]() {
-        pre_tail = impl_->pre_tail_graph.run(plbert_hidden_tc, input_ids, style_predictor, speed, pre_tail_capacity);
+        pre_tail = impl_->pre_tail_graph.run(plbert_tensor, input_ids, style_predictor, speed, pre_tail_capacity);
     });
     engine::debug::timing_log_scalar("kitten.predictor.pretail_ms", pretail_ms);
     PredictorOutputs output;

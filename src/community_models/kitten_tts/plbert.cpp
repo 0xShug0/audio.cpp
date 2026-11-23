@@ -4,6 +4,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/lookup_modules.h"
@@ -180,6 +181,8 @@ struct PlbertSession {
     ggml_cgraph *graph = nullptr;
     ggml_gallocr_t gallocr = nullptr;
     ggml_backend_graph_plan_t plan = nullptr;
+    std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> blas{nullptr, ggml_backend_free};
+    std::unique_ptr<ggml_backend_sched, decltype(&ggml_backend_sched_free)> scheduler{nullptr, ggml_backend_sched_free};
     std::vector<int32_t> position_ids_host;
     std::vector<int32_t> token_type_ids_host;
 
@@ -204,7 +207,9 @@ struct PlbertSession {
             ggml_set_input(ids);
             ggml_set_input(attn_mask);
             ggml_set_input(position_ids);
+            ggml_set_output(position_ids);
             ggml_set_input(token_type_ids);
+            ggml_set_output(token_type_ids);
 
             core::ModuleBuildContext build_ctx{ctx, "kitten.plbert"};
             auto hidden = plbert_last_hidden_state(build_ctx, ids, attn_mask, position_ids, token_type_ids, *weights);
@@ -222,14 +227,41 @@ struct PlbertSession {
             ggml_build_forward_expand(graph, output);
 
             core::set_backend_threads(backend, n_threads);
+            if (!use_device_backend && ggml_backend_reg_by_name("BLAS")) {
+                blas.reset(ggml_backend_init_by_name("BLAS", nullptr));
+                if (!blas) throw std::runtime_error("Kitten PL-BERT BLAS initialization failed");
+                const auto reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(blas.get()));
+                const auto set_threads = reinterpret_cast<ggml_backend_set_n_threads_t>(
+                    ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads"));
+                if (!set_threads) throw std::runtime_error("Kitten BLAS backend has no thread control");
+                set_threads(blas.get(), n_threads);
+                // The scheduler can promote CPU nodes to BLAS when both use host buffers.
+                // Keep mixed-precision graphs on CPU rather than dequantizing their matmuls.
+                for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+                    const auto * node = ggml_graph_node(graph, i);
+                    if (node->op == GGML_OP_MUL_MAT && node->src[0]->type != GGML_TYPE_F32 &&
+                        ggml_backend_supports_op(blas.get(), node)) {
+                        blas.reset();
+                        break;
+                    }
+                }
+            }
+            engine::debug::trace_log_scalar("kitten.plbert.blas_enabled", static_cast<bool>(blas));
             const double alloc_ms = measure_ms([&]() {
+                if (blas) {
+                    ggml_backend_t backends[] = {blas.get(), backend};
+                    scheduler.reset(ggml_backend_sched_new(backends, nullptr, 2, ggml_graph_size(graph), false, false));
+                    if (!scheduler || !ggml_backend_sched_alloc_graph(scheduler.get(), graph))
+                        throw std::runtime_error("Kitten PL-BERT scheduled allocation failed");
+                    return;
+                }
                 gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
                 if (gallocr == nullptr || !ggml_gallocr_reserve(gallocr, graph) ||
                     !ggml_gallocr_alloc_graph(gallocr, graph)) {
                     throw std::runtime_error("failed to allocate Kitten PL-BERT graph tensors");
                 }
             });
-            if (engine::core::uses_host_graph_plan(backend)) {
+            if (!scheduler && engine::core::uses_host_graph_plan(backend)) {
                 plan = engine::core::create_backend_graph_plan_if_host(backend, graph);
                 if (!plan) {
                     throw std::runtime_error("failed to create Kitten PL-BERT graph plan");
@@ -240,8 +272,11 @@ struct PlbertSession {
             for (int64_t t = 0; t < token_count; ++t) {
                 position_ids_host[static_cast<size_t>(t)] = static_cast<int32_t>(t);
             }
+            ggml_backend_tensor_set(position_ids, position_ids_host.data(), 0, ggml_nbytes(position_ids));
+            ggml_backend_tensor_set(token_type_ids, token_type_ids_host.data(), 0, ggml_nbytes(token_type_ids));
             engine::debug::timing_log_scalar("kitten.graph.build.plbert_alloc_ms", alloc_ms);
         } catch (...) {
+            scheduler.reset();
             if (plan) {
                 engine::core::free_backend_graph_plan(backend, plan);
             }
@@ -257,6 +292,7 @@ struct PlbertSession {
     }
 
     ~PlbertSession() {
+        scheduler.reset();
         if (plan) {
             engine::core::free_backend_graph_plan(backend, plan);
         }
@@ -276,7 +312,7 @@ struct PlbertSession {
                use_device_backend == use_device_backend_in;
     }
 
-    std::vector<float> run(const std::vector<int32_t> &input_ids) {
+    std::vector<float> run(const std::vector<int32_t> &input_ids, bool read_back = true) {
         if (input_ids.empty() || static_cast<int64_t>(input_ids.size()) > token_count) {
             throw std::runtime_error("Kitten PL-BERT input length exceeds prepared capacity");
         }
@@ -292,20 +328,22 @@ struct PlbertSession {
             core::write_tensor_i32(
                 core::wrap_tensor(ids, core::TensorShape::from_dims({1, token_count}), GGML_TYPE_I32), padded_ids);
             ggml_backend_tensor_set(attn_mask, attn_mask_host.data(), 0, ggml_nbytes(attn_mask));
-            core::write_tensor_i32(
-                core::wrap_tensor(position_ids, core::TensorShape::from_dims({1, token_count}), GGML_TYPE_I32),
-                position_ids_host);
-            core::write_tensor_i32(
-                core::wrap_tensor(token_type_ids, core::TensorShape::from_dims({1, token_count}), GGML_TYPE_I32),
-                token_type_ids_host);
+
+
         });
         core::set_backend_threads(backend, n_threads);
         ggml_status status = GGML_STATUS_SUCCESS;
         const double compute_ms =
-            measure_ms([&]() { status = engine::core::compute_backend_graph(backend, graph, plan); });
+            measure_ms([&]() { status = scheduler ? ggml_backend_sched_graph_compute(scheduler.get(), graph) : engine::core::compute_backend_graph(backend, graph, plan); });
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error(std::string("kitten_plbert_encode graph compute failed: ") +
                                      ggml_status_to_string(status));
+        }
+        if (!read_back) {
+            engine::debug::timing_log_scalar("kitten.plbert.mask_build_ms", mask_build_ms);
+            engine::debug::timing_log_scalar("kitten.plbert.input_upload_ms", input_upload_ms);
+            engine::debug::timing_log_scalar("kitten.plbert.compute_ms", compute_ms);
+            return {};
         }
         std::vector<float> full;
         const double output_read_ms = measure_ms([&]() { full = core::read_tensor_f32(output); });
@@ -384,6 +422,14 @@ std::vector<float> KittenPlbertRuntime::encode(const std::vector<int32_t> &input
         throw std::runtime_error("kitten_plbert_encode input length exceeds PL-BERT context length");
     }
     return impl_->session_for(static_cast<int64_t>(input_ids.size()), project_hidden).run(input_ids);
+}
+
+const ggml_tensor * KittenPlbertRuntime::encode_tensor(const std::vector<int32_t> & input_ids, bool project_hidden) {
+    if (input_ids.empty() || static_cast<int64_t>(input_ids.size()) > impl_->weights->context_length)
+        throw std::runtime_error("Kitten PL-BERT input is outside the checkpoint context");
+    auto & session = impl_->session_for(static_cast<int64_t>(input_ids.size()), project_hidden);
+    session.run(input_ids, false);
+    return session.output;
 }
 
 } // namespace engine::models::kitten_tts

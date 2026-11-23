@@ -5,6 +5,7 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/io/json.h"
+#include "engine/community_models/kitten_tts/routing.h"
 
 #include <ggml.h>
 
@@ -18,6 +19,7 @@
 
 namespace engine::models::kitten_tts {
 struct KittenWeights {
+    KittenVariant variant = KittenVariant::Mini08;
     struct LinearWeights {
         engine::core::TensorValue weight;
         std::optional<engine::core::TensorValue> bias;
@@ -75,7 +77,8 @@ struct KittenWeights {
 
     struct WeightNormConvTranspose1dWeights {
         engine::core::TensorValue weight;
-        engine::core::TensorValue dense_weight;
+        engine::core::TensorValue depthwise_weight;
+        std::shared_ptr<Conv1dWeights> phase_shuffle_conv;
         std::optional<engine::core::TensorValue> bias;
         int64_t in_channels = 0;
         int64_t out_channels = 0;
@@ -256,6 +259,7 @@ struct KittenVoicePack {
 };
 
 struct KittenAssets {
+    const KittenRoute * route = nullptr;
     std::filesystem::path model_root;
     engine::assets::ResourceBundle resources;
     engine::io::json::Value config;
@@ -265,6 +269,7 @@ struct KittenAssets {
     std::unordered_map<std::string, KittenVoicePack> voices;
     std::unordered_map<std::string, std::string> voice_aliases;
     std::unordered_map<std::string, float> speed_priors;
+    std::unordered_map<std::string, std::string> voice_languages;
 };
 
 std::shared_ptr<const KittenAssets> load_kitten_assets(const std::filesystem::path &model_root);

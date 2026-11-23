@@ -5,6 +5,7 @@
 #include <vector>
 
 typedef struct ggml_backend *ggml_backend_t;
+struct ggml_tensor;
 
 namespace engine::models::kitten_tts {
 
@@ -23,6 +24,8 @@ class KittenPlbertRuntime {
 
     void prepare(bool project_hidden = true);
     std::vector<float> encode(const std::vector<int32_t> &input_ids, bool project_hidden = true);
+    // Borrowed backend output, valid until the next encode or destruction.
+    const ggml_tensor * encode_tensor(const std::vector<int32_t> &input_ids, bool project_hidden = true);
 
   private:
     struct Impl;
