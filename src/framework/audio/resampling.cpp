@@ -508,6 +508,20 @@ std::vector<float> resample_mono_soxr_or_linear(
     return resample_mono_linear(mono_samples, source_sample_rate_hz, target_sample_rate_hz);
 }
 
+std::vector<float> resample_mono_soxr_or_sinc(
+    const std::vector<float> & mono_samples,
+    int source_sample_rate_hz,
+    int target_sample_rate_hz,
+    const SoxrResampleOptions & options) {
+    auto soxr_options = options;
+    soxr_options.fallback_description = "torchaudio-compatible sinc resampling";
+    if (auto output = try_resample_mono_soxr(
+            mono_samples, source_sample_rate_hz, target_sample_rate_hz, soxr_options)) {
+        return std::move(*output);
+    }
+    return resample_mono_torchaudio_sinc_hann(mono_samples, source_sample_rate_hz, target_sample_rate_hz);
+}
+
 std::vector<float> resample_mono_linear(
     const std::vector<float> & mono_samples,
     int source_sample_rate_hz,

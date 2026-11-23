@@ -69,7 +69,8 @@ For reference-audio conditioning, replace the MIDI options with
 Reference audio and MIDI inputs are mutually exclusive.
 
 Upstream selects the transcribed lead-singing track as melody; audio without
-a detected melody is rejected. Reference-audio preprocessing requires SOXR.
+a detected melody is rejected. Reference-audio preprocessing prefers SOXR and
+uses the built-in sinc resampler with a warning when it is unavailable.
 MIDI inputs use musical ticks, so changing MIDI tempo metadata does not impose
 a target generation tempo.
 

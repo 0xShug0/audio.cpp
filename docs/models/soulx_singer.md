@@ -97,8 +97,8 @@ audiocpp_cli --task svc --family soulx_singer \
 ```
 
 The package contains all inference weights and configuration. F0 preprocessing
-requires a build with SOXR. Longer recordings are processed using pitch-aware
-segments with context; this is offline chunking, not streaming playback.
+prefers SOXR and uses the built-in sinc resampler with a warning when it is unavailable.
+Longer recordings are processed using pitch-aware segments with context; this is offline chunking, not streaming playback.
 
 ## Options
 

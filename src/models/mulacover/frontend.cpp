@@ -325,7 +325,7 @@ class ChordFrontend::Impl {
         return bpm;
     }
 
-    // librosa.resample(..., res_type="soxr_hq", fix=True), never linear fallback.
+    // Prefer librosa-compatible soxr_hq, with the shared sinc fallback when unavailable.
     std::vector<float> resample(const std::vector<float> & input, int source, int target, bool scale) {
         audio::SoxrResampleOptions options;
         options.profile = audio::SoxrResampleProfile::ExplicitFloat32Runtime;
@@ -334,16 +334,14 @@ class ChordFrontend::Impl {
         options.require_full_input = true;
         options.reject_empty_output = true;
         options.warning_context = "mulacover.chord.frontend";
-        options.fallback_description = "no substitute is permitted; frontend will fail";
-        auto result = audio::try_resample_mono_soxr(input,source,target,options);
-        if (!result) throw std::runtime_error("MuLaCover Chord CQT requires working soxr_hq resampling");
+        auto result = audio::resample_mono_soxr_or_sinc(input,source,target,options);
         // Match librosa's ceil(n * ratio) evaluation order, including source-rate conversion.
-        result->resize(static_cast<size_t>(std::ceil(input.size()*(static_cast<double>(target)/source))),0.0f);
+        result.resize(static_cast<size_t>(std::ceil(input.size()*(static_cast<double>(target)/source))),0.0f);
         if (scale) {
             const double divisor = std::sqrt(static_cast<double>(target)/source);
-            for (auto & value : *result) value = static_cast<float>(value/divisor);
+            for (auto & value : result) value = static_cast<float>(value/divisor);
         }
-        return std::move(*result);
+        return result;
     }
 
     int estimate_tuning(const std::vector<float> & y) {

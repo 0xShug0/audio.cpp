@@ -52,9 +52,7 @@ public:
         if (a.sample_rate != 24000) {
             audio::SoxrResampleOptions resampling;
             resampling.reject_empty_output = true;
-            const auto resampled = audio::try_resample_mono_soxr(samples, a.sample_rate, 24000, resampling);
-            if (!resampled) throw runtime::InvalidRequestError("ROSVOT sample-rate conversion requires SOXR support");
-            samples = *resampled;
+            samples = audio::resample_mono_soxr_or_sinc(samples, a.sample_rate, 24000, resampling);
         }
         const auto threshold = runtime::parse_finite_float_option(request.options, {"note_boundary_threshold"}).value_or(0.85f);
         const auto word_threshold = runtime::parse_finite_float_option(request.options, {"word_boundary_threshold"}).value_or(0.5f);

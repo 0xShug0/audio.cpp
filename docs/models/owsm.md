@@ -28,7 +28,7 @@ and `--segments-out segments.json`.
 
 | Option | Description |
 | --- | --- |
-| `--audio` | Input audio. Non-16 kHz input is resampled with SOXR. |
+| `--audio` | Input audio. Non-16 kHz input prefers SOXR, with a built-in sinc fallback. |
 | `--backend` | Execution backend. |
 | `--mode` | `offline` (default) or `streaming` text output from a complete audio file. |
 | `--threads` | CPU thread count. |

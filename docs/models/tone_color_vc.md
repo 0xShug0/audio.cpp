@@ -15,7 +15,7 @@ audiocpp_cli --task vc --family tone_color_vc \
 ```
 
 The output is mono, 22,050 Hz audio. Inputs are mixed down to mono. Other sample
-rates require libsoxr; otherwise resample the input WAVs to 22,050 Hz first.
+rates prefer SOXR, with a warning and the built-in sinc fallback when it is unavailable.
 Conversion is offline. No separate watermark model is applied.
 
 F32 and F16 packages are available. F16 keeps biases and normalization vectors

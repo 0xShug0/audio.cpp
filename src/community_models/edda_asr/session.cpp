@@ -127,11 +127,7 @@ private:
             audio::SoxrResampleOptions resample;
             resample.output_length_policy = audio::SoxrOutputLengthPolicy::ExactExpected;
             resample.require_full_input = true;
-            auto resampled = audio::try_resample_mono_soxr(audio_, audio.sample_rate, kSampleRate, resample);
-            if (!resampled) {
-                throw std::runtime_error("Edda needs SOXR for non-16-kHz input");
-            }
-            audio_ = std::move(*resampled);
+            audio_ = audio::resample_mono_soxr_or_sinc(audio_, audio.sample_rate, kSampleRate, resample);
         }
         if (audio_.empty()) {
             audio_.resize(kSampleRate / 2, 0.0f);

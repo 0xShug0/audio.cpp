@@ -42,11 +42,7 @@ AudioFlamingoAudioFeatures AudioFlamingoFrontend::extract(const runtime::AudioBu
         engine::audio::SoxrResampleOptions options;
         options.output_length_policy = engine::audio::SoxrOutputLengthPolicy::ExactExpected;
         options.require_full_input = true;
-        auto converted = engine::audio::try_resample_mono_soxr(samples, audio.sample_rate, c.sample_rate, options);
-        if (!converted) {
-            throw std::runtime_error("Audio Flamingo requires SOXR to resample non-16-kHz audio");
-        }
-        samples = std::move(*converted);
+        samples = engine::audio::resample_mono_soxr_or_sinc(samples, audio.sample_rate, c.sample_rate, options);
     }
     if (samples.size() > static_cast<size_t>(c.max_audio_length_sec * c.sample_rate)) {
         throw std::runtime_error("Audio Flamingo input exceeds the processor's maximum audio duration");
