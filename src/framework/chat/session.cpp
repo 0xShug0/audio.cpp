@@ -173,7 +173,7 @@ runtime::StreamEvent Duplex::end_input() {
     return event;
 }
 
-runtime::TaskResult Duplex::finish() {
+runtime::TaskResult Duplex::finalize() {
     (void)end_input();
     auto & m = *impl_;
     runtime::TaskResult result;
@@ -387,14 +387,14 @@ std::optional<runtime::StreamEvent> Session::poll() {
     return active.reply->next();
 }
 
-runtime::TaskResult Session::finish() {
+runtime::TaskResult Session::finalize() {
     auto & a = impl_->require_active();
     runtime::TaskResult result;
     if (a.duplex) {
-        result = a.duplex->finish();
+        result = a.duplex->finalize();
     } else if (a.reply) {
-        impl_->limited = a.reply->done() && !a.reply->ended();
-        result = a.reply->finish();
+        impl_->limited = a.reply->done() && !a.reply->reached_eos();
+        result = a.reply->finalize();
     } else {
         result.audio_output = runtime::AudioBuffer{a.turn.output_sample_rate, 1, {}};
         result.text_output = runtime::Transcript{"", a.turn.language};
@@ -404,7 +404,7 @@ runtime::TaskResult Session::finish() {
     }
     if (a.retain_history && !a.input.samples.empty()) {
         a.user.audio_input = std::move(a.input);
-        impl_->commit_exchange({std::move(a.user), result, a.duplex || (a.reply && a.reply->done()), a.reply ? a.reply->steps() : std::vector<ReplyStep>{}});
+        impl_->commit_exchange({std::move(a.user), result, a.duplex || (a.reply && a.reply->reached_eos()), a.reply ? a.reply->steps() : std::vector<ReplyStep>{}});
     }
     impl_->active.reset();
     return result;
@@ -431,7 +431,7 @@ runtime::TaskResult Session::run(const runtime::TaskRequest & request, HistoryMo
         if (active.retain_history) active.input = input;
         impl_->start_reply(input);
         active.reply->run();
-        return finish();
+        return finalize();
     } catch (...) {
         impl_->active.reset();
         throw;
@@ -447,7 +447,7 @@ void Session::interrupt() {
         impl_->commit_exchange({std::move(a.user), std::move(prefix), false, {}});
         impl_->active.reset();
     } else if (impl_->active && impl_->active->retain_history && impl_->active->reply) {
-        (void)finish();
+        (void)finalize();
     } else {
         impl_->active.reset();
     }
@@ -482,7 +482,7 @@ runtime::StreamingPolicy TaskSession::streaming_policy() const { return policy_;
 bool TaskSession::reply_limited() const { return chat_->reply_limited(); }
 bool Session::reply_limited() const {
     const auto & a = impl_->active;
-    return a && a->reply ? a->reply->done() && !a->reply->ended() : impl_->limited;
+    return a && a->reply ? a->reply->done() && !a->reply->reached_eos() : impl_->limited;
 }
 void TaskSession::start_stream(const runtime::TaskRequest & request) {
     if (run_mode() != runtime::RunMode::Streaming) throw runtime::InvalidRequestError("Chat streaming requires a streaming session");
@@ -493,7 +493,7 @@ void TaskSession::start_stream(const runtime::TaskRequest & request) {
 std::optional<runtime::StreamEvent> TaskSession::next_stream_event() { chat_->end_turn(); return chat_->poll(); }
 void TaskSession::set_stream_event_sink(runtime::StreamEventCallback) {} // The task driver forwards returned events.
 runtime::TaskResult TaskSession::finish_stream() {
-    auto result = chat_->finish();
+    auto result = chat_->finalize();
     debug::timing_log_scalar("session.wall_ms", debug::elapsed_ms(stream_start_));
     return result;
 }

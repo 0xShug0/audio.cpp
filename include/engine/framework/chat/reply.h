@@ -68,11 +68,11 @@ public:
     void retain_history();
     void enable_history(HistoryFormat format, bool emit_artifact);
     void run();
-    runtime::TaskResult finish();
+    runtime::TaskResult finalize();
     std::optional<runtime::StreamEvent> next();
     runtime::TaskResult result() const;
     bool done() const;
-    bool ended() const;
+    bool reached_eos() const;
     size_t audio_frames() const;
     size_t text_tokens() const;
     const std::vector<ReplyStep> & steps() const;

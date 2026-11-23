@@ -74,7 +74,7 @@ void test_reply_and_wire_history() {
     require_eq(counts->begin, 1, "codec started once");
     require_eq(counts->push, 1, "text-only updates do not run audio decoding");
     require_eq(counts->flush, 1, "codec flushed once");
-    const auto output = reply->finish();
+    const auto output = reply->finalize();
     const auto & artifact = output.output_artifacts.at(0);
     // Independent wire fixture: four text tokens and two two-codebook frames,
     // with the EOS frame retained for replay despite not being decoded.
@@ -97,7 +97,7 @@ void test_reply_and_wire_history() {
 
     auto offline = make_reply(std::make_shared<Counts>());
     offline->run();
-    const auto offline_result = offline->finish();
+    const auto offline_result = offline->finalize();
     require(offline_result.audio_output->samples == pcm, "independent whole decoder agrees with streamed PCM");
     require_eq(offline_result.text_output->text, transcript, "offline and streaming text");
 }
@@ -107,7 +107,7 @@ void test_partial_and_limited_completion() {
     auto partial = make_reply(counts);
     partial->enable_history(format(), true);
     partial->next();
-    const auto early = partial->finish();
+    const auto early = partial->finalize();
     require_eq(early.output_artifacts[0].meta.at("ended"), std::string("false"), "early finish exports incomplete reply");
     require_eq(early.output_artifacts[0].meta.at("steps"), std::string("1"), "early finish captures only consumed step");
     require_eq(counts->flush, 0, "early finish does not generate a new tail");
@@ -116,8 +116,8 @@ void test_partial_and_limited_completion() {
     limited->enable_history(format(), true);
     limited->run();
     require_eq(limited_counts->invocations, size_t{6}, "no unused inference after the generation cap");
-    require(limited->done() && !limited->ended(), "generation-cap completion distinguished from EOS");
-    require_eq(limited->finish().output_artifacts[0].meta.at("ended"), std::string("false"), "capped reply remains replayable");
+    require(limited->done() && !limited->reached_eos(), "generation-cap completion distinguished from EOS");
+    require_eq(limited->finalize().output_artifacts[0].meta.at("ended"), std::string("false"), "capped reply remains replayable");
 }
 
 void test_no_speech_fails_explicitly() {
@@ -143,16 +143,18 @@ void test_no_speech_fails_explicitly() {
 void test_conversation_lifecycle_and_endpoint() {
     std::vector<size_t> supplied_history;
     auto counts = std::make_shared<Counts>();
+    bool limit_reply = false;
     chat::Session session("Synthetic", [&](const runtime::TaskRequest &, chat::HistoryMode) {
         chat::UserTurn turn;
         turn.output_sample_rate = 8;
         turn.max_audio_seconds = 2;
         turn.max_reply_steps = 6;
         turn.history_format = format();
+        turn.return_codes = limit_reply;
         turn.reply = [&](const runtime::AudioBuffer &, const std::vector<chat::ConversationTurn> & history) {
             supplied_history.push_back(history.size());
             counts = std::make_shared<Counts>();
-            return make_reply(counts);
+            return make_reply(counts, !limit_reply, limit_reply ? 6 : 8);
         };
         return turn;
     });
@@ -165,7 +167,7 @@ void test_conversation_lifecycle_and_endpoint() {
     session.push_audio({8, 1, 2, {3, 4}});
     session.end_turn();
     while (session.poll()) {}
-    const auto first = session.finish();
+    const auto first = session.finalize();
     require(!first.audio_output->samples.empty(), "completed chat has audio");
     require_eq(session.history().size(), size_t{1}, "conversation owns completed exchange");
     require(session.history()[0].complete, "complete reply recorded");
@@ -185,6 +187,10 @@ void test_conversation_lifecycle_and_endpoint() {
     require(session.history().empty(), "reset clears conversation");
     session.run(request);
     require_eq(supplied_history.back(), size_t{0}, "clean generation after reset");
+    limit_reply = true;
+    const auto capped = session.run(request);
+    require(!session.history().back().complete, "token-limited native reply is incomplete");
+    require_eq(capped.output_artifacts.at(0).meta.at("ended"), std::string("false"), "token-limited wire reply is incomplete");
 }
 
 void test_native_history_needs_no_wire_format() {
@@ -241,7 +247,7 @@ void test_imported_history_continuation() {
             session.end_turn();
             if (completion == 1) {
                 while (session.poll()) {}
-                session.finish();
+                session.finalize();
             } else {
                 session.poll();
                 session.interrupt();
@@ -322,10 +328,10 @@ void test_text_stage_is_shared_and_released_before_speech() {
     chat::Reply reply(std::move(pipeline));
     reply.retain_history();
     reply.run();
-    require(reply.done() && reply.ended(), "framework owns text-stage natural completion");
+    require(reply.done() && reply.reached_eos(), "framework owns text-stage natural completion");
     require_eq(calls, size_t{3}, "exact token-step count including EOS");
     require_eq(reply.steps().size(), size_t{2}, "text history contains emitted tokens");
-    const auto result = reply.finish();
+    const auto result = reply.finalize();
     require(result.audio_output->samples == std::vector<float>({4, 5}), "synthesis output retained");
     calls = 0;
     synth_calls = 0;
@@ -403,7 +409,7 @@ void test_duplex_clock_and_bounded_reuse() {
         const auto event = duplex.push({8, 1, (i - 1) * 2, {static_cast<float>(i), 0}});
         require(event.audio_output && event.audio_output->samples == std::vector<float>(2, static_cast<float>(i + 10)), "live frame emitted promptly");
     }
-    const auto output = duplex.finish();
+    const auto output = duplex.finalize();
     require(seen == std::vector<int32_t>({1, 2, 3, 4, 5}), "consumed frame queue offsets remain correct across compaction");
     require_eq(output.audio_output->samples.size(), size_t{10}, "live output sample count");
     seen.clear();
@@ -414,7 +420,7 @@ void test_duplex_clock_and_bounded_reuse() {
     require(seen == std::vector<int32_t>{1}, "preencoded input still follows received sample clock");
     complete.push({8, 1, 2, {2, 0, 3}});
     require(seen == std::vector<int32_t>({1, 2}), "partial final frame waits for completion");
-    const auto tail = complete.finish();
+    const auto tail = complete.finalize();
     require(seen == std::vector<int32_t>({1, 2, 3}), "final partial frame consumed exactly once");
     require_eq(tail.audio_output->samples.size(), size_t{5}, "codec padding removed at final input boundary");
     // The conversation API queues events for both execution paths. Closing
@@ -436,7 +442,7 @@ void test_duplex_clock_and_bounded_reuse() {
     auto final_frame = queued.poll();
     require(final_frame && final_frame->audio_output->samples == std::vector<float>{13}, "partial codec tail published once");
     require(!queued.poll(), "closed duplex event queue drains");
-    require_eq(queued.finish().audio_output->samples.size(), size_t{5}, "queued result includes the complete output");
+    require_eq(queued.finalize().audio_output->samples.size(), size_t{5}, "queued result includes the complete output");
     require_eq(queued.history().back().user.audio_input->samples.size(), size_t{5}, "rejected chunks do not enter user history");
     queued.begin({});
     queued.push_audio({8, 1, 0, {1, 0}});

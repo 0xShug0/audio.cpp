@@ -27,7 +27,7 @@ public:
     void begin(const std::optional<runtime::AudioBuffer> & complete_input);
     runtime::StreamEvent push(const runtime::AudioChunk & chunk);
     runtime::StreamEvent end_input();
-    runtime::TaskResult finish();
+    runtime::TaskResult finalize();
     runtime::TaskResult interrupt();
     runtime::TaskResult run(const runtime::AudioBuffer & input);
 private:
@@ -74,10 +74,10 @@ public:
     void push_audio(const runtime::AudioChunk & chunk);
     void end_turn();
     // Close the input stream and publish any codec tail through poll(), then
-    // finish() collects the full result and releases the current execution.
+    // finalize() collects the full result and releases the current execution.
     void end_input();
     std::optional<runtime::StreamEvent> poll();
-    runtime::TaskResult finish();
+    runtime::TaskResult finalize();
     runtime::TaskResult run(const runtime::TaskRequest & request, HistoryMode history = HistoryMode::Conversation);
     void interrupt();
     // Discard the current execution; completed conversation history is kept.

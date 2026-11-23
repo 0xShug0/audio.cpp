@@ -214,7 +214,7 @@ std::optional<runtime::StreamEvent> Reply::next() {
     }
 }
 
-runtime::TaskResult Reply::finish() {
+runtime::TaskResult Reply::finalize() {
     auto & m = *impl_;
     if (m.released || m.state == Impl::State::Failed) throw std::logic_error("Cannot finish a released or failed chat reply");
     runtime::TaskResult result;
@@ -226,7 +226,7 @@ runtime::TaskResult Reply::finish() {
 }
 runtime::TaskResult Reply::result() const { return impl_->result(); }
 bool Reply::done() const { return impl_->state == Impl::State::Complete; }
-bool Reply::ended() const { return impl_->ended(); }
+bool Reply::reached_eos() const { return impl_->ended(); }
 size_t Reply::audio_frames() const { return impl_->frames; }
 size_t Reply::text_tokens() const { return impl_->tokens; }
 const std::vector<ReplyStep> & Reply::steps() const { return impl_->source.history ? impl_->source.history() : impl_->history; }
