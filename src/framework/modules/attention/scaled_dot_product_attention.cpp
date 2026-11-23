@@ -313,7 +313,7 @@ core::TensorValue ScaledDotProductAttentionModule::build(
         v_heads.shape.dims[3] != config_.head_dim) {
         throw std::runtime_error("ScaledDotProductAttention flash lowering requires equal Q/K/V widths");
     }
-    const float scale = 1.0F / std::sqrt(static_cast<float>(config_.head_dim));
+    const float scale = config_.scale.value_or(1.0F / std::sqrt(static_cast<float>(config_.head_dim)));
     switch (config_.lowering) {
         case ScaledDotProductAttentionLowering::Explicit:
             return build_explicit(ctx, q_heads, k_heads, v_heads, attention_mask, scale, config_.precision, config_.causality, score_scale);

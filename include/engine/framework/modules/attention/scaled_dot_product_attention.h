@@ -26,6 +26,8 @@ struct ScaledDotProductAttentionConfig {
     ScaledDotProductAttentionLowering lowering = ScaledDotProductAttentionLowering::Explicit;
     ggml_prec precision = GGML_PREC_F32;
     AttentionCausality causality = AttentionCausality::NonCausal;
+    // Override 1/sqrt(head_dim), e.g. when Q/K have zero-padded head widths.
+    std::optional<float> scale = std::nullopt;
 };
 
 class ScaledDotProductAttentionModule {
