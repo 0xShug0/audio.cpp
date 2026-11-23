@@ -779,8 +779,13 @@ void VoxCPM1SessionBase::validate_request(
   }
   if (request.voice.has_value()) {
     if (request.voice->style.has_value()) {
-      throw std::runtime_error(
-          "VoxCPM1 C++ session does not consume style conditions");
+      const auto &style = *request.voice->style;
+      if (style.language.has_value() || style.emotion.has_value() ||
+          style.pitch_shift.has_value() || style.energy_scale.has_value() ||
+          !style.tags.empty()) {
+        throw std::runtime_error(
+            "VoxCPM1 C++ session does not consume style conditions");
+      }
     }
     if (request.voice->speaker.has_value()) {
       const auto &speaker = *request.voice->speaker;

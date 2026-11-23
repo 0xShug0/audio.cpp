@@ -196,7 +196,10 @@ runtime::TaskResult Zonos2Session::synthesize(const runtime::TaskRequest & reque
     const auto & hp = assets_->hparams;
 
     if (effective.voice && effective.voice->style) {
-        throw runtime::InvalidRequestError("zonos2 has no style controls; use speaking_rate_bucket and quality_buckets");
+        const auto & style = *effective.voice->style;
+        if (style.language || style.emotion || style.pitch_shift || style.energy_scale || !style.tags.empty()) {
+            throw runtime::InvalidRequestError("zonos2 has no style controls; use speaking_rate_bucket and quality_buckets");
+        }
     }
     Zonos2SamplingOptions sampling;
     sampling.temperature = float_option(options, "temperature", 1.15f, 0.0f);

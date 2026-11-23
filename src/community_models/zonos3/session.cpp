@@ -247,8 +247,11 @@ runtime::TaskResult Zonos3Session::synthesize(const runtime::TaskRequest & reque
     const auto & hp = assets_->hparams;
 
     if (effective.voice && effective.voice->style) {
-        throw runtime::InvalidRequestError(
-            "zonos3 has no style controls; use the loudness, fmax and speaking_rate_bps request options");
+        const auto & style = *effective.voice->style;
+        if (style.language || style.emotion || style.pitch_shift || style.energy_scale || !style.tags.empty()) {
+            throw runtime::InvalidRequestError(
+                "zonos3 has no style controls; use the loudness, fmax and speaking_rate_bps request options");
+        }
     }
     const std::string language = zonos3_language(runtime::find_option(options, {"language"}).value_or("en_us"));
     const bool normalize = bool_option(options, "text_normalization", true);

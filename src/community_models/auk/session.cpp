@@ -186,11 +186,14 @@ runtime::TaskResult AukSession::run(const runtime::TaskRequest & request) {
         throw runtime::InvalidRequestError("AuK cached artifacts are not supported");
     }
     const runtime::AudioBuffer * reference_input = request.audio_input ? &*request.audio_input : nullptr;
-    if (request.voice) {
+    const auto * style = request.voice && request.voice->style ? &*request.voice->style : nullptr;
+    const bool unsupported_style = style &&
+        (style->language || style->emotion || style->pitch_shift || style->energy_scale || !style->tags.empty());
+    if (request.voice && (request.voice->speaker || unsupported_style)) {
         if (task_.task == runtime::VoiceTaskKind::AudioGeneration) {
             throw std::runtime_error("AuK audio editing takes its source in audio_input, not a voice reference");
         }
-        if (request.voice->style || !request.voice->speaker || request.voice->speaker->cached_voice_id ||
+        if (unsupported_style || !request.voice->speaker || request.voice->speaker->cached_voice_id ||
             !request.voice->speaker->audio) {
             throw std::runtime_error("AuK voice conditioning requires speaker audio; cached voices and style fields are unsupported");
         }

@@ -99,7 +99,7 @@ void validate_supported_style(const std::optional<runtime::VoiceCondition> & voi
         return;
     }
     const auto & style = *voice->style;
-    if (style.language.has_value() || style.emotion.has_value() || style.speaking_rate.has_value()
+    if (style.language.has_value() || style.emotion.has_value()
         || style.pitch_shift.has_value() || style.energy_scale.has_value() || !style.tags.empty()) {
         throw std::runtime_error("PocketTTS framework session does not support runtime style controls");
     }
