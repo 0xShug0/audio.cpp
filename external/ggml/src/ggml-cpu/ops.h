@@ -95,6 +95,8 @@ void ggml_compute_forward_flash_attn_back(
 void ggml_compute_forward_ssm_conv(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_scan(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_conv_causal_silu(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_gru_cell(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_gru_scan(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_ssm_scan_mamba1(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_win_part(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_win_unpart(const struct ggml_compute_params * params, struct ggml_tensor * dst);
@@ -125,6 +127,8 @@ void ggml_compute_forward_mul_mat_add(const struct ggml_compute_params * params,
 void ggml_compute_forward_mul_mat_add_relu(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_mul_mat_i2_s(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_im2col_asym(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_conv_2d_dw_sparse(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_affine(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 #ifdef __cplusplus
 }
 #endif

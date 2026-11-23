@@ -42,6 +42,32 @@ static __global__ void cpy_scalar(const char * cx, char * cdst, const int64_t ne
     cpy_1(cx + x_offset, cdst + dst_offset);
 }
 
+template<typename T>
+static __device__ __forceinline__ void cpy_transpose_tile_load(
+        const T *src, float (*tile)[CUDA_CPY_TILE_DIM_2D + 1],
+        int64_t base, int64_t rows, int64_t cols, int64_t x, int64_t y) {
+#pragma unroll
+    for (int j = 0; j < CUDA_CPY_TILE_DIM_2D; j += CUDA_CPY_BLOCK_ROWS) {
+        if (x < cols && y + j < rows) {
+            auto *row = reinterpret_cast<T *>(tile[threadIdx.y + j]);
+            row[threadIdx.x * sizeof(float) / sizeof(T)] = src[base + (y + j) * cols + x];
+        }
+    }
+}
+
+template<typename T>
+static __device__ __forceinline__ void cpy_transpose_tile_store(
+        T *dst, const float (*tile)[CUDA_CPY_TILE_DIM_2D + 1],
+        int64_t base, int64_t rows, int64_t cols, int64_t x, int64_t y) {
+#pragma unroll
+    for (int j = 0; j < CUDA_CPY_TILE_DIM_2D; j += CUDA_CPY_BLOCK_ROWS) {
+        if (y + j < cols && x < rows) {
+            const auto *row = reinterpret_cast<const T *>(tile[threadIdx.x]);
+            dst[base + (y + j) * rows + x] = row[(threadIdx.y + j) * sizeof(float) / sizeof(T)];
+        }
+    }
+}
+
 template <typename T>
 static __global__ void cpy_scalar_transpose(const char * cx, char * cdst, const int64_t ne,
                                const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t nb00, const int64_t nb01, const int64_t nb02,
@@ -69,26 +95,9 @@ static __global__ void cpy_scalar_transpose(const char * cx, char * cdst, const 
         if (imat >= nmat)
             break;
 
-#pragma unroll
-        for (int j = 0; j < CUDA_CPY_TILE_DIM_2D; j += CUDA_CPY_BLOCK_ROWS) {
-            if(x < ne01 && y + j < ne00){
-                const int row = threadIdx.y+j;
-                const int col = threadIdx.x * sizeof(float)/sizeof(T);
-                T *tile2 = reinterpret_cast<T*>(tile[cur_tile_buf][row]);
-                tile2[col] = src[imat*n + (y+j)*ne01 + x];
-            }
-        }
-
+        cpy_transpose_tile_load(src, tile[cur_tile_buf], imat*n, ne00, ne01, x, y);
         __syncthreads();
-
-#pragma unroll
-        for (int j = 0; j < CUDA_CPY_TILE_DIM_2D; j += CUDA_CPY_BLOCK_ROWS) {
-            if (ty + j < ne01 && tx < ne00) {
-                const int col = (threadIdx.y+j)*sizeof(float)/sizeof(T);
-                const T *tile2 = reinterpret_cast<const T*>(tile[cur_tile_buf][threadIdx.x]);
-                dst[imat*n + (ty+j)*ne00 + tx] = tile2[col];
-            }
-        }
+        cpy_transpose_tile_store(dst, tile[cur_tile_buf], imat*n, ne00, ne01, tx, ty);
 
         cur_tile_buf = (cur_tile_buf + 1) % 2;
     }
@@ -375,9 +384,115 @@ static void ggml_cpy_f32_iq4_nl_cuda(
         (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
 }
 
+
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+// A warp copies one contiguous input row. Row indexing is shared by its lanes,
+// rather than decomposing a four-dimensional index independently per scalar.
+template <int pack>
+static __global__ void cpy_f32_rows(const char *src, float *dst, int64_t width,
+                                    int64_t rows, int64_t ne1, int64_t ne2,
+                                    size_t nb1, size_t nb2, size_t nb3) {
+  const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
+  for (int64_t row = int64_t(blockIdx.x) * 4 + warp; row < rows;
+       row += int64_t(gridDim.x) * 4) {
+    const int64_t i1 = row % ne1, i2 = row / ne1 % ne2, i3 = row / (ne1 * ne2);
+    const auto *input =
+        reinterpret_cast<const float *>(src + i1 * nb1 + i2 * nb2 + i3 * nb3);
+    if constexpr (pack == 4) {
+      const auto *x = reinterpret_cast<const float4 *>(input);
+      auto *y = reinterpret_cast<float4 *>(dst + row * width);
+      for (int64_t c = lane; c < width / 4; c += 32)
+        y[c] = x[c];
+    } else {
+      for (int64_t c = lane; c < width; c += 32)
+        dst[row * width + c] = input[c];
+    }
+  }
+}
+
+// One CTA per matrix tile. Do not serialize small matrices eight at a time
+// as the general copy kernel does; this path is selected only by explicit CONT.
+static __global__ void cpy_f32_transpose_tiles(const float *src, float *dst,
+        int64_t m, int64_t k, int64_t tiles_x, int64_t tiles_y, int64_t tiles) {
+    __shared__ float tile[32][33];
+    for (int64_t id = blockIdx.x; id < tiles; id += gridDim.x) {
+        const int64_t tile_x = id % tiles_x;
+        const int64_t tile_y = id / tiles_x % tiles_y;
+        const int64_t batch = id / (tiles_x * tiles_y);
+        const int64_t x = tile_x * 32 + threadIdx.x;
+        const int64_t y = tile_y * 32 + threadIdx.y;
+        cpy_transpose_tile_load(src, tile, batch * m * k, m, k, x, y);
+        __syncthreads();
+        const int64_t out_x = tile_y * 32 + threadIdx.x;
+        const int64_t out_y = tile_x * 32 + threadIdx.y;
+        cpy_transpose_tile_store(dst, tile, batch * m * k, m, k, out_x, out_y);
+        __syncthreads();
+    }
+}
+
+static bool ggml_cuda_cpy_f32_tiled(ggml_backend_cuda_context &ctx,
+                                    const ggml_tensor *src, ggml_tensor *dst) {
+  if (ggml_is_contiguous(src) || !ggml_is_contiguous(dst))
+    return false;
+  const auto *n = src->ne;
+  const auto *b = src->nb;
+  int64_t m = 0, k = 0, batches = n[3];
+  // [C,P,T,B] <- dense [P,T,C,B], or the inverse. Collapse only axes
+  // whose strides prove that this is an ordinary batched matrix transpose.
+  if (b[1] == sizeof(float) && b[2] == n[1] * sizeof(float) &&
+      b[0] == n[1] * n[2] * sizeof(float) && b[3] == n[0] * b[0]) {
+    m = n[0];
+    k = n[1] * n[2];
+  } else if (b[2] == sizeof(float) && b[0] == n[2] * sizeof(float) &&
+             b[1] == n[0] * b[0] && b[3] == n[1] * b[1]) {
+    m = n[0] * n[1];
+    k = n[2];
+  }
+  if (!m && b[1] == sizeof(float) && b[0] == n[1] * sizeof(float) &&
+      b[2] == n[0] * b[0] && b[3] == n[2] * b[2]) {
+    m = n[0];
+    k = n[1];
+    batches = n[2] * n[3];
+  }
+  if (m && (m + 31) / 32 < USHRT_MAX && (k + 31) / 32 < UINT_MAX &&
+      (batches + 7) / 8 < USHRT_MAX) {
+    const int64_t tiles_x = (k + 31) / 32, tiles_y = (m + 31) / 32;
+    const int64_t tiles = tiles_x * tiles_y * batches;
+    const int blocks = int(std::min<int64_t>(tiles, 65535));
+    cpy_f32_transpose_tiles<<<blocks, dim3(32, 8), 0, ctx.stream()>>>(
+        static_cast<const float *>(src->data), static_cast<float *>(dst->data),
+        m, k, tiles_x, tiles_y, tiles);
+    return true;
+  }
+  if (b[0] == sizeof(float)) {
+    const int64_t rows = n[1] * n[2] * n[3];
+    const int blocks =
+        static_cast<int>(std::min<int64_t>((rows + 3) / 4, 65535));
+    const bool vectorized = n[0] % 4 == 0 && b[1] % 16 == 0 && b[2] % 16 == 0 &&
+                            b[3] % 16 == 0 &&
+                            reinterpret_cast<uintptr_t>(src->data) % 16 == 0 &&
+                            reinterpret_cast<uintptr_t>(dst->data) % 16 == 0;
+    if (vectorized)
+      cpy_f32_rows<4><<<blocks, 128, 0, ctx.stream()>>>(
+          static_cast<const char *>(src->data), static_cast<float *>(dst->data),
+          n[0], rows, n[1], n[2], b[1], b[2], b[3]);
+    else
+      cpy_f32_rows<1><<<blocks, 128, 0, ctx.stream()>>>(
+          static_cast<const char *>(src->data), static_cast<float *>(dst->data),
+          n[0], rows, n[1], n[2], b[1], b[2], b[3]);
+    return true;
+  }
+  return false;
+}
+#endif
 void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
     const int64_t ne = ggml_nelements(src0);
     GGML_ASSERT(ne == ggml_nelements(src1));
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if (src1->op == GGML_OP_CONT && ggml_get_op_params_i32(src1, 0) == GGML_CONT_LOWERING_CUDA_TILED &&
+            src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 &&
+            ggml_cuda_cpy_f32_tiled(ctx, src0, src1)) return;
+#endif
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];

@@ -2998,6 +2998,55 @@ struct test_cont : public test_case {
     }
 };
 
+struct test_affine : public test_case {
+    const std::array<int64_t, 4> ne;
+    const int axis;
+    const int prefix;
+    test_affine(std::array<int64_t, 4> shape, int channel_axis, int offset = 0)
+        : ne(shape), axis(channel_axis), prefix(offset) {}
+    std::string vars() override { return VARS_TO_STR3(ne, axis, prefix); }
+    double max_nmse_err() override { return 0; }
+    ggml_tensor * build_graph(ggml_context *ctx) override {
+        const auto operand = [&](int64_t count) {
+            auto *base = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, count + prefix);
+            ggml_set_param(base);
+            return prefix ? ggml_view_1d(ctx, base, count, prefix * sizeof(float)) : base;
+        };
+        auto *x = ggml_reshape_4d(ctx, operand(ne[0]*ne[1]*ne[2]*ne[3]), ne[0], ne[1], ne[2], ne[3]);
+        auto *scale = operand(ne[axis]);
+        auto *bias = operand(ne[axis]);
+        return ggml_affine(ctx, x, scale, bias, axis);
+    }
+};
+
+// Explicit CUDA copy lowering: CPU's ordinary CONT is the independent reference.
+struct test_cont_tiled : public test_case {
+    const std::array<int64_t, 4> ne;
+    const std::array<int, 4> permutation;
+    const int64_t slice_prefix;
+    const bool tiled;
+
+    test_cont_tiled(std::array<int64_t, 4> shape, std::array<int, 4> axes, int64_t prefix = 0, bool enable_tiled = true)
+        : ne(shape), permutation(axes), slice_prefix(prefix), tiled(enable_tiled) {}
+
+    std::string vars() override {
+        return std::string("cuda_tiled=") + (tiled ? "1," : "0,") + VARS_TO_STR3(ne, permutation, slice_prefix);
+    }
+
+    double max_nmse_err() override { return 0; }
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        auto * src = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, ne[0] + slice_prefix, ne[1], ne[2], ne[3]);
+        ggml_set_param(src);
+        auto * input = slice_prefix ? ggml_view_4d(ctx, src, ne[0], ne[1], ne[2], ne[3],
+            src->nb[1], src->nb[2], src->nb[3], slice_prefix*sizeof(float)) : src;
+        input = ggml_permute(ctx, input, permutation[0], permutation[1], permutation[2], permutation[3]);
+        auto * out = ggml_cont(ctx, input);
+        if (tiled) ggml_cont_set_lowering(out, GGML_CONT_LOWERING_CUDA_TILED);
+        return out;
+    }
+};
+
 // GGML_OP_ADD
 // GGML_OP_SUB
 // GGML_OP_MUL
@@ -5438,6 +5487,56 @@ struct test_conv_2d_dw : public test_case {
             stride, stride, padding, padding, dilation, dilation);
         ggml_set_name(out, "out");
         return out;
+    }
+};
+
+// Explicit temporal depthwise row lowering against the independent CPU op.
+struct test_conv_2d_dw_rows : public test_case {
+    const int width, height, channels, batches, taps, stride, padding, dilation;
+    test_conv_2d_dw_rows(int w, int h, int c, int n, int k, int s, int p, int d)
+        : width(w), height(h), channels(c), batches(n), taps(k), stride(s), padding(p), dilation(d) {}
+    std::string vars() override {
+        return "lowering=rows," + VARS_TO_STR8(width, height, channels, batches, taps, stride, padding, dilation);
+    }
+    double max_nmse_err() override { return 1e-12; }
+    ggml_tensor *build_graph(ggml_context *ctx) override {
+        auto *x = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, width, height, channels, batches);
+        auto *w = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, taps, 1, channels);
+        auto *out = ggml_conv_2d_dw_direct(ctx, w, x, 1, stride, 0, padding, 1, dilation);
+        ggml_conv_2d_dw_set_lowering(out, GGML_CONV_2D_DW_LOWERING_CUDA_ROWS);
+        return out;
+    }
+};
+
+// Sparse stencil: compare CUDA with an independent FP64 scalar CPU oracle.
+struct test_conv_2d_dw_sparse : public test_case {
+    const std::array<int64_t, 4> ne;
+    const std::vector<int32_t> offsets;
+    const int prefix;
+    test_conv_2d_dw_sparse(std::array<int64_t,4> shape, std::vector<int32_t> positions, int offset = 0)
+        : ne(shape), offsets(std::move(positions)), prefix(offset) {}
+    std::string vars() override {
+        std::string s = VARS_TO_STR2(ne, prefix) + ",offsets=[";
+        for (size_t i = 0; i < offsets.size(); ++i) s += (i ? "," : "") + std::to_string(offsets[i]);
+        return s + "]";
+    }
+    double max_nmse_err() override { return 1e-12; }
+    ggml_tensor *build_graph(ggml_context *ctx) override {
+        const int64_t taps = static_cast<int64_t>(offsets.size() / 2);
+        const int64_t count = ne[0]*ne[1]*ne[2]*ne[3];
+        auto *base = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, count + prefix);
+        auto *input = prefix ? ggml_view_1d(ctx, base, count, prefix*sizeof(float)) : base;
+        input = ggml_reshape_4d(ctx, input, ne[0], ne[1], ne[2], ne[3]);
+        auto *weights = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, taps, ne[2]);
+        auto *positions = ggml_new_tensor_2d(ctx, GGML_TYPE_I32, 2, taps);
+        ggml_set_name(positions, "sparse_offsets");
+        return ggml_conv_2d_dw_sparse(ctx, weights, input, positions);
+    }
+    void initialize_tensors(ggml_context *ctx) override {
+        test_case::initialize_tensors(ctx);
+        for (ggml_tensor *t = ggml_get_first_tensor(ctx); t; t = ggml_get_next_tensor(ctx, t))
+            if (strcmp(t->name, "sparse_offsets") == 0)
+                ggml_backend_tensor_set(t, offsets.data(), 0, offsets.size()*sizeof(int32_t));
     }
 };
 
@@ -8046,6 +8145,25 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     // test_cases.emplace_back(new test_im2col(GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_F16, {1024, 1024, 256, 1}, {3, 3, 256, 1}, 1, 1, 1, 1, 1, 1, true));
     // test_cases.emplace_back(new test_im2col(GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_F32, {1024, 1024, 256, 1}, {3, 3, 256, 1}, 1, 1, 1, 1, 1, 1, true));
 
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({1,1,1,1}, {0,0}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({3,7,2,2}, {-2,0,0,0,1,0}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({4,5,3,2}, {-1,-1,0,0,2,1}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({17,13,5,1}, {1000,0,-1000,0,0,1000,0,-1000,1,0}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({88,31,7,2}, {-3,0,-1,0,0,0,1,0,5,0}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({129,17,3,2}, {3,-2,-2,3,0,0,1,1,-1,-1}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({260,37,4,1}, {7,1,-4,2,0,0,1,-3,-9,-2,3,1,3,1}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({16,11,3,2}, {-1,0,0,0,2,1}, 1));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({7,19,2,2}, {10000,10000}));
+    test_cases.emplace_back(new test_conv_2d_dw_sparse({4,262149,1,1}, {0,-1,0,0,0,1}));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(1, 7, 3, 2, 3, 1, 1, 1));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(3, 17, 2, 1, 1, 1, 0, 1));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(4, 17, 5, 2, 3, 2, 1, 1));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(17, 41, 7, 2, 5, 1, 6, 3));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(88, 201, 16, 2, 15, 1, 7, 1));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(129, 67, 3, 2, 7, 2, 9, 3));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(260, 127, 4, 1, 31, 1, 15, 1));
+    test_cases.emplace_back(new test_conv_2d_dw_rows(16, 19, 2, 1, 3, 1, 0, 2));
+
     test_cases.emplace_back(new test_conv_2d_dw({17, 34, 9, 1}, {3, 3, 1, 9}, 1, 0, 1, false));
     test_cases.emplace_back(new test_conv_2d_dw({17, 34, 9, 1}, {3, 3, 1, 9}, 1, 0, 1, true));
     test_cases.emplace_back(new test_conv_2d_dw({32, 8, 64, 1}, {3, 3, 1, 64}, 2, 1, 1, false));
@@ -8244,6 +8362,34 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             }
         }
     }
+
+    for (int axis = 0; axis < 4; ++axis) {
+        test_cases.emplace_back(new test_affine({13, 7, 11, 3}, axis));
+        test_cases.emplace_back(new test_affine({128, 65, 17, 2}, axis));
+        test_cases.emplace_back(new test_affine({1, 1, 1, 1}, axis));
+        test_cases.emplace_back(new test_affine({128, 65, 17, 2}, axis, 1));
+    }
+    // Identical layouts with/without the opt-in lowering: existing tiled
+    // transpose, collapsed axes, and a strided-row copy.
+    for (const bool tiled : {false, true}) {
+        test_cases.emplace_back(new test_cont_tiled({129, 257, 3, 2}, {1, 0, 2, 3}, 0, tiled));
+        test_cases.emplace_back(new test_cont_tiled({128, 257, 65, 3}, {1, 2, 0, 3}, 0, tiled));
+        test_cases.emplace_back(new test_cont_tiled({140, 7, 5, 3}, {0, 2, 1, 3}, 4, tiled));
+    }
+    test_cases.emplace_back(new test_cont_tiled({7, 11, 13, 2}, {1, 2, 0, 3}));
+    test_cases.emplace_back(new test_cont_tiled({17, 7, 11, 3}, {2, 0, 1, 3}));
+    test_cases.emplace_back(new test_cont_tiled({19, 7, 5, 2}, {1, 0, 2, 3}));
+    test_cases.emplace_back(new test_cont_tiled({31, 7, 5, 3}, {0, 2, 1, 3}));
+    test_cases.emplace_back(new test_cont_tiled({12, 7, 5, 3}, {0, 2, 1, 3}, 4));
+    test_cases.emplace_back(new test_cont_tiled({17, 7, 5, 3}, {0, 2, 1, 3}, 1));
+    test_cases.emplace_back(new test_cont_tiled({19, 7, 3, 2}, {1, 0, 2, 3}, 1));
+    test_cases.emplace_back(new test_cont_tiled({140, 7, 5, 3}, {0, 2, 1, 3}, 4));
+    test_cases.emplace_back(new test_cont_tiled({257, 3, 5, 2}, {0, 2, 1, 3}, 1));
+    test_cases.emplace_back(new test_cont_tiled({41, 37, 67, 9}, {1, 2, 0, 3}));
+    test_cases.emplace_back(new test_cont_tiled({4, 262149, 1, 1}, {0, 1, 2, 3}, 4));
+    // Exercise a second grid-stride iteration in the explicit transpose kernel.
+    test_cases.emplace_back(new test_cont_tiled({32, 32, 1, 65536}, {1, 0, 2, 3}));
+    test_cases.emplace_back(new test_cont_tiled({1, 1, 1, 1}, {0, 1, 2, 3}));
 
     auto add_test_bin_bcast = [&](ggml_type type, std::array<int64_t, 4> ne, std::array<int, 4> nr, bool perm1 = false, bool src_overlap = false) {
         for (auto op : {ggml_add, ggml_sub, ggml_mul, ggml_div}) {
@@ -9620,6 +9766,13 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_perf() {
     test_cases.emplace_back(new test_gated_delta_net(GGML_TYPE_F32, 4, 128, 512, 1));  // 4h PP-512
     test_cases.emplace_back(new test_gated_delta_net(GGML_TYPE_F32, 4, 128, 1024, 1)); // 4h PP-1024
     test_cases.emplace_back(new test_gated_delta_net(GGML_TYPE_F32, 32, 128, 64, 1, 1, false, true)); // KDA PP-64
+
+    // Compare identical layouts with the ordinary and opt-in CUDA copy paths.
+    for (bool tiled : {false, true}) {
+        test_cases.emplace_back(new test_cont_tiled({129, 257, 3, 2}, {1, 0, 2, 3}, 0, tiled));
+        test_cases.emplace_back(new test_cont_tiled({128, 257, 65, 3}, {1, 2, 0, 3}, 0, tiled));
+        test_cases.emplace_back(new test_cont_tiled({140, 7, 5, 3}, {0, 2, 1, 3}, 4, tiled));
+    }
 
     return test_cases;
 }
