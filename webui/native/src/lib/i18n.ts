@@ -14,6 +14,11 @@ export type UiLanguage = {
 
 const english: Record<string, string> = {
   'app.nativeStudio': 'Native Studio',
+  'run.streamingMode': 'Streaming mode',
+  'run.autoPlay': 'Auto play',
+  'run.stopPlayback': 'Stop playback',
+  'run.playLive': 'Play live',
+  'result.streamingText': 'Streaming text',
   'nav.apps': 'Apps',
   'nav.studio': 'Studio',
   'nav.arena': 'Arena',
