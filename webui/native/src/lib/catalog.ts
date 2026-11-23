@@ -34,6 +34,7 @@ interface PackageEntry {
 interface PackageSpec {
   family: string;
   capabilities?: Record<string, string[]>;
+  modes?: string[];
   packages?: Array<Omit<PackageEntry, 'family'>>;
   options?: {
     request?: Array<{ name: string; required?: boolean }>;
@@ -56,6 +57,9 @@ const specModules = import.meta.glob('../../../../model_specs/*.json', {
 const packages: PackageEntry[] = Object.values(specModules).flatMap((spec) =>
   (spec.packages || []).map((entry) => ({ ...entry, family: spec.family }))
 );
+
+export const streamingFamilies = new Set(Object.values(specModules)
+  .filter(spec => spec.modes?.includes("streaming")).map(spec => spec.family));
 
 const specsByFamily = new Map(Object.values(specModules).map((spec) => [spec.family, spec]));
 export const modelCapabilities = Object.fromEntries(Object.values(specModules).map(spec =>

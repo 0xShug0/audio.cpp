@@ -18,6 +18,7 @@
     models,
     pathStatus,
     runTask,
+    taskStreamEvents,
     setModelsRoot,
     speech,
     stopModelInstall,
@@ -31,8 +32,10 @@
     type ModelPackageSize,
     type DirectoryBrowserResponse
   } from '$lib/api';
-  import { catalog, parameterCatalog, requirePackageLoadTarget, taskLabels, withPackageLoadTarget } from '$lib/catalog';
+  import { catalog, parameterCatalog, requirePackageLoadTarget, taskLabels, streamingFamilies, withPackageLoadTarget } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
+  import { StreamPlayback } from '$lib/media/stream_playback';
+  import { base64Bytes } from '$lib/media/pcm_wav';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import LoraControls from '$lib/LoraControls.svelte';
   import VoicePicker from '$lib/VoicePicker.svelte';
@@ -82,6 +85,22 @@
   let loadingModel = false;
   let loraUploading = false;
   let running = false;
+  let streamOutput = false;
+  let autoplay = false;
+  let liveText = '';
+  let playbackWarning = '';
+  let playbackActive = false;
+  let streamedAudioPlayed = false;
+  let pendingLiveAudio: ArrayBuffer[] = [];
+  let liveAudioReady = false;
+  let livePlaybackStart: Promise<void> | null = null;
+  let playbackGeneration = 0;
+  const streamLoadedModels = new Set<string>();
+  const playback = new StreamPlayback();
+  playback.onchange = () => { playbackActive = playback.playing; };
+  $: canStreamOutput = !usesPanelRequest && streamingFamilies.has(selected?.family) &&
+    (!isConfiguredEntry(selected) || loadedModels.some(model => model.id === selectedId && model.mode === 'streaming'));
+  $: useStreamOutput = streamOutput && canStreamOutput;
   let rewritingCaption = false;
   let status = 'Ready';
   let warningStatus = '';
@@ -2037,6 +2056,62 @@
     log(status);
   }
 
+  function playLiveAudio() {
+    const generation = playbackGeneration;
+    const pending = pendingLiveAudio;
+    pendingLiveAudio = [];
+    livePlaybackStart = (async () => {
+      try {
+        await playback.begin();
+        for (const audio of pending) {
+          if (generation !== playbackGeneration) return;
+          await playback.push(audio);
+          if (generation !== playbackGeneration) return;
+          streamedAudioPlayed = true;
+        }
+      } catch (error) {
+        if (generation !== playbackGeneration) return;
+        playback.stop();
+        playbackWarning = error instanceof Error ? error.message : String(error);
+      }
+    })();
+  }
+
+  async function streamedResult(body: Record<string, unknown>, signal: AbortSignal,
+    play: boolean): Promise<Record<string, unknown>> {
+    let result: Record<string, unknown> = {};
+    for await (const message of taskStreamEvents(body, signal)) {
+      if (message.type === 'task.stream.done') {
+        result = message.result;
+        continue;
+      }
+      const event = message.event;
+      const snapshot = event.partial_text_snapshot as { text?: string } | undefined;
+      const delta = event.partial_text as { text?: string } | undefined;
+      if (typeof snapshot?.text === 'string') liveText = snapshot.text;
+      else if (typeof delta?.text === 'string') liveText += delta.text;
+      const named = event.named_audio_outputs as Array<{ audio?: string }> | undefined;
+      const audio = typeof event.audio === 'string' ? event.audio : named?.[0]?.audio;
+      if (!playbackWarning && typeof audio === 'string') {
+        if (!play && !livePlaybackStart) {
+          pendingLiveAudio.push(base64Bytes(audio).buffer);
+          liveAudioReady = true;
+          continue;
+        }
+        try {
+          await livePlaybackStart;
+          await playback.push(base64Bytes(audio).buffer);
+          streamedAudioPlayed = true;
+        }
+        catch (error) {
+          playback.stop();
+          playbackWarning = error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+    return result;
+  }
+
   async function run() {
     if (running || loadingModel || rewritingCaption || modelPanelUploading || restoringHistory) return;
     if (!selectedId) {
@@ -2051,6 +2126,21 @@
       errorStatus = '';
       return;
     }
+    const streaming = useStreamOutput;
+    const autoPlayOutput = !usesPanelRequest && selected.task !== 'asr' && autoplay;
+    ++playbackGeneration;
+    pendingLiveAudio = [];
+    liveAudioReady = false;
+    livePlaybackStart = null;
+    streamedAudioPlayed = false;
+    liveText = '';
+    playbackWarning = '';
+    playback.stop();
+    // Resume synchronously from the Generate gesture, before uploads/loading.
+    if (autoPlayOutput) {
+      try { void playback.begin().catch(error => { playbackWarning = String(error); }); }
+      catch (error) { playbackWarning = String(error); }
+    }
     running = true;
     aborter = new AbortController();
     const started = performance.now();
@@ -2059,6 +2149,7 @@
       generationElapsedSeconds = (performance.now() - started) / 1000;
     }, 250);
     let nextAudio: AudioOutput[] = [];
+    let nextPlaybackAudio: Blob | string | undefined;
     let nextArtifacts: typeof outputArtifacts = [];
     let nextText = '';
     let nextJson = '';
@@ -2091,7 +2182,13 @@
           throw new StatusWarning('LiveAvatar requires a reference image.');
         }
       }
-      await ensureLoaded();
+      if (streaming) {
+        await ensurePanelLoaded(selectedId, 'streaming');
+        if (!isConfiguredEntry(selected)) streamLoadedModels.add(selectedId);
+      } else if (streamLoadedModels.has(selectedId)) {
+        await ensurePanelLoaded(selectedId, selected.mode);
+        streamLoadedModels.delete(selectedId);
+      } else await ensureLoaded();
       const resident = loadedModels.find((model) => model.id === selected.id);
       const submittedSettings = {
         schema_version: 1,
@@ -2136,6 +2233,16 @@
         ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
+        let streamingVoiceRef = voiceRef;
+        const voiceName = quickStartVoice || selected.default_voice;
+        // Generic task streaming accepts voice_id/reference audio, rather than
+        // the speech route's named voice-library lookup. Resolve library audio
+        // through the existing preview/upload APIs once for this request.
+        if (streaming && !streamingVoiceRef && voiceName && !selected.builtin_voices?.includes(voiceName)) {
+          const response = await fetch(voicePreviewUrl(demoVoiceSources[voiceName] || voiceName), { signal: aborter.signal });
+          if (!response.ok) throw new Error('This voice cannot be streamed through the task API. Select a built-in voice or supply reference audio.');
+          streamingVoiceRef = await uploadWav(await response.blob(), aborter.signal);
+        }
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
         const effectiveChunkBudget = Math.max(40, chunkBudget);
         if (selected.family === 'voxcpm2') options.text_chunk_size = effectiveChunkBudget;
@@ -2168,17 +2275,37 @@
             if (selected.family === 'ming3_tts') body.instruct = instructions;
             else body.instructions = instructions;
           }
-          submittedRequests.push({ endpoint: '/v1/audio/speech', body: JSON.parse(JSON.stringify(body)) });
-          const result = await speech(body, aborter.signal);
-          audioChunks.push(result.blob);
-          timings.push({
-            chunk: index + 1,
-            characters: chunks[index].length,
-            wall_ms: result.wallMs,
-            rtf: result.rtf
-          });
+          if (streaming) {
+            const { model, input, voice, instructions, reference_text, ...request } = body;
+            request.text = input;
+            request.options = { ...options,
+              ...(typeof instructions === 'string' ? { instruction: instructions } : {}),
+              ...(typeof reference_text === 'string' ? { reference_text } : {}) };
+            if (streamingVoiceRef) request.voice_ref = streamingVoiceRef;
+            else if (voice) request.voice_id = voice;
+            const streamBody = { model, request };
+            submittedRequests.push({ endpoint: '/v1/tasks/stream', body: JSON.parse(JSON.stringify(streamBody)) });
+            const result = await streamedResult(streamBody, aborter.signal, autoPlayOutput);
+            const named = result.named_audio_outputs as Array<{ audio?: string }> | undefined;
+            const finalAudio = typeof result.audio === 'string' ? result.audio
+              : named?.length === 1 ? named[0].audio : undefined;
+            if (typeof finalAudio !== 'string') throw new Error('The streaming response contains no final audio.');
+            audioChunks.push(new Blob([base64Bytes(finalAudio)], { type: 'audio/wav' }));
+            timings.push({ chunk: index + 1, characters: chunks[index].length, timing: result.timing });
+          } else {
+            submittedRequests.push({ endpoint: '/v1/audio/speech', body: JSON.parse(JSON.stringify(body)) });
+            const result = await speech(body, aborter.signal);
+            audioChunks.push(result.blob);
+            timings.push({
+              chunk: index + 1,
+              characters: chunks[index].length,
+              wall_ms: result.wallMs,
+              rtf: result.rtf
+            });
+          }
         }
         const merged = await concatenateAudioBlobs(audioChunks);
+        nextPlaybackAudio = merged;
         nextAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged) }];
         nextJson = JSON.stringify({
           seed: resolvedSeed,
@@ -2200,11 +2327,14 @@
         };
         const detail = ['owsm', 'crisperwhisper', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'nemotron_transcribe'].includes(selected.family) &&
           (options.return_timestamps === true || options.diarization === true);
+        const streamBody = { model: selected.id, request: { text: context, audio, language, options } };
         submittedRequests.push({
-          endpoint: detail ? '/v1/audio/transcriptions/details' : '/v1/audio/transcriptions',
-          body: JSON.parse(JSON.stringify(body))
+          endpoint: streaming ? '/v1/tasks/stream' : detail ? '/v1/audio/transcriptions/details' : '/v1/audio/transcriptions',
+          body: JSON.parse(JSON.stringify(streaming ? streamBody : body))
         });
-        const result = await transcription(body, aborter.signal, detail);
+        const result = streaming
+          ? await streamedResult(streamBody, aborter.signal, autoPlayOutput)
+          : await transcription(body, aborter.signal, detail);
         nextText = String(result.text || '');
         nextJson = JSON.stringify(result, null, 2);
       } else {
@@ -2235,13 +2365,14 @@
           request.reference_text = referenceText;
         }
         const body = { model: selected.id, request };
-        submittedRequests.push({ endpoint: '/v1/tasks/run', body: JSON.parse(JSON.stringify(body)) });
-        const result = await runTask(body, aborter.signal);
+        submittedRequests.push({ endpoint: streaming ? '/v1/tasks/stream' : '/v1/tasks/run', body: JSON.parse(JSON.stringify(body)) });
+        const result = streaming ? await streamedResult(body, aborter.signal, autoPlayOutput) : await runTask(body, aborter.signal);
         nextText = typeof result.text === 'string' ? result.text : '';
         nextJson = JSON.stringify(result, (key, value) =>
           (key === 'audio' || key === 'payload') && typeof value === 'string'
             ? `<base64 data: ${value.length} chars>` : value, 2);
         if (typeof result.audio === 'string') {
+          nextPlaybackAudio = result.audio;
           nextAudio = [{ id: 'output', url: base64AudioUrl(result.audio) }];
         }
         if (Array.isArray(result.named_audio_outputs)) {
@@ -2250,6 +2381,9 @@
             .filter((entry): entry is { id: string; audio: string } =>
               typeof entry?.id === 'string' && typeof entry?.audio === 'string')
             .map((entry) => ({ id: entry.id, url: base64AudioUrl(entry.audio) }));
+          const primary = result.named_audio_outputs.find((entry) =>
+            typeof entry?.id === 'string' && typeof entry?.audio === 'string');
+          nextPlaybackAudio = primary?.audio;
         }
         if (Array.isArray(result.artifacts)) {
           if (selected.family === 'liveavatar') {
@@ -2302,12 +2436,22 @@
       }
       historyError = '';
       outputCommitted = true;
+      if (autoPlayOutput && !streamedAudioPlayed && !playbackWarning && nextPlaybackAudio) {
+        try {
+          await playback.push(typeof nextPlaybackAudio === 'string'
+            ? base64Bytes(nextPlaybackAudio).buffer : await nextPlaybackAudio.arrayBuffer());
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError') throw error;
+          playbackWarning = error instanceof Error ? error.message : String(error);
+        }
+      }
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       warningStatus = '';
       errorStatus = '';
       status = tr('status.completeIn', { seconds: elapsed });
       log(status);
     } catch (error) {
+      playback.stop();
       if ((error as Error)?.name === 'AbortError') {
         status = 'Cancelled.';
         warningStatus = '';
@@ -2325,6 +2469,8 @@
         for (const output of nextAudio) URL.revokeObjectURL(output.url);
         for (const artifact of nextArtifacts) URL.revokeObjectURL(artifact.url);
       }
+      pendingLiveAudio = [];
+      liveAudioReady = false;
       running = false;
       aborter = null;
       // A configured entry loads with its first request; show it as resident.
@@ -2333,6 +2479,8 @@
   }
 
   function cancel() {
+    ++playbackGeneration;
+    playback.stop();
     aborter?.abort();
   }
 
@@ -2653,6 +2801,7 @@
   });
 
   onDestroy(() => {
+    playback.close();
     if (generationTimer !== null) window.clearInterval(generationTimer);
     clearOutput();
     for (const entry of generationHistory) releaseGeneration(entry);
@@ -3162,6 +3311,20 @@
           </details>
         {/if}
 
+        {#if !usesPanelRequest}
+          <div class="studio-request-actions studio-playback-controls">
+            {#if canStreamOutput}
+              <label class="toggle"><input type="checkbox" bind:checked={streamOutput} disabled={running} /><span></span>{tr('run.streamingMode')}</label>
+            {/if}
+            {#if selected.task !== 'asr'}
+              <label class="toggle"><input type="checkbox" bind:checked={autoplay} disabled={running} /><span></span>{tr('run.autoPlay')}</label>
+            {/if}
+            {#if running && liveAudioReady && !livePlaybackStart}<button on:click={playLiveAudio}>{tr('run.playLive')}</button>{/if}
+            {#if playbackActive}<button on:click={() => playback.stop()}>{tr('run.stopPlayback')}</button>{/if}
+          </div>
+          {#if running && liveText}<pre aria-live="polite" aria-label={tr('result.streamingText')}>{liveText}</pre>{/if}
+          {#if playbackWarning}<p role="status">{playbackWarning}</p>{/if}
+        {/if}
         <div class="runbar">
           <button class="run" disabled={!selectedId || running || loadingModel || rewritingCaption || restoringHistory || modelPanelUploading ||
             (!isLoaded && (installed === false || !packageLoadReady))} on:click={run}

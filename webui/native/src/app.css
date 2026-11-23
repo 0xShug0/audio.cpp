@@ -327,6 +327,7 @@ summary span { float: right; color: var(--muted); font-weight: 500; }
 .range input { padding: 0; accent-color: var(--cyan); }
 .range output { font: 12px ui-monospace, monospace; text-align: right; color: var(--cyan); }
 .toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-weight: 500; }
+.studio-playback-controls > .toggle { margin: 0; }
 .toggle input { position: absolute; opacity: 0; width: 1px; }
 .toggle span { width: 34px; height: 19px; border-radius: 20px; background: var(--control-border); position: relative; }
 .toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: var(--text-label); transition: .15s; }

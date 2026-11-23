@@ -61,6 +61,27 @@ generation, conversion, separation, VAD, diarization, alignment, and voice desig
 Uploaded request files use a per-process temporary directory and are deleted when the server exits.
 Saved voices remain in the current browser profile and are only uploaded when selected for a request.
 
+### Streaming and autoplay
+
+Studio's **Streaming mode** option receives audio and displays text as it arrives for
+models whose specs support streaming. **Auto play** independently controls
+automatic playback in both streaming and offline mode. With streaming on and
+autoplay off, press **Play live** to start listening during generation. **Cancel** stops generation and queued audio;
+**Stop playback** mutes the rest of that request while generation continues. The
+completed audio remains available for replay and download and is not played twice.
+Configured server entries must already use streaming mode.
+
+With streaming off, **Auto play** plays the completed output automatically,
+including after switching browser tabs. Audio is unlocked by the Run click; if the
+browser blocks playback, Studio reports it and the output player remains available.
+Both options are off by default, preserving the ordinary request and manual playback.
+Model-specific panels retain their existing playback controls.
+
+Streaming synthesis uses the existing task API: built-in voices use `voice_id`,
+and reference recordings use `voice_ref`. Server-only speech presets that cannot
+be resolved to reference audio through the voice-preview endpoint require selecting
+a built-in voice or supplying reference audio instead.
+
 ## Model downloads
 
 Inference and normal embedded UI operation do not require Python. When native
