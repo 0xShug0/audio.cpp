@@ -1,5 +1,8 @@
 # LFM3-Audio
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 LFM3-Audio is Liquid AI's end-to-end speech and text model. audio.cpp runs its
 speech recognition (with a spoken-question chat mode), text-to-speech in 38
 built-in voices and spoken chat (speech-to-speech) as the community family

@@ -1,5 +1,8 @@
 # Seed-VC
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 Seed-VC is wired as `--family seed_vc` for voice conversion (`vc`) and singing voice conversion (`svc`). Every route takes a source audio file plus a target voice reference.
 
 Common CLI shape:

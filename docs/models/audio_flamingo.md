@@ -1,5 +1,8 @@
 # Audio Flamingo 3, Next, and Music Flamingo
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 The `audio_flamingo` family supports Audio Flamingo 3, Audio Flamingo Next, and Music Flamingo.
 Audio Flamingo checkpoints answer questions about speech, music, and environmental sounds,
 and support transcription and audio captioning through the `asr` task. The input

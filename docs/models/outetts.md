@@ -1,5 +1,8 @@
 # OuteTTS
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 OuteTTS 1.0 1B generates 24 kHz speech and supports voice cloning from reference
 audio and its transcript. Standalone GGUF and the original Safetensors/DAC
 layouts are supported.

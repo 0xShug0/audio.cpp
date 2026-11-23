@@ -1,5 +1,8 @@
 # VocalRender-Pro
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 VocalRender-Pro is a Mandarin score-conditioned singing model fine-tuned from
 VoxCPM2. It uses the existing `voxcpm2` runtime family; it is not a separate
 audio.cpp model family. The model renders a supplied monophonic melody and

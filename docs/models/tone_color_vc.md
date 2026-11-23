@@ -1,5 +1,8 @@
 # Tone Color VC
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 Tone Color VC is the standalone tone color converter from OpenVoice V2.
 It converts source speech to the speaker in a reference recording.
 The standalone converter includes its reference encoder, flow model, and waveform

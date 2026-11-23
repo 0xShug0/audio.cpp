@@ -1,5 +1,8 @@
 # MeanVC2
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 MeanVC2 is wired as `--family meanvc2` for zero-shot voice conversion. It
 converts source speech from `--audio` into the target speaker from `--voice-ref`.
 The current audio.cpp package covers the recommended 120 ms / 40 ms quality

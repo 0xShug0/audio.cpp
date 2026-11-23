@@ -1,5 +1,8 @@
 # SoulX-Singer
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 SoulX-Singer supports singing synthesis (SVS) from aligned phonemes and notes or
 an F0 contour, and singing voice conversion (SVC) from existing vocals. Both use
 reference audio to select the voice. One family serves both tasks, with separate

@@ -1,5 +1,8 @@
 # Edda ASR (experimental)
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 The `edda_asr` community family runs
 [Edda v0.2 large](https://huggingface.co/danish-foundation-models/edda-v0.2-large), a Danish
 Whisper-large-v3 fine-tune by the Alexandra Institute and Danish Foundation Models.

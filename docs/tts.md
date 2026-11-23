@@ -83,6 +83,9 @@ Common options:
 
 ## Chatterbox
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 Chatterbox is a voice-clone TTS model with an audio-to-audio voice-conversion path. The upstream Chatterbox family also documents paralinguistic tag tokens in newer variants, but the current audio.cpp integration exposes voice cloning and voice conversion rather than a separate tag-control interface.
 
 | Field | Value |
@@ -851,6 +854,9 @@ one name for each request control.
 
 ## VibeVoice
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 VibeVoice is a long-form multi-speaker TTS model, available in 1.5B and 7B sizes. Prompts use speaker-labeled lines, and speaker reference WAVs are provided in the same order as the speaker ids.
 
 | Field | Value |
@@ -983,6 +989,9 @@ audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b
 | `--guidance-scale` | float | `2.0` | CFG strength. |
 
 ## VoxCPM2
+
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
 
 VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
 

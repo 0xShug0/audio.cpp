@@ -1,5 +1,8 @@
 # VibeASR in audio.cpp
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 [VibeASR.cpp](https://github.com/microsoft/VibeASR.cpp) is Microsoft's CPU-first
 port of the VibeVoice ASR stack, quantized end to end for edge inference: the
 audio VAE encoder runs on INT8 weights *and* INT8 activations, and the Qwen2

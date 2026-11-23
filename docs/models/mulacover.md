@@ -1,5 +1,8 @@
 # MuLaCover
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 MuLaCover generates cover songs from reference audio or melody/chord MIDI,
 with new lyrics and musical style. It uses a Llama-derived causal backbone with gated
 symbolic cross attention, a Qwen3 style encoder and HeartCodec.
