@@ -1,4 +1,5 @@
 #include "execution.h"
+#include "engine/framework/runtime/options.h"
 
 #include <chrono>
 #include <stdexcept>
@@ -48,7 +49,7 @@ AudioMergeMode parse_audio_merge_mode(const std::string & value) {
 AppBatchResult run_offline_batch(
     engine::runtime::IVoiceTaskSession & session,
     engine::runtime::IOfflineVoiceTaskSession & offline,
-    const AppBatchRequest & batch,
+    AppBatchRequest & batch,
     AudioMergeMode audio_merge_mode,
     const std::function<void(size_t, const AppRequestResult &)> & on_result) {
     if (batch.requests.empty()) {
@@ -60,13 +61,20 @@ AppBatchResult run_offline_batch(
     };
     const auto session_start = Clock::now();
 
+    bool prepare_per_item = engine::runtime::resolve_random_seed(batch.requests.front().request.options);
     const auto prepare_start = Clock::now();
     session.prepare(engine::runtime::build_preparation_request(batch.requests.front().request));
     AppBatchResult out;
     out.prepare_ms = to_ms(Clock::now() - prepare_start);
     out.results.reserve(batch.requests.size());
-    for (const auto & item : batch.requests) {
+    for (auto & item : batch.requests) {
         const auto run_start = Clock::now();
+        if (&item != &batch.requests.front()) {
+            prepare_per_item = engine::runtime::resolve_random_seed(item.request.options) || prepare_per_item;
+            if (prepare_per_item) {
+                session.prepare(engine::runtime::build_preparation_request(item.request));
+            }
+        }
         auto result = offline.run(item.request);
         const double wall_ms = to_ms(Clock::now() - run_start);
         out.results.push_back(AppRequestResult{

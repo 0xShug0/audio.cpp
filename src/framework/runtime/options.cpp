@@ -4,6 +4,7 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/debug/trace.h"
 
 #include <algorithm>
 #include <chrono>
@@ -452,6 +453,15 @@ assets::TensorStorageType parse_tensor_storage_option(
         return parse_tensor_storage_option(options, key, fallback, allowed);
     }
     return parse_tensor_storage_option(options, fallback_key, fallback, allowed);
+}
+
+bool resolve_random_seed(std::unordered_map<std::string, std::string> & options) {
+    const auto seed = options.find("seed");
+    if (seed == options.end() || seed->second != "-1") return false;
+    const uint32_t resolved = random_u32_seed() & uint32_t{0x7fffffff};
+    seed->second = std::to_string(resolved);
+    debug::trace_log_scalar("request.seed", resolved);
+    return true;
 }
 
 uint64_t random_u64_seed() {

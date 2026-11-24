@@ -9,6 +9,7 @@
 #include "engine/framework/model_spec/options.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
 #include <cctype>
@@ -52,14 +53,14 @@ std::optional<int> parse_busy_timeout_override(const Value &body) {
 engine::runtime::TaskRequest apply_default_request_options(
     const std::unordered_map<std::string, std::string> &default_options,
     engine::runtime::TaskRequest request) {
-  if (default_options.empty()) {
-    return request;
+  if (!default_options.empty()) {
+    auto options = default_options;
+    for (auto &[key, value] : request.options) {
+      options[key] = std::move(value);
+    }
+    request.options = std::move(options);
   }
-  auto options = default_options;
-  for (auto &[key, value] : request.options) {
-    options[key] = std::move(value);
-  }
-  request.options = std::move(options);
+  engine::runtime::resolve_random_seed(request.options);
   return request;
 }
 

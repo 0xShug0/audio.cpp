@@ -70,12 +70,12 @@ public:
     engine::runtime::TaskResult run(
         std::string_view role,
         const engine::runtime::TaskSpec & task,
-        const engine::runtime::TaskRequest & request) override {
+        engine::runtime::TaskRequest & request) override {
         return run_(role, task, request);
     }
 
     engine::runtime::TaskResult stream(std::string_view role, const engine::runtime::TaskSpec & task,
-        const engine::runtime::TaskRequest & request, const minitts::app::RecipeEventSink & sink,
+        engine::runtime::TaskRequest & request, const minitts::app::RecipeEventSink & sink,
         const minitts::app::AudioChunkStream * source) override {
         return stream_(role, task, request, sink, source);
     }

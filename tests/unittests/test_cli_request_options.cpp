@@ -3,6 +3,7 @@
 #include "../../app/common/base64.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 
@@ -84,6 +85,42 @@ void test_malformed_seeds_are_invalid_requests() {
     // A JSON null option reaches the parser as "null".
     for (const char * value : {"null", " -1", "18446744073709551616"}) {
         require_seed_rejected(value);
+    }
+}
+
+void test_random_seed_resolution() {
+    using engine::runtime::resolve_random_seed;
+    using engine::test::require;
+    using engine::test::require_eq;
+    std::unordered_map<std::string, std::string> options{{"other", "kept"}};
+    const auto omitted = options;
+    resolve_random_seed(options);
+    require(options == omitted, "omitted seed stays absent");
+    for (const std::string value : {"0", "4294967295", "1000000000000001", "-2", " -1", "-1.0", "null"}) {
+        options["seed"] = value;
+        const auto original = options;
+        resolve_random_seed(options);
+        require(options == original, "non-sentinel options preserved exactly");
+    }
+    options["family.seed"] = "-1";
+    options["seed"] = "-1";
+    resolve_random_seed(options);
+    require(parse_seed(options.at("seed")) <= uint64_t{2147483647}, "random seed fits signed 32-bit");
+    const auto resolved = options;
+    resolve_random_seed(options);
+    require(options == resolved, "resolution is idempotent");
+    require_eq(options.at("family.seed"), std::string("-1"), "model alias not reinterpreted");
+    for (const char * numeric : {"-1", "-1.0"}) {
+        options["seed"] = option_from_json_number(numeric);
+        resolve_random_seed(options);
+        require(parse_seed(options.at("seed")) <= uint64_t{2147483647}, "JSON numeric sentinel resolves");
+    }
+    for (const char * flag : {"--seed", "--request-option"}) {
+        const char * argv[] = {"audiocpp_cli", flag, std::string(flag) == "--seed" ? "-1" : "seed=-1"};
+        auto request = minitts::cli::build_request_from_cli(3, const_cast<char **>(argv));
+        require_eq(request.options.at("seed"), std::string("-1"), "CLI leaves raw sentinel until dispatch");
+        resolve_random_seed(request.options);
+        require(parse_seed(request.options.at("seed")) <= uint64_t{2147483647}, "CLI seed resolves before model parsing");
     }
 }
 
@@ -829,10 +866,12 @@ void test_config_file_token_used_as_option_value() {
 }  // namespace
 
 int main() {
+    engine::debug::configure_logging({true});
     test_large_safe_integer_numbers_stay_decimal();
     test_float_numbers_keep_json_formatting();
     test_unsafe_integer_numbers_are_not_silently_rounded();
     test_malformed_seeds_are_invalid_requests();
+    test_random_seed_resolution();
     test_audio_only_language_is_request_option();
     test_audio_chunk_shortcut_uses_canonical_name();
     test_normalized_request_option_aliases();

@@ -9,6 +9,7 @@
 #include "engine/framework/audio/output.h"
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/runtime/options.h"
 #include "engine/framework/text/subtitle.h"
 
 #include <algorithm>
@@ -644,6 +645,7 @@ void run_model_step_impl(
         words_out = resolve_workflow_path(*words_out_value, context);
         request.options["return_timestamps"] = "true";
     }
+    engine::runtime::resolve_random_seed(request.options);
     session->prepare(engine::runtime::build_preparation_request(request));
     const auto result = offline->run(request);
 
@@ -855,7 +857,8 @@ void run_chunked_model_step(
         auto request = minitts::cli::build_request_from_json(
             engine::io::json::Value::make_object(std::move(request_object)),
             context.workflow_dir);
-        if (chunk_index == 0) {
+        const bool random_seed = engine::runtime::resolve_random_seed(request.options);
+        if (chunk_index == 0 || random_seed) {
             session->prepare(engine::runtime::build_preparation_request(request));
         }
         auto result = offline->run(request);
@@ -1028,6 +1031,7 @@ void run_model_step_foreach(
     std::vector<std::unordered_map<std::string, std::string>> output_items;
     output_items.reserve(source_items.size());
     bool prepared = false;
+    bool prepare_per_item = false;
     for (const auto & item : source_items) {
         context.values = base_values;
         for (const auto & [key, value] : item) {
@@ -1047,7 +1051,8 @@ void run_model_step_foreach(
             words_out = resolve_workflow_path(*words_out_value, context);
             request.options["return_timestamps"] = "true";
         }
-        if (!prepared) {
+        prepare_per_item = engine::runtime::resolve_random_seed(request.options) || prepare_per_item;
+        if (!prepared || prepare_per_item) {
             session->prepare(engine::runtime::build_preparation_request(request));
             prepared = true;
         }

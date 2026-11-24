@@ -25,6 +25,7 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/options.h"
 #include "engine/framework/io/json.h"
 
 #include <cstddef>
@@ -288,6 +289,11 @@ struct audiocpp_session {
     std::unique_ptr<rt::IVoiceTaskSession> session;
     rt::RunMode mode = rt::RunMode::Offline;
     std::string family;
+    struct PreparedSeed {
+        std::weak_ptr<const char> revision;
+        std::string value;
+    };
+    std::optional<PreparedSeed> prepared_seed;
 
     rt::IOfflineVoiceTaskSession & offline() const {
         auto * offline = dynamic_cast<rt::IOfflineVoiceTaskSession *>(session.get());
@@ -307,7 +313,10 @@ struct audiocpp_session {
 };
 
 struct audiocpp_request {
-    rt::TaskRequest request;
+    // Handles are individually non-thread-safe. The scoped seed substitution
+    // below restores the caller's sentinel without copying audio payloads.
+    mutable rt::TaskRequest request;
+    mutable std::shared_ptr<const char> seed_revision;
 };
 
 struct audiocpp_result {
@@ -324,6 +333,42 @@ struct audiocpp_event {
     std::vector<rt::VoiceActivityEvent> voice_activity;
     bool is_final = false;
 };
+
+namespace {
+
+class RequestSeedScope {
+public:
+    RequestSeedScope(audiocpp_session & session, const audiocpp_request * request) {
+        auto pending = std::move(session.prepared_seed);
+        session.prepared_seed.reset();
+        if (request == nullptr) return;
+        auto & options = request->request.options;
+        const auto seed = options.find("seed");
+        if (seed == options.end() || seed->second != "-1") return;
+        if (!request->seed_revision) request->seed_revision = std::make_shared<const char>(0);
+        if (pending && pending->revision.lock() == request->seed_revision) {
+            seed->second = std::move(pending->value);
+        } else {
+            rt::resolve_random_seed(options);
+        }
+        value_ = &seed->second;
+        revision_ = request->seed_revision;
+    }
+    ~RequestSeedScope() { if (value_) value_->swap(original_); }
+    RequestSeedScope(const RequestSeedScope &) = delete;
+    RequestSeedScope & operator=(const RequestSeedScope &) = delete;
+
+    void retain_preparation(audiocpp_session & session) const {
+        if (value_) session.prepared_seed = audiocpp_session::PreparedSeed{revision_, *value_};
+    }
+
+private:
+    std::string * value_ = nullptr;
+    std::string original_ = "-1";
+    std::weak_ptr<const char> revision_;
+};
+
+} // namespace
 
 namespace {
 
@@ -689,9 +734,11 @@ audiocpp_status audiocpp_session_prepare(audiocpp_session * session, const audio
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "session must be non-null");
     }
     return guard([&] {
+        RequestSeedScope seed(*session, request);
         const rt::TaskRequest empty;
         const auto & task_request = request != nullptr ? request->request : empty;
         session->session->prepare(rt::build_preparation_request(task_request));
+        seed.retain_preparation(*session);
         return AUDIOCPP_OK;
     });
 }
@@ -707,6 +754,7 @@ audiocpp_status audiocpp_session_run(audiocpp_session * session,
         return fail(AUDIOCPP_ERR_NOT_AVAILABLE, "session was created in streaming mode");
     }
     return guard([&] {
+        RequestSeedScope seed(*session, request);
         const rt::TaskRequest empty;
         const auto & task_request = request != nullptr ? request->request : empty;
         /* Always prepared with the request that is about to run, exactly as
@@ -768,6 +816,7 @@ audiocpp_status audiocpp_request_set_text_language(audiocpp_request * request, c
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request must be non-null");
     }
     return guard([&] {
+        request->seed_revision.reset();
         /* Deliberately not touching request->request.options: that is the whole
          * difference between this and set_text's language argument. */
         if (!request->request.text_input.has_value()) {
@@ -783,6 +832,7 @@ audiocpp_status audiocpp_request_set_text(audiocpp_request * request, const char
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request and text must be non-null");
     }
     return guard([&] {
+        request->seed_revision.reset();
         rt::Transcript transcript;
         transcript.text = text;
         if (language != nullptr) transcript.language = language;
@@ -808,6 +858,7 @@ audiocpp_status audiocpp_request_set_audio(audiocpp_request * request,
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request must be non-null");
     }
     return guard([&] {
+        request->seed_revision.reset();
         request->request.audio_input = make_audio_buffer(samples, frames, sample_rate, channels);
         return AUDIOCPP_OK;
     });
@@ -822,6 +873,7 @@ audiocpp_status audiocpp_request_set_voice_audio(audiocpp_request * request,
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request must be non-null");
     }
     return guard([&] {
+        request->seed_revision.reset();
         if (!request->request.voice.has_value()) request->request.voice = rt::VoiceCondition{};
         if (!request->request.voice->speaker.has_value()) request->request.voice->speaker = rt::VoiceReference{};
         request->request.voice->speaker->audio = make_audio_buffer(samples, frames, sample_rate, channels);
@@ -834,6 +886,7 @@ audiocpp_status audiocpp_request_set_voice_id(audiocpp_request * request, const 
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request and cached_voice_id must be non-null");
     }
     return guard([&] {
+        request->seed_revision.reset();
         if (!request->request.voice.has_value()) request->request.voice = rt::VoiceCondition{};
         if (!request->request.voice->speaker.has_value()) request->request.voice->speaker = rt::VoiceReference{};
         request->request.voice->speaker->cached_voice_id = std::string(cached_voice_id);
@@ -844,6 +897,7 @@ audiocpp_status audiocpp_request_set_voice_id(audiocpp_request * request, const 
 namespace {
 
 rt::StyleCondition & mutable_style(audiocpp_request * request) {
+    request->seed_revision.reset();
     if (!request->request.voice.has_value()) request->request.voice = rt::VoiceCondition{};
     if (!request->request.voice->style.has_value()) request->request.voice->style = rt::StyleCondition{};
     return *request->request.voice->style;
@@ -942,6 +996,7 @@ audiocpp_status audiocpp_request_add_artifact(audiocpp_request * request,
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "payload is null but payload_bytes > 0");
     }
     return guard([&] {
+        request->seed_revision.reset();
         rt::VoiceArtifact artifact;
         artifact.kind = to_artifact_kind(kind);
         artifact.id = id;
@@ -966,6 +1021,7 @@ audiocpp_status audiocpp_request_set_artifact_meta(audiocpp_request * request,
         return fail(AUDIOCPP_ERR_OUT_OF_RANGE, "artifact index out of range");
     }
     return guard([&] {
+        request->seed_revision.reset();
         request->request.input_artifacts[index].meta[key] = value;
         return AUDIOCPP_OK;
     });
@@ -976,6 +1032,7 @@ audiocpp_status audiocpp_request_set_option(audiocpp_request * request, const ch
         return fail(AUDIOCPP_ERR_INVALID_ARGUMENT, "request, key and value must be non-null");
     }
     return guard([&] {
+        request->seed_revision.reset();
         request->request.options[key] = value;
         return AUDIOCPP_OK;
     });
@@ -999,6 +1056,7 @@ audiocpp_status audiocpp_request_set_option_array(audiocpp_request * request,
         }
     }
     return guard([&] {
+        request->seed_revision.reset();
         std::vector<std::string> copied;
         copied.reserve(count);
         for (size_t i = 0; i < count; ++i) {
@@ -1275,6 +1333,7 @@ audiocpp_status audiocpp_stream_start(audiocpp_session * session, const audiocpp
     }
     { const audiocpp_status s = require_streaming(session); if (s != AUDIOCPP_OK) return s; }
     return guard([&] {
+        RequestSeedScope seed(*session, request);
         const rt::TaskRequest empty;
         const auto & task_request = request != nullptr ? request->request : empty;
         session->session->prepare(rt::build_preparation_request(task_request));
@@ -1347,6 +1406,7 @@ audiocpp_status audiocpp_stream_reset(audiocpp_session * session) {
     }
     { const audiocpp_status s = require_streaming(session); if (s != AUDIOCPP_OK) return s; }
     return guard([&] {
+        session->prepared_seed.reset();
         session->streaming().reset();
         return AUDIOCPP_OK;
     });

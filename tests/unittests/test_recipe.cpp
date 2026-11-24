@@ -32,7 +32,7 @@ public:
     TaskResult run(
         std::string_view role,
         const TaskSpec & task,
-        const TaskRequest & request) override {
+        TaskRequest & request) override {
         invocations.push_back({std::string(role), task, request});
 
         TaskResult result;
@@ -154,10 +154,10 @@ public:
     std::vector<std::string> phrases;
     const std::string first = "Here is a practical suggestion for your afternoon: take a gentle walk outside and notice the trees around you. ";
     const std::string tail = "Then take a slow breath. Keep your shoulders relaxed. 最後に、少し休んでください。";
-    TaskResult run(std::string_view, const TaskSpec &, const TaskRequest &) override {
+    TaskResult run(std::string_view, const TaskSpec &, TaskRequest &) override {
         throw std::runtime_error("offline execution is forbidden in the streaming recipe");
     }
-    TaskResult stream(std::string_view role, const TaskSpec &, const TaskRequest & request,
+    TaskResult stream(std::string_view role, const TaskSpec &, TaskRequest & request,
         const minitts::app::RecipeEventSink & sink, const minitts::app::AudioChunkStream * source = nullptr) override {
         TaskResult result;
         if (role == "conversation") {

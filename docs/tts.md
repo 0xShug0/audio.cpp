@@ -79,7 +79,7 @@ Common options:
 | `--voice-id` | Built-in voice id for models with packaged voices. |
 | `--language` | Model language code when the model requires one. |
 | `--text-chunk-size` | Long-form chunk budget in characters. Each model has its own default. |
-| `--seed` | Optional fixed seed. If omitted, models that sample use a random seed unless their upstream default is fixed. |
+| `--seed` | Fixed seed, or `-1` for a fresh random seed per request. Omission preserves the model-specific default. |
 
 ## Chatterbox
 

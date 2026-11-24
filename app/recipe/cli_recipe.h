@@ -30,10 +30,10 @@ public:
     engine::runtime::TaskResult run(
         std::string_view role,
         const engine::runtime::TaskSpec & task,
-        const engine::runtime::TaskRequest & request) override;
+        engine::runtime::TaskRequest & request) override;
 
     engine::runtime::TaskResult stream(std::string_view role,
-        const engine::runtime::TaskSpec & task, const engine::runtime::TaskRequest & request,
+        const engine::runtime::TaskSpec & task, engine::runtime::TaskRequest & request,
         const RecipeEventSink & sink, const AudioChunkStream * source = nullptr) override;
 private:
     struct ModelEntry;

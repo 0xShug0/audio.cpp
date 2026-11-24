@@ -51,12 +51,24 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 
 Omit these unless you need explicit control. Seed defaults are model-specific:
 some models choose a random seed when omitted, while others use a fixed default
-(for example, AudioSR uses 42 and MiDashengLM uses 0). Neither `0` nor `-1` is a
-universal random-seed sentinel; check the model's usage page.
+(for example, AudioSR uses 42 and MiDashengLM uses 0). Explicit `seed=-1`
+selects a fresh random seed for each request in the CLI, server and C API.
+It is resolved once before preparation and reused throughout that request,
+including streaming and internal chunks. With `--log`, `request.seed` records
+the resolved integer for replay. Generated seeds fit `0..2147483647`; explicit
+nonnegative seeds retain each model's existing range. Models without seed
+support retain their existing validation. `0` is an ordinary fixed seed.
+
+For OpenAI speech and native task JSON, use top-level `"seed": -1` or
+`"options": {"seed": "-1"}`. Other endpoints retain their existing option
+transport; this does not add new top-level fields to their API schemas.
+For C++, call `engine::runtime::resolve_random_seed(request.options)` before
+preparation and use the same request for execution; direct virtual session
+calls do not pass through the CLI/server adapters.
 
 | Option | Values | Meaning |
 |---|---|---|
-| `--seed` | integer | Reproducible random seed. |
+| `--seed` | integer | Fixed seed, or `-1` for a fresh random seed per request. |
 | `--max-tokens` | integer | Maximum generated tokens for AR/LLM-style models. |
 | `--max-steps` | integer | Maximum diffusion or generation steps for models that expose it. |
 | `--temperature` | float | Sampling temperature. |

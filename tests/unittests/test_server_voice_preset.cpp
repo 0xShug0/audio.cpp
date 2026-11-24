@@ -4,6 +4,8 @@
 #include "server_protocol.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/debug/trace.h"
+#include "engine/framework/runtime/options.h"
 
 #include <filesystem>
 #include <iostream>
@@ -39,7 +41,25 @@ engine::runtime::TaskRequest speech(
 }  // namespace
 
 int main() {
+    engine::debug::configure_logging({true});
     try {
+        // The merge is request-owned: seed_defaults/presets remain raw for later calls.
+        const std::unordered_map<std::string, std::string> seed_defaults{{"seed", "-1"}};
+        auto random = speech({}, {}, seed_defaults, R"({"input":"x"})");
+        const auto resolved = engine::runtime::parse_u32_option(random.options, {"seed"});
+        expect(resolved && *resolved <= 2147483647U, "default sentinel not resolved");
+        expect(seed_defaults.at("seed") == "-1", "seed_defaults were mutated");
+        auto fixed = speech({}, {}, seed_defaults, R"({"input":"x","seed":42})");
+        expect(fixed.options.at("seed") == "42", "request seed must override random default");
+        auto override = speech({}, {}, {{"seed", "42"}}, R"({"input":"x","seed":-1.0})");
+        expect(engine::runtime::parse_u32_option(override.options, {"seed"}).has_value(), "request sentinel did not override fixed default");
+        RuntimeVoicePreset random_voice;
+        random_voice.options = {{"seed", "-1"}};
+        auto preset = speech({{"random", random_voice}}, {}, {}, R"({"input":"x","voice":"random"})");
+        expect(engine::runtime::parse_u32_option(preset.options, {"seed"}).has_value(), "preset sentinel unresolved");
+        expect(random_voice.options.at("seed") == "-1", "preset template mutated");
+        auto again = minitts::server::apply_default_request_options(seed_defaults, std::move(random));
+        expect(engine::runtime::parse_u32_option(again.options, {"seed"}) == resolved, "nested dispatch redrew resolved seed");
         RuntimeVoicePreset narrator;
         narrator.options = {
             {"speaker_embedding_file", "/voices/narrator.speaker.safetensors"},
