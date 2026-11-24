@@ -61,7 +61,7 @@ AppBatchResult run_offline_batch(
     };
     const auto session_start = Clock::now();
 
-    engine::runtime::resolve_random_seed(batch.requests.front().request.options);
+    bool prepare_per_item = engine::runtime::resolve_random_seed(batch.requests.front().request.options);
     const auto prepare_start = Clock::now();
     session.prepare(engine::runtime::build_preparation_request(batch.requests.front().request));
     AppBatchResult out;
@@ -69,8 +69,11 @@ AppBatchResult run_offline_batch(
     out.results.reserve(batch.requests.size());
     for (auto & item : batch.requests) {
         const auto run_start = Clock::now();
-        if (&item != &batch.requests.front() && engine::runtime::resolve_random_seed(item.request.options)) {
-            session.prepare(engine::runtime::build_preparation_request(item.request));
+        if (&item != &batch.requests.front()) {
+            prepare_per_item = engine::runtime::resolve_random_seed(item.request.options) || prepare_per_item;
+            if (prepare_per_item) {
+                session.prepare(engine::runtime::build_preparation_request(item.request));
+            }
         }
         auto result = offline.run(item.request);
         const double wall_ms = to_ms(Clock::now() - run_start);

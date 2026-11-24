@@ -1031,6 +1031,7 @@ void run_model_step_foreach(
     std::vector<std::unordered_map<std::string, std::string>> output_items;
     output_items.reserve(source_items.size());
     bool prepared = false;
+    bool prepare_per_item = false;
     for (const auto & item : source_items) {
         context.values = base_values;
         for (const auto & [key, value] : item) {
@@ -1050,8 +1051,8 @@ void run_model_step_foreach(
             words_out = resolve_workflow_path(*words_out_value, context);
             request.options["return_timestamps"] = "true";
         }
-        const bool random_seed = engine::runtime::resolve_random_seed(request.options);
-        if (!prepared || random_seed) {
+        prepare_per_item = engine::runtime::resolve_random_seed(request.options) || prepare_per_item;
+        if (!prepared || prepare_per_item) {
             session->prepare(engine::runtime::build_preparation_request(request));
             prepared = true;
         }

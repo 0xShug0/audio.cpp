@@ -33,12 +33,14 @@ public:
     void prepare(const rt::SessionPreparationRequest & request) override {
         record_->prepared.push_back(request.options);
         if (record_->fail_prepare) throw std::runtime_error("controlled preparation failure");
+        prepared_options_ = request.options;
     }
     rt::TaskResult run(const rt::TaskRequest & request) override {
         record_->executed.push_back(request.options);
         if (record_->fail_run) throw std::runtime_error("controlled execution failure");
         rt::TaskResult out;
-        out.text_output = rt::Transcript{"captured", "en"};
+        const auto seed = prepared_options_.find("seed");
+        out.text_output = rt::Transcript{seed == prepared_options_.end() ? "omitted" : seed->second, "en"};
         return out;
     }
     rt::StreamingPolicy streaming_policy() const override { return {}; }
@@ -49,6 +51,7 @@ public:
 private:
     std::shared_ptr<Record> record_;
     rt::RunMode mode_;
+    Options prepared_options_;
 };
 
 class Model final : public rt::ILoadedVoiceModel {
@@ -199,11 +202,13 @@ void application_dispatch(const std::filesystem::path & root) {
         batch.requests.push_back({std::to_string(batch.requests.size()), std::move(request)});
     }
     const auto before = draws;
-    (void)minitts::app::run_offline_batch(session, session, batch, minitts::app::AudioMergeMode::None);
+    const auto results = minitts::app::run_offline_batch(session, session, batch, minitts::app::AudioMergeMode::None);
     require_eq(draws, before + 2, "batch resolves only sentinel items");
     require(record->prepared.front() == record->executed.front(), "batch first preparation aligned");
-    require_eq(record->prepared.size(), size_t{2}, "only later sentinel item adds preparation");
-    require(record->prepared.back() == record->executed[2], "later random batch item prepares with its own seed");
+    require_eq(record->prepared.size(), size_t{4}, "each item after randomization gets matching preparation");
+    require(record->prepared == record->executed, "mixed batch preparation matches every invocation");
+    require_eq(results.results[1].result.text_output->text, std::string("42"), "fixed item restores prepared seed");
+    require_eq(results.results[3].result.text_output->text, std::string("omitted"), "omitted item cannot inherit random preparation");
     resolved(record->executed[0]); resolved(record->executed[2]);
     require_eq(record->executed[1].at("seed"), std::string("42"), "fixed batch neighbor preserved");
     require(record->executed[3].empty(), "omitted batch neighbor preserved");
@@ -230,6 +235,48 @@ void application_dispatch(const std::filesystem::path & root) {
     resolved(record->executed.back());
     require(record->prepared.back() == record->executed.back(), "workflow preparation aligned");
 }
+void mixed_batch_seed_restoration(const std::filesystem::path & root) {
+    for (const auto & seeds : {std::vector<std::string>{"42", "42", "42"},
+                              std::vector<std::string>{"42", "-1", "42"},
+                              std::vector<std::string>{"-1", "42", "42"}}) {
+        auto record = std::make_shared<Record>();
+        RecordingSession session(record, rt::RunMode::Offline);
+        minitts::app::AppBatchRequest batch;
+        for (const auto & seed : seeds) {
+            rt::TaskRequest request;
+            request.options["seed"] = seed;
+            batch.requests.push_back({std::to_string(batch.requests.size()), std::move(request)});
+        }
+        const auto results = minitts::app::run_offline_batch(session, session, batch, minitts::app::AudioMergeMode::None);
+        require_eq(results.results.back().result.text_output->text, std::string("42"), "final output uses restored prepared seed");
+        if (seeds.front() == "42") {
+            require_eq(results.results.front().result.text_output->text, results.results.back().result.text_output->text,
+                       "fixed first/last outputs match across an intervening random item");
+        }
+        require_eq(record->prepared.size(), seeds[1] == "42" && seeds[0] == "42" ? size_t{1} : size_t{3},
+                   "fixed-only batches preserve prepare-once; randomized batches stay request-aligned");
+    }
+
+    auto record = std::make_shared<Record>();
+    rt::ModelRegistry registry;
+    registry.register_loader(std::make_shared<Loader>(record));
+    std::filesystem::create_directories(root / "seeds");
+    std::ofstream(root / "seeds/01.txt") << "42";
+    std::ofstream(root / "seeds/02.txt") << "-1";
+    std::ofstream(root / "seeds/03.txt") << "42";
+    minitts::app::WorkflowRunOptions options;
+    options.workflow_path = root / "mixed.json";
+    options.output_dir = root / "mixed-output";
+    options.backend.type = engine::core::BackendType::Cpu;
+    std::ofstream(options.workflow_path) << R"({"steps":[
+        {"id":"seeds","type":"batch_inputs","text_dir":"seeds"},
+        {"id":"each","type":"model","foreach":"${seeds.items}","model":".","family":"seed_fixture","task":"tts",
+         "request":{"text":"test","options":{"seed":"${item.text}"}}}]})";
+    minitts::app::run_json_workflow(registry, options);
+    require_eq(record->executed.size(), size_t{3}, "workflow tested all mixed items");
+    require(record->prepared == record->executed, "workflow cannot retain middle item's prepared seed");
+}
+
 void workflow_loops_and_recipe_stream(const std::filesystem::path & root) {
     auto record = std::make_shared<Record>();
     rt::ModelRegistry registry;
@@ -284,13 +331,15 @@ int main(int argc, char ** argv) {
         ("audiocpp-seed-" + std::to_string(start.time_since_epoch().count()));
     std::filesystem::create_directories(root);
     try {
-        const bool additional_only = argc > 1 && std::string(argv[1]) == "loops";
+        const bool batch_only = argc > 1 && std::string(argv[1]) == "batch-seed";
+        const bool additional_only = batch_only || (argc > 1 && std::string(argv[1]) == "loops");
         if (!additional_only) {
             capi_prepare_and_run();
             capi_identity_stream_and_sessions();
             application_dispatch(root);
         }
-        workflow_loops_and_recipe_stream(root);
+        if (!batch_only) workflow_loops_and_recipe_stream(root);
+        mixed_batch_seed_restoration(root);
         std::filesystem::remove_all(root);
         engine::debug::timing_log_scalar("session.wall_ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
         std::cout << "request seed dispatch passed\n";
