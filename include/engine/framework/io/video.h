@@ -29,7 +29,7 @@ void read_video_rgb(const std::filesystem::path & path, const RgbVideoConsumer &
                     double max_duration_sec = 0.0, size_t prefetch_frames = 0);
 
 // Decode native RGB24 frames and their presentation timestamps in-process.
-// Requires FFmpeg shared libraries; never launches an executable. A positive
+// Requires FFmpeg 6+ shared libraries; never launches an executable. A positive
 // duration limit retains frames through that timestamp; zero decodes all frames.
 RgbVideo load_video_rgb(const std::filesystem::path & path, double max_duration_sec = 0.0);
 } // namespace engine::io

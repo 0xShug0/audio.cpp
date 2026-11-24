@@ -129,7 +129,7 @@ public:
 #endif
           }), close_dynamic_library) {
         if (!avformat_ || !avcodec_ || !avutil_ || !swscale_)
-            throw std::runtime_error("Video decoding requires FFmpeg shared libraries: libavformat, libavcodec, libavutil and libswscale");
+            throw std::runtime_error("Video decoding requires FFmpeg 6+ shared libraries: libavformat, libavcodec, libavutil and libswscale");
 
         avformat_version = symbol<unsigned (*)()>(avformat_.get(), "avformat_version");
         avformat_open_input = symbol<int (*)(AVFormatContextModern **, const char *, const AVInputFormat *, AVDictionary **)>(
@@ -170,9 +170,9 @@ public:
 
         const unsigned version = avformat_version();
         const unsigned major = version >> 16U;
-        if (major < 59U) {
+        if (major < 60U) {
             throw std::runtime_error(
-                "Video decoding requires FFmpeg 5+ runtime libraries");
+                "Video decoding requires FFmpeg 6+ runtime libraries");
         }
     }
 
