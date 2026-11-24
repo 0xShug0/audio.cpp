@@ -4,17 +4,23 @@
 flow-matching language model with a Mimi decoder, a descendant of Kyutai's PocketTTS,
 so this family reuses the `pocket_tts` graphs and session. Output is mono 24 kHz.
 
-The packaged model is Phonon 31m English
-([gradium/phonon-31m-en](https://huggingface.co/gradium/phonon-31m-en), Apache-2.0), in
-two packages:
+The default model is Phonon 31m English
+([gradium/phonon-31m-en](https://huggingface.co/gradium/phonon-31m-en), Apache-2.0).
+French and multilingual 40m packages are also available:
 
 | Package | Source | Weights |
 |---|---|---|
 | `gradium_phonon_31m_en_q8_0` (default) | [gradium/phonon-31m-en-audiocpp](https://huggingface.co/gradium/phonon-31m-en-audiocpp) | GGUF: flow transformer linears Q8_0, the rest as published |
 | `gradium_phonon_31m_en_safetensors` | [gradium/phonon-31m-en](https://huggingface.co/gradium/phonon-31m-en), as published | Safetensors: BF16 flow model, F32 Mimi |
+| `gradium_phonon_40m_fr_q8_0` | [audio.cpp GGUF](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/Gradium-Phonon-GGUF/40m-fr), from [Gradium](https://huggingface.co/gradium/phonon-40m-fr) | Q8_0 flow transformer; French |
+| `gradium_phonon_40m_multilingual_q8_0` | [audio.cpp GGUF](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/Gradium-Phonon-GGUF/40m-multilingual), from [Gradium](https://huggingface.co/gradium/phonon-40m-multilingual) | Q8_0 flow transformer; English, French, German, Spanish, Portuguese |
 
-The 40m checkpoints (`gradium/phonon-40m-*`, CC-BY-NC-4.0,
-gated) use the same code with nine layers and load the same way, but are not packaged.
+> [!WARNING]
+> The 40m weights, tokenizer and bundled voices use **CC BY-NC 4.0: noncommercial use only**. See each package's README and LICENSE. Conversion, quantization and optional download do not remove this restriction. The 31m packages retain their existing Apache-2.0 license.
+
+The 40m checkpoints use the same implementation with nine layers. Packages install
+under `models/Gradium-Phonon-GGUF/40m-fr` or
+`models/Gradium-Phonon-GGUF/40m-multilingual`, with a default voice beside the GGUF.
 
 ## Usage
 
@@ -30,6 +36,22 @@ The package's `default-voice.safetensors` is the `default` voice. `--mode stream
 emits one audio event per generated frame. The safetensors package installs to
 `models/phonon-31m-en-safetensors` and runs the same way.
 
+The 40m packages use the same `gradium_phonon` runtime; layer counts and other
+architecture settings come from the embedded checkpoint config. No variant flag
+or spec override is needed. For example, after installing the French package:
+
+```bash
+audiocpp_cli --task tts --family gradium_phonon \
+  --model models/Gradium-Phonon-GGUF/40m-fr --backend cuda \
+  --mode streaming --text "Bonjour, ceci est un test de synthèse vocale." \
+  --out french.wav --log
+```
+
+Use `models/Gradium-Phonon-GGUF/40m-multilingual` for multilingual text.
+Offline and streaming generation are checked on CUDA, Vulkan and CPU for both
+40m packages. Language is determined by the input text and checkpoint; these
+packages do not add a runtime language-style control.
+
 ## Model
 
 | Field | Value |
@@ -37,7 +59,7 @@ emits one audio event per generated frame. The safetensors package installs to
 | Family | `gradium_phonon` |
 | Tasks | `tts` |
 | Modes | `offline`, `streaming` |
-| Languages | `en` |
+| Languages | `en`, `fr`, `de`, `es`, `pt` (checkpoint-dependent) |
 | Default package | `gradium_phonon_31m_en_q8_0` |
 | Input | Text; voice conditioning as shown in the examples |
 | Output | Generated speech audio |

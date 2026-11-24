@@ -13,7 +13,11 @@
     "streaming"
   ],
   "languages": [
-    "en"
+    "en",
+    "fr",
+    "de",
+    "es",
+    "pt"
   ],
   "runtime": {
     "tags": [
@@ -288,6 +292,50 @@
         "kind": "huggingface_snapshot",
         "repo": "gradium/phonon-31m-en",
         "revision": "52433c46975bfa13144c56204c9f4ee1c5b148aa",
+        "gated": false
+      }
+    },
+    {
+      "id": "gradium_phonon_40m_fr_q8_0",
+      "display_name": "Phonon 40m French Q8_0 GGUF (Noncommercial)",
+      "description": "CC BY-NC 4.0. Noncommercial use only; includes default voice and license notices.",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Gradium-Phonon-GGUF/40m-fr",
+      "files": [
+        "Gradium-Phonon-GGUF/40m-fr/phonon-40m-fr-q8_0.gguf",
+        "Gradium-Phonon-GGUF/40m-fr/default-voice.safetensors",
+        "Gradium-Phonon-GGUF/40m-fr/README.md",
+        "Gradium-Phonon-GGUF/40m-fr/LICENSE",
+        "Gradium-Phonon-GGUF/40m-fr/UPSTREAM.md"
+      ],
+      "strip_prefix": "Gradium-Phonon-GGUF/40m-fr",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "gradium_phonon_40m_multilingual_q8_0",
+      "display_name": "Phonon 40m Multilingual Q8_0 GGUF (Noncommercial)",
+      "description": "CC BY-NC 4.0. Noncommercial use only; includes default voice and license notices.",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Gradium-Phonon-GGUF/40m-multilingual",
+      "files": [
+        "Gradium-Phonon-GGUF/40m-multilingual/phonon-40m-multilingual-q8_0.gguf",
+        "Gradium-Phonon-GGUF/40m-multilingual/default-voice.safetensors",
+        "Gradium-Phonon-GGUF/40m-multilingual/README.md",
+        "Gradium-Phonon-GGUF/40m-multilingual/LICENSE",
+        "Gradium-Phonon-GGUF/40m-multilingual/UPSTREAM.md"
+      ],
+      "strip_prefix": "Gradium-Phonon-GGUF/40m-multilingual",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
         "gated": false
       }
     }
