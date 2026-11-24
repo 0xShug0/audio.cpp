@@ -1,8 +1,8 @@
-#include "engine/framework/codecs/ltx_video_vae_runtime.h"
+#include "engine/framework/vision/runtimes/ltx_video_vae_runtime.h"
 
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/constant_tensor_cache.h"
-#include "engine/framework/codecs/wan_video_vae_runtime.h"
+#include "engine/framework/vision/modules/wan_video_vae_modules.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/modules/activation_modules.h"

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/vision/media/video.h"
+
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -9,25 +11,14 @@
 
 namespace engine::models::controlfoley::video {
 
-struct DecodedFrame {
-    double time = 0.0;
-    std::vector<uint8_t> rgb;
-};
-
-struct SourceVideo {
-    int64_t width = 0;
-    int64_t height = 0;
-    std::vector<DecodedFrame> frames;
-};
-
-SourceVideo load_video_frames(
+io::RgbVideo load_video_frames(
     const std::filesystem::path & path,
     double max_duration_sec = 0.0);
 
 class ResizedFrameCache {
 public:
     ResizedFrameCache(
-        const SourceVideo & video,
+        const io::RgbVideo & video,
         int64_t size,
         bool center_crop);
 
@@ -39,14 +30,14 @@ public:
         std::string_view trace_name = {});
 
 private:
-    const SourceVideo * video_;
+    const io::RgbVideo * video_;
     int64_t size_;
     bool center_crop_;
     std::unordered_map<int64_t, std::vector<uint8_t>> cache_;
 };
 
 std::vector<float> extract_video_frames(
-    const SourceVideo & video,
+    const io::RgbVideo & video,
     float duration_sec,
     int64_t fps,
     int64_t size,

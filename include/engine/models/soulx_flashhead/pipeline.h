@@ -2,6 +2,7 @@
 #include "engine/models/soulx_flashhead/assets.h"
 #include "engine/framework/core/execution_context.h"
 #include <cstddef>
+#include "engine/framework/vision/media/processing.h"
 
 namespace engine::models::soulx_flashhead {
 struct GenerateOptions {
@@ -11,8 +12,8 @@ struct GenerateOptions {
     float color_strength = 1, audio_guidance_scale = 3;
 };
 struct VideoChunk {
-    int64_t height = 0, width = 0, frames = 0, index = 0;
-    std::vector<std::byte> rgb;
+    engine::video::RgbVideoBuffer video;
+    int64_t index = 0;
 };
 class Pipeline {
   public:

@@ -1,3 +1,4 @@
+#include "engine/framework/vision/media/processing.h"
 #include "engine/community_models/minimax_h3/video_vae_decoder.h"
 
 #include "engine/framework/assets/tensor_source.h"
@@ -180,71 +181,6 @@ std::vector<float> video_vae_rope_values(
         }
     }
     return out;
-}
-
-struct VideoTensor4D {
-    int64_t channels = 3;
-    int64_t frames = 0;
-    int64_t height = 0;
-    int64_t width = 0;
-    std::vector<float> values;
-
-    float & at(int64_t c, int64_t t, int64_t h, int64_t w) {
-        return values[static_cast<size_t>(((c * frames + t) * height + h) * width + w)];
-    }
-    const float & at(int64_t c, int64_t t, int64_t h, int64_t w) const {
-        return values[static_cast<size_t>(((c * frames + t) * height + h) * width + w)];
-    }
-};
-
-void blend_height_from_previous(const VideoTensor4D & previous, VideoTensor4D & current, int64_t extent) {
-    extent = std::min<int64_t>({extent, previous.height, current.height});
-    for (int64_t y = 0; y < extent; ++y) {
-        const float wgt = static_cast<float>(y) / static_cast<float>(extent);
-        const int64_t prev_y = previous.height - extent + y;
-        for (int64_t c = 0; c < current.channels; ++c) {
-            for (int64_t t = 0; t < current.frames; ++t) {
-                for (int64_t x = 0; x < current.width; ++x) {
-                    current.at(c, t, y, x) = previous.at(c, t, prev_y, x) * (1.0F - wgt) + current.at(c, t, y, x) * wgt;
-                }
-            }
-        }
-    }
-}
-
-void blend_width_from_previous(const VideoTensor4D & previous, VideoTensor4D & current, int64_t extent) {
-    extent = std::min<int64_t>({extent, previous.width, current.width});
-    for (int64_t x = 0; x < extent; ++x) {
-        const float wgt = static_cast<float>(x) / static_cast<float>(extent);
-        const int64_t prev_x = previous.width - extent + x;
-        for (int64_t c = 0; c < current.channels; ++c) {
-            for (int64_t t = 0; t < current.frames; ++t) {
-                for (int64_t y = 0; y < current.height; ++y) {
-                    current.at(c, t, y, x) = previous.at(c, t, y, prev_x) * (1.0F - wgt) + current.at(c, t, y, x) * wgt;
-                }
-            }
-        }
-    }
-}
-
-std::pair<std::vector<int64_t>, std::vector<int64_t>> split_video_tiles(int64_t input_len, int64_t tile_size, int64_t min_overlap, int64_t ratio) {
-    if (tile_size >= input_len) {
-        return {{0}, {input_len}};
-    }
-    int64_t count = (input_len + tile_size - min_overlap - 1) / (tile_size - min_overlap);
-    while (tile_size * count - min_overlap * (count - 1) < input_len) {
-        ++count;
-    }
-    std::vector<int64_t> overlaps(static_cast<size_t>(count - 1), min_overlap);
-    int64_t remaining = tile_size * count - min_overlap * (count - 1) - input_len;
-    for (int64_t i = 0; i < remaining / ratio; ++i) {
-        overlaps[static_cast<size_t>(i % (count - 1))] += ratio;
-    }
-    std::vector<int64_t> starts{0};
-    for (int64_t i = 0; i + 1 < count; ++i) {
-        starts.push_back(starts.back() + tile_size - overlaps[static_cast<size_t>(i)]);
-    }
-    return {starts, overlaps};
 }
 
 core::TensorValue video_linear(
@@ -443,7 +379,7 @@ public:
         }
     }
 
-    VideoTensor4D run(const std::vector<float> & latents) {
+    engine::video::FloatVideo run(const std::vector<float> & latents) {
         const int64_t tokens = latent_t_ * latent_h_ * latent_w_;
         if (static_cast<int64_t>(latents.size()) != tokens * cfg_.video_vae_latent_channels) {
             throw std::runtime_error("MiniMax-H3 video VAE tile latent size mismatch");
@@ -462,7 +398,7 @@ public:
         const auto read_start = Clock::now();
         auto packed = core::read_tensor_f32(output_.tensor);
         engine::debug::timing_log_scalar("minimax_h3.video_vae.output_read_ms", engine::debug::elapsed_ms(read_start, Clock::now()));
-        VideoTensor4D out;
+        engine::video::FloatVideo out;
         out.frames = latent_t_ * cfg_.video_vae_patch_size_t;
         out.height = latent_h_ * cfg_.video_vae_patch_size;
         out.width = latent_w_ * cfg_.video_vae_patch_size;
@@ -532,25 +468,25 @@ std::vector<float> gather_video_tile_latents(
     return out;
 }
 
-VideoTensor4D decode_video_spatial_tile_set(
+engine::video::FloatVideo decode_video_spatial_tile_set(
     VideoVAEWeightStore & weights,
     const H3Config & cfg,
     VideoVAEDecodeCache & cache,
     const std::vector<float> & latents,
     int64_t t_start,
     int64_t t_len) {
-    const auto [y_starts, y_overlaps] = split_video_tiles(cfg.height, cfg.video_vae_tile_size, cfg.video_vae_tile_overlap, cfg.video_vae_patch_size);
-    const auto [x_starts, x_overlaps] = split_video_tiles(cfg.width, cfg.video_vae_tile_size, cfg.video_vae_tile_overlap, cfg.video_vae_patch_size);
-    VideoTensor4D out;
+    const auto [y_starts, y_overlaps] = engine::video::plan_spatial_tiles(cfg.height, cfg.video_vae_tile_size, cfg.video_vae_tile_overlap, cfg.video_vae_patch_size);
+    const auto [x_starts, x_overlaps] = engine::video::plan_spatial_tiles(cfg.width, cfg.video_vae_tile_size, cfg.video_vae_tile_overlap, cfg.video_vae_patch_size);
+    engine::video::FloatVideo out;
     out.frames = t_len * cfg.video_vae_patch_size_t;
     out.height = cfg.height;
     out.width = cfg.width;
     out.values.resize(static_cast<size_t>(out.channels * out.frames * out.height * out.width));
-    std::vector<VideoTensor4D> previous_raw_row;
+    std::vector<engine::video::FloatVideo> previous_raw_row;
     previous_raw_row.reserve(x_starts.size());
     int64_t y_out = 0;
     for (size_t yi = 0; yi < y_starts.size(); ++yi) {
-        std::vector<VideoTensor4D> current_raw_row;
+        std::vector<engine::video::FloatVideo> current_raw_row;
         current_raw_row.reserve(x_starts.size());
         int64_t x_out = 0;
         for (size_t xi = 0; xi < x_starts.size(); ++xi) {
@@ -587,7 +523,7 @@ VideoTensor4D decode_video_spatial_tile_set(
     return out;
 }
 
-MiniMaxH3VideoFrames run_video_vae_decode_graph_impl(
+engine::video::RgbVideoBuffer run_video_vae_decode_graph_impl(
     VideoVAEWeightStore & weights,
     const H3Config & cfg,
     const std::vector<float> & video_rows,
@@ -602,12 +538,12 @@ MiniMaxH3VideoFrames run_video_vae_decode_graph_impl(
     const int64_t pad_tokens = (tokens_chunk - pseudo_total_base % tokens_chunk) % tokens_chunk;
     const int64_t pseudo_total = pseudo_total_base + pad_tokens;
     const int64_t chunks = pseudo_total / tokens_chunk - (cfg.video_vae_token_drop > 0 ? 1 : 0);
-    VideoTensor4D video;
+    engine::video::FloatVideo video;
     video.frames = cfg.num_frames;
     video.height = cfg.height;
     video.width = cfg.width;
     video.values.resize(static_cast<size_t>(video.channels * video.frames * video.height * video.width));
-    std::optional<VideoTensor4D> overlap;
+    std::optional<engine::video::FloatVideo> overlap;
     int64_t output_t = 0;
     for (int64_t chunk = 0; chunk < chunks; ++chunk) {
         const int64_t t_start = chunk * tokens_chunk;
@@ -643,7 +579,7 @@ MiniMaxH3VideoFrames run_video_vae_decode_graph_impl(
                 output_t += std::min<int64_t>(available, remaining);
                 overlap.reset();
             } else {
-                VideoTensor4D next_overlap;
+                engine::video::FloatVideo next_overlap;
                 next_overlap.frames = available;
                 next_overlap.height = decoded.height;
                 next_overlap.width = decoded.width;
@@ -676,25 +612,18 @@ MiniMaxH3VideoFrames run_video_vae_decode_graph_impl(
             overlap.reset();
         }
     }
-    MiniMaxH3VideoFrames out;
+    engine::video::RgbVideoBuffer out;
     out.width = static_cast<int>(video.width);
     out.height = static_cast<int>(video.height);
     out.frames = static_cast<int>(video.frames);
     out.fps = 24;
-    out.rgb24.resize(static_cast<size_t>(video.frames * video.height * video.width * 3));
     constexpr float mean[3] = {0.485F, 0.456F, 0.406F};
     constexpr float stdv[3] = {0.229F, 0.224F, 0.225F};
-    for (int64_t t = 0; t < video.frames; ++t) {
-        for (int64_t h = 0; h < video.height; ++h) {
-            for (int64_t w = 0; w < video.width; ++w) {
-                for (int64_t c = 0; c < 3; ++c) {
-                    const float v = std::clamp(video.at(c, t, h, w) * stdv[c] + mean[c], 0.0F, 1.0F);
-                    out.rgb24[static_cast<size_t>(((t * video.height + h) * video.width + w) * 3 + c)] =
-                        static_cast<std::byte>(std::clamp<int>(static_cast<int>(std::lround(v * 255.0F)), 0, 255));
-                }
-            }
-        }
-    }
+    out.rgb24 = engine::video::pack_rgb24({video.values.data(), video.frames, video.height, video.width}, 0, video.frames,
+        [&](float value, int64_t c) {
+            const float v = std::clamp(value * stdv[c] + mean[c], 0.0F, 1.0F);
+            return std::clamp<int>(static_cast<int>(std::lround(v * 255.0F)), 0, 255);
+        });
     engine::debug::timing_log_scalar("minimax_h3.video_decode_ms", engine::debug::elapsed_ms(decode_start, Clock::now()));
     return out;
 }
@@ -798,7 +727,7 @@ VideoVAETileGraph & VideoVAEDecodeCache::graph(
     return *cached;
 }
 
-MiniMaxH3VideoFrames run_video_vae_decode_graph(
+engine::video::RgbVideoBuffer run_video_vae_decode_graph(
     VideoVAEWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & video_rows,

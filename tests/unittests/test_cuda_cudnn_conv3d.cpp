@@ -1,5 +1,5 @@
 #include "engine/framework/core/backend.h"
-#include "engine/framework/codecs/wan_video_vae_runtime.h"
+#include "engine/framework/vision/modules/wan_video_vae_modules.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/conv_modules.h"
 

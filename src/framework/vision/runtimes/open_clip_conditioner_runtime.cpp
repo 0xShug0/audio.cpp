@@ -1,4 +1,4 @@
-#include "engine/framework/conditioners/open_clip_conditioner_runtime.h"
+#include "engine/framework/vision/runtimes/open_clip_conditioner_runtime.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"

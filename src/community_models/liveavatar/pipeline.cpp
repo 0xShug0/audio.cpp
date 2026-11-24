@@ -17,7 +17,7 @@ LiveAvatarPipelineRuntime::LiveAvatarPipelineRuntime(
 
 LiveAvatarPipelineRuntime::~LiveAvatarPipelineRuntime() = default;
 
-LiveAvatarVideoResult LiveAvatarPipelineRuntime::generate(
+engine::video::RgbVideoBuffer LiveAvatarPipelineRuntime::generate(
     const LiveAvatarGenerateRequest & request,
     const LiveAvatarVideoChunkCallback & chunk_callback) {
     if (denoiser_weight_streaming_ && (!request.blockwise_generation || !request.denoiser_layerwise)) {

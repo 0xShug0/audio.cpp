@@ -1,3 +1,4 @@
+#include "engine/framework/vision/media/processing.h"
 #include "engine/models/soulx_flashhead/pipeline.h"
 #include "engine/models/soulx_flashhead/dit.h"
 #include "engine/models/soulx_flashhead/audio.h"
@@ -138,19 +139,12 @@ struct Pipeline::State {
                                     channel * channel_values * sizeof(float),
                                     channel_values * sizeof(float));
         debug::timing_log_scalar("soulx_flashhead.video.output_read_ms", debug::elapsed_ms(read_started));
-        VideoChunk out{options.height, options.width, 33 - motion_frames, index++, {}};
-        out.rgb.resize(static_cast<size_t>(out.frames) * pixels * 3);
+        VideoChunk out{{options.width, options.height, 33 - motion_frames, 25.0, {}}, index++};
         const auto pack_started = std::chrono::steady_clock::now();
-#if defined(_OPENMP)
-#pragma omp parallel for num_threads(execution.config().threads) if(execution.config().threads > 1) schedule(static)
-#endif
-        for (int64_t t = 0; t < out.frames; ++t)
-            for (size_t p = 0; p < pixels; ++p)
-                for (size_t ch = 0; ch < 3; ++ch) {
-                    const auto value = video[(ch * output_frames + t) * pixels + p];
-                    out.rgb[(t * pixels + p) * 3 + ch] =
-                        static_cast<std::byte>(static_cast<uint8_t>(std::clamp((value + 1) * 127.5F, 0.F, 255.F)));
-                }
+        out.video.rgb24 = engine::video::pack_rgb24({video.data(), out.video.frames, options.height, options.width}, 0, out.video.frames,
+            [](float value, int64_t) {
+                return static_cast<uint8_t>(std::clamp((value + 1) * 127.5F, 0.F, 255.F));
+            }, execution.config().threads);
         debug::timing_log_scalar("soulx_flashhead.video.pack_ms", debug::elapsed_ms(pack_started));
         debug::timing_log_scalar("soulx_flashhead.chunk.wall_ms", debug::elapsed_ms(started));
         return out;

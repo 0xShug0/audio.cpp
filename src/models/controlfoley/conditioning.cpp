@@ -2,11 +2,11 @@
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
-#include "engine/framework/conditioners/cav_mae_st_conditioner_runtime.h"
+#include "engine/framework/vision/runtimes/cav_mae_st_conditioner_runtime.h"
 #include "engine/framework/conditioners/clap_audio_conditioner_runtime.h"
 #include "engine/framework/conditioners/musicgen_style_conditioner_runtime.h"
-#include "engine/framework/conditioners/open_clip_conditioner_runtime.h"
-#include "engine/framework/conditioners/synchformer_conditioner_runtime.h"
+#include "engine/framework/vision/runtimes/open_clip_conditioner_runtime.h"
+#include "engine/framework/vision/runtimes/synchformer_conditioner_runtime.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/io/json.h"
 #include "engine/models/controlfoley/video_processing.h"
@@ -411,7 +411,7 @@ struct ControlFoleyConditionerRuntime::Impl {
             static_cast<float>(shape.visual) / 4.0F,
             static_cast<float>(sync_frame_count) / 25.0F,
         });
-        video::SourceVideo source_video;
+        io::RgbVideo source_video;
         const double decode_ms = engine::debug::measure_ms([&]() {
             source_video = video::load_video_frames(path, static_cast<double>(decode_duration_sec));
         });

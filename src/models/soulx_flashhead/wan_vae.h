@@ -1,6 +1,6 @@
 #pragma once
 #include "graph.h"
-#include "engine/framework/codecs/wan_video_vae_runtime.h"
+#include "engine/framework/vision/modules/wan_video_vae_modules.h"
 
 namespace engine::models::soulx_flashhead {
 class WanGraph final : public Graph {
