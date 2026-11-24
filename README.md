@@ -96,7 +96,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **fish_audio** | TTS, Clone, Ctrl | auto, en, zh | [Fish Audio S2 Pro](docs/models/fish_audio.md) | GGUF 16/Q8, Stream, LoRA |
 | **fish_drama3** (C)<br>[@JarodMica](https://github.com/JarodMica) (base)<br>[@Th-Underscore](https://github.com/Th-Underscore) (small) | TTS, Clone, Ctrl, Edit | auto | [Drama 3 / Drama3-small](docs/models/fish_drama3.md) | Mixed Q2_K/Q3_K/Q4_K GGUF, IQ3_XXS (small), Stream |
 | **glm_tts** (C)<br>Mirek [@mirek190](https://github.com/mirek190) | TTS, Clone | zh, en | [GLM-TTS](docs/models/glm_tts.md) | GGUF |
-| **gradium_phonon** | TTS | en | [Gradium Phonon 31M](docs/models/gradium_phonon.md) | GGUF Q8, Safetensors, Stream |
+| **gradium_phonon** | TTS | en/fr/de/es/pt | [Phonon 31M EN, 40M FR/Multilingual](docs/models/gradium_phonon.md) | GGUF Q8, Safetensors, Stream |
 | **higgs_audio_tts** | TTS, Clone, Ctrl | auto | [Higgs Audio v3 TTS 4B](docs/models/higgs_audio_tts.md) | GGUF 16/Q8, Stream |
 | **index_tts2** | TTS, Clone, Ctrl | zh, en, ja, es, ar | [IndexTTS-2](docs/models/index_tts2.md)<br>IndexTTS-2.5 | GGUF 16/Q8 |
 | **inflect_v2** (C)<br>Jan [@JanWerder](https://github.com/JanWerder) | TTS | en | [Inflect Micro v2 and Nano v2](docs/models/inflect_v2.md) | GGUF FP32 |
