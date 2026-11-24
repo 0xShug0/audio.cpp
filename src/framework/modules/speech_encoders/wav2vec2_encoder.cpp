@@ -45,6 +45,9 @@ void validate_config(const Wav2Vec2EncoderConfig & config) {
     if (config.output_hidden_layer > config.num_hidden_layers) {
         throw std::runtime_error("Wav2Vec2 output layer cannot exceed hidden layer count");
     }
+    if (config.attention_prefix_tokens < 0) {
+        throw std::runtime_error("Wav2Vec2 attention prefix length cannot be negative");
+    }
     if (config.final_projection_size < 0) {
         throw std::runtime_error("Wav2Vec2 final projection size cannot be negative");
     }
@@ -341,6 +344,19 @@ core::TensorValue build_self_attention(
     q = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, q);
     k = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, k);
     v = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, v);
+    if (config.attention_prefix_tokens > 0) {
+        const auto prefix_shape = core::TensorShape::from_dims({hidden_btc.shape.dims[0],
+            config.num_attention_heads, config.attention_prefix_tokens, head_dim});
+        auto prefix_key = require_tensor(weights, prefix + ".prefix_key");
+        auto prefix_value = require_tensor(weights, prefix + ".prefix_value");
+        if (hidden_btc.shape.dims[0] != 1) {
+            auto target = core::make_tensor(ctx, GGML_TYPE_F32, prefix_shape);
+            prefix_key = core::wrap_tensor(ggml_repeat(ctx.ggml, prefix_key.tensor, target.tensor), prefix_shape);
+            prefix_value = core::wrap_tensor(ggml_repeat(ctx.ggml, prefix_value.tensor, target.tensor), prefix_shape);
+        }
+        k = ConcatModule({2}).build(ctx, prefix_key, k);
+        v = ConcatModule({2}).build(ctx, prefix_value, v);
+    }
     const auto k_t = TransposeModule({{0, 1, 3, 2}, 4}).build(ctx, k);
     auto scores = MatMulModule().build(ctx, q, k_t);
     scores = scale(ctx, scores, static_cast<float>(1.0 / std::sqrt(static_cast<double>(head_dim))));
@@ -472,8 +488,8 @@ core::TensorValue build_wav2vec2_graph(
         attention_mask = core::make_tensor(
             ctx,
             GGML_TYPE_F32,
-            core::TensorShape::from_dims({1, 1, 1, hidden.shape.dims[1]}));
-        std::vector<float> mask(static_cast<size_t>(hidden.shape.dims[1]), 0.0F);
+            core::TensorShape::from_dims({1, 1, 1, config.attention_prefix_tokens + hidden.shape.dims[1]}));
+        std::vector<float> mask(static_cast<size_t>(config.attention_prefix_tokens + hidden.shape.dims[1]), 0.0F);
         mask.back() = -1.0e4F;
         graph_inputs.push_back({attention_mask, std::move(mask)});
     }
@@ -878,6 +894,14 @@ Wav2Vec2EncoderRuntime Wav2Vec2EncoderRuntime::load_from_tensor_source(
         const auto source_layer = indexed_prefix(binding.encoder_layers, layer);
         const auto logical_attention = join_name(logical_layer, "attention");
         const auto source_attention = join_name(source_layer, binding.layer.attention);
+        if (config_ref.attention_prefix_tokens > 0) {
+            const std::vector<int64_t> shape{1, config_ref.num_attention_heads,
+                config_ref.attention_prefix_tokens, config_ref.hidden_size / config_ref.num_attention_heads};
+            put_f32_tensor_alias(*weights, *source, logical_attention + ".prefix_key",
+                join_name(source_attention, binding.layer.prefix_key), shape);
+            put_f32_tensor_alias(*weights, *source, logical_attention + ".prefix_value",
+                join_name(source_attention, binding.layer.prefix_value), shape);
+        }
         for (const std::string proj : {"q_proj", "k_proj", "v_proj", "out_proj"}) {
             put_tensor_alias(
                 *weights,

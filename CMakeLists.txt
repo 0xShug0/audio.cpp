@@ -569,6 +569,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/workspace.cpp
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
+    src/framework/io/video.cpp
     src/framework/text/espeak_phonemizer.cpp
     src/framework/text/espeak_data.cpp
     src/framework/io/config.cpp
@@ -600,6 +601,8 @@ add_library(engine_core OBJECT
     src/framework/modules/linear_module.cpp
     src/framework/modules/packed_linear_weights.cpp
     src/framework/modules/convnext_modules.cpp
+    src/framework/modules/vision/liveportrait_runtime.cpp
+    src/framework/modules/vision/face_modules.cpp
     src/framework/modules/vocoders/vocos_vocoder.cpp
     src/framework/modules/primitive_modules.cpp
     src/framework/modules/activation_modules.cpp
