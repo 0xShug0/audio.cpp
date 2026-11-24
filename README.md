@@ -211,6 +211,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **bs_roformer**<br>[@mirek190](https://github.com/mirek190) | Sep | lang agnostic | [BS-RoFormer](docs/audio_tools.md#bs-roformer) | GGUF Q8 |
 | **builtin_audio_utils** | S2S · Denoising / Enhancement | lang agnostic | [RNNoise](docs/audio_tools.md#built-in-audio-utilities)<br>DeepFilterNet2<br>ZipEnhancer<br>GTCRN Streaming<br>GTCRN DNS3<br>GTCRN VCTK<br>FlashSR | Safetensors |
 | **controlfoley** | SFX | auto | [ControlFoley](docs/models/controlfoley.md) | GGUF F32/Q8 |
+| **dettato** (C) | MIDI | music | [Dettato · Experimental](docs/models/dettato.md) | GGUF F16 |
 | **htdemucs** | Sep | lang agnostic | [HTDemucs](docs/audio_tools.md#htdemucs)<br>HTDemucs_ft<br>HTDemucs_6stems | GGUF 16/Q8 |
 | **meanvc2** | VC | lang agnostic | [MeanVC2 120 ms / 40 ms](docs/models/meanvc2.md) | GGUF F32/Q4, Stream |
 | **mel_band_roformer** | Sep | lang agnostic | [Mel-Band RoFormer](docs/audio_tools.md#mel-band-roformer) | GGUF 16/Q8 |

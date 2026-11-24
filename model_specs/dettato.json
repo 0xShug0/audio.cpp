@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "family": "dettato",
+  "display_name": "Dettato",
+  "description": "Experimental multi-instrument audio-to-MIDI transcription with note detection, evidence repair, instrument grouping and drum transcription.",
+  "category": "audio_tools",
+  "status": "experimental",
+  "tasks": [
+    "midi"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "music"
+  ],
+  "capabilities": {},
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "load": [],
+    "session": [{
+      "name": "window_hop_sec",
+      "type": "int",
+      "default": 2,
+      "description": "Transcriber window hop: 2 seconds matches Python defaults; 4 seconds matches dettato.cpp's faster schedule.",
+      "required": false
+    }],
+    "request": [
+      {
+        "name": "output_format",
+        "type": "enum",
+        "values": [
+          "midi",
+          "json"
+        ],
+        "default": "midi",
+        "description": "Write multi-track MIDI or JSON note, instrument and drum events.",
+        "required": false
+      }
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "dettato_f16",
+      "display_name": "Dettato 28M F16",
+      "default": true,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Dettato-GGUF",
+      "files": [
+        "Dettato-GGUF/dettato-f16.gguf"
+      ],
+      "strip_prefix": "Dettato-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/dettato.md"
+    ],
+    "recommended_package": "dettato_f16"
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "transcriber": {
+          "source": "weights:",
+          "prefix": "transcriber"
+        },
+        "evidence": {
+          "source": "weights:",
+          "prefix": "evidence"
+        },
+        "grouper": {
+          "source": "weights:",
+          "prefix": "grouper"
+        },
+        "drums": {
+          "source": "weights:",
+          "prefix": "drums"
+        }
+      }
+    }
+  ]
+}
