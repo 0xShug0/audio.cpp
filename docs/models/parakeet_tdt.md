@@ -338,7 +338,7 @@ Two settings account for essentially all of the tunable gap:
 
 Measured over 120 FLEURS clips across 24 languages
 ([harness](../../tests/parakeet_tdt/multilingual/README.md),
-[raw transcripts](../../tests/parakeet_tdt/multilingual/results/README.md)):
+[raw transcripts](https://github.com/0xShug0/audio.cpp/blob/4363a483002df5b0c3eb83ae93addf0073de388c/tests/parakeet_tdt/multilingual/results/README.md)):
 
 | weight type | encode speed | transcript identical to f32 | absolute WER |
 |---|---|---|---|
