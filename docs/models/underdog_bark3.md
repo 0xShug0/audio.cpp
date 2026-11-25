@@ -174,7 +174,7 @@ paths for your generator/platform (`.exe` on Windows).
 cmake -S . -B build/bark3 -DCMAKE_BUILD_TYPE=Release \
   -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=underdog_bark3 \
   -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON \
-  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON
+  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON
 cmake --build build/bark3 --parallel --target audiocpp_cli audiocpp_gguf
 ```
 

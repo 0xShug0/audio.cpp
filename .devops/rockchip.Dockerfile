@@ -82,8 +82,7 @@ RUN cmake -S . -B build \
         -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON \
         -DAUDIOCPP_VERSION="${AUDIOCPP_VERSION}" \
         -DENGINE_BUILD_EXAMPLES=OFF \
-        -DENGINE_BUILD_TESTS=OFF \
-        -DENGINE_BUILD_WARMBENCH=OFF && \
+        -DENGINE_BUILD_TESTS=OFF && \
     cmake --build build --parallel $(nproc) \
         --target audiocpp_cli \
         --target audiocpp_server \

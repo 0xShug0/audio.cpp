@@ -246,7 +246,7 @@ another. The model must be configured with `mode=offline`.
 - Audio decoding and post-processing still run per request.
 
 RTX 4090, `generator_weight_type=f16`, `audio_tokenizer_weight_type=f16`, 16
-steps, voice clone (`tests/omnivoice/omnivoice_batch_test`):
+steps, voice clone ([historical batch runner](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/omnivoice/omnivoice_batch_test.cpp)):
 
 | Workload | Before (`packed_cfg=false`, `device_scoring=false`) | Default | `perf_mode=flash_attention` |
 |---|---:|---:|---:|

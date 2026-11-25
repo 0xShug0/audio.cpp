@@ -19,7 +19,6 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_REQUESTS = REPO_ROOT / "tests" / "outetts" / "warm_bench_requests.json"
 
 
 def framework_chunks(text: str, budget: int | None) -> list[str]:
@@ -85,7 +84,7 @@ def main() -> int:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--dac", type=Path, required=True)
     parser.add_argument("--alignment-json", type=Path, required=True)
-    parser.add_argument("--request-file", type=Path, default=DEFAULT_REQUESTS)
+    parser.add_argument("--requests", "--request-file", dest="request_file", type=Path, required=True)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--dtype", choices=("fp32", "bf16"), default="fp32")
     parser.add_argument(

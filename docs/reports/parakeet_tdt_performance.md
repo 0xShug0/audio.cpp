@@ -1,5 +1,10 @@
 # Parakeet-TDT 0.6B v3 — performance and validation report
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/parakeet_tdt_performance.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 Detailed measurements, methodology, and the reasoning behind what was and
 wasn't optimized. The user-facing model documentation lives in
 [docs/models/parakeet_tdt.md](../models/parakeet_tdt.md);
@@ -33,7 +38,7 @@ anything.
 
 Measured on the reference test clip (`2086-149220-0033.wav`, 7.435s), 5 timed
 iterations + 1 warmup, against the real NeMo model (`nemo_toolkit[asr]`,
-torch 2.13+cu130) on the same machine. `parakeet_warm_bench` reports a full
+torch 2.13+cu130) on the same machine. [`parakeet_warm_bench`](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/parakeet_warm_bench.cpp) reports a full
 frontend/encoder/decoder timing breakdown via `--timing-file` (real timing —
 this previously silently produced an empty log; see the commit fixing
 `configure_logging` wiring).
@@ -78,12 +83,7 @@ findings below use an interleaved A/B (alternate config every run) instead of
 separate before/after sessions specifically to cancel that out; see each
 section for the actual methodology and numbers.
 
-```bash
-build/<preset>/bin/parakeet_warm_bench \
-    --model models/parakeet-tdt-0.6b-v3 --audio "$PARAKEET_HISTORICAL_AUDIO" \
-    --backend cpu --threads 12 \
-    --session-option parakeet_tdt.matmul_weight_type=q8_0
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/parakeet_tdt_performance.md) (pre-cleanup backup; not commands for the current tree).
 
 Two things drove essentially the entire gap between the "default settings" row
 and PyTorch, both found by actually looking at the timing breakdown instead of
@@ -390,7 +390,7 @@ actually measured here.
 
 **CUDA graph capture is enabled by the build but architecturally unavailable
 on this test GPU.** Traced with `nsys profile --trace=cuda` against
-`parakeet_warm_bench`:
+[`parakeet_warm_bench`](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/parakeet_warm_bench.cpp):
 16,068 individual `cudaLaunchKernel` calls and 4,265 `cudaStreamSynchronize`
 calls (47% of total CUDA API time) across 6 encoder passes plus the full
 per-token TDT decode loop — real per-launch/per-sync overhead that CUDA graph
@@ -479,7 +479,7 @@ by 20–30% between a cold and a thermally saturated run — the same binary
 measured 979 ms cold and 1264 ms at steady state within a single session, and
 background load moves it further. Any A/B run as "config A for a while, then
 config B" is therefore meaningless at the few-percent scale. The comparisons
-above use [`tests/parakeet_tdt/bench/ab.sh`](../../tests/parakeet_tdt/bench/README.md):
+above use [`tests/parakeet_tdt/bench/ab.sh`](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/bench/ab.sh):
 a discarded burn-in run to reach steady state,
 then ABBA ordering per pass scored by the *mean* of each side's two slots, so
 linear drift cancels exactly (slots 1&4 vs 2&3 share a midpoint). Scoring by

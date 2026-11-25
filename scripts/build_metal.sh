@@ -9,7 +9,6 @@ BUILD_DIR=""
 BUILD_TYPE="RelWithDebInfo"
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
-WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="OFF"
 AUDIOCPP_USE_SYSTEM_OPENSSL="OFF"
@@ -49,7 +48,6 @@ Options:
                            Default: ON
   --with-tests             Build framework unit tests.
   --with-examples          Build example binaries.
-  --with-warmbench         Build warmbench helper binaries.
   --deployment-build       Embed package specs for standalone GGUF/model loading.
   --native-model-manager   Build native model manager and managed WebUI downloads.
   --system-openssl         Use system OpenSSL for native model management.
@@ -128,10 +126,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --with-examples)
             WITH_EXAMPLES="ON"
-            shift
-            ;;
-        --with-warmbench)
-            WITH_WARMBENCH="ON"
             shift
             ;;
         --deployment-build)
@@ -265,7 +259,6 @@ CMAKE_CMD=(
     -DGGML_METAL_EMBED_LIBRARY="$METAL_EMBED_LIBRARY"
     -DENGINE_BUILD_TESTS="$WITH_TESTS"
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES"
-    -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
     -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
     -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
     -DAUDIOCPP_USE_SYSTEM_OPENSSL="$AUDIOCPP_USE_SYSTEM_OPENSSL"
@@ -304,7 +297,6 @@ echo "Including llamafile: $LLAMAFILE"
 echo "Native CPU optimization: $NATIVE_CPU"
 echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
-echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
 echo "Native model manager: $AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
 if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" == "ON" ]]; then

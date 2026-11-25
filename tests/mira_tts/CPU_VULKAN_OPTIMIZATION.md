@@ -1,5 +1,10 @@
 # MiraTTS CPU/Vulkan optimization validation
 
+Historical harness documentation: the removed runner and original commands
+are preserved in the [pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/CPU_VULKAN_OPTIMIZATION.md).
+Reported measurements, hashes and limitations are unchanged. These recipes
+are not instructions for the current tree.
+
 Baseline: `f3bd8255` (upstream main merged into the MiraTTS branch).
 Tested on Windows, September 8, 2026: Ryzen 9 7950X3D, RTX 3090
 (Vulkan device 1), Release/MSVC builds, eight CPU threads.
@@ -41,10 +46,7 @@ runtime difference is the head switch.
 
 Reproduction (change backend, device, precision, and mode as appropriate):
 
-```powershell
-.\build\windows-vulkan-release\bin\mira_tts_warm_bench.exe --model ..\models_v3_test\MiraTTS-GGUF\mira-tts-q8.gguf --backend vulkan --device 1 --threads 8 --voice-ref assets/resources/b.wav --request-file tests/mira_tts/offline_requests.json --run-mode offline --model-spec-override model_specs/mira_tts.json --audio-out-dir ../outputs/candidate --summary-file ../outputs/candidate.json --log-file ../outputs/candidate.log
-python tests/mira_tts/compare_optimization.py --before ../outputs/baseline.json --after ../outputs/candidate.json
-```
+[Archived command](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/CPU_VULKAN_OPTIMIZATION.md) (pre-cleanup backup).
 
 ## Results
 

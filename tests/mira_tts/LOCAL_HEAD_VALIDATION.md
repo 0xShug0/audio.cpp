@@ -1,5 +1,10 @@
 # MiraTTS-local sparse output head
 
+Historical harness documentation: the removed runner and original commands
+are preserved in the [pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/LOCAL_HEAD_VALIDATION.md).
+Reported measurements, hashes and limitations are unchanged. These recipes
+are not instructions for the current tree.
+
 Validated on Windows, 2026-09-06, using the RTX 3090 for CUDA and Vulkan
 (Vulkan device 1).
 
@@ -30,11 +35,7 @@ Seed: 1234. Maximum tokens: 1024. Other sampling parameters: CLI defaults.
 
 Build each backend with:
 
-```powershell
-cmake --build build/windows-cpu-release --target audiocpp_cli mira_tts_warm_bench -j 12
-cmake --build build/windows-vulkan-release --target audiocpp_cli mira_tts_warm_bench -j 12
-cmake --build build/windows-cuda-release --target audiocpp_cli mira_tts_warm_bench -j 12
-```
+[Archived command](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/LOCAL_HEAD_VALIDATION.md) (pre-cleanup backup).
 
 Example (substitute backend and precision; Vulkan uses `--device 1`):
 
@@ -51,9 +52,7 @@ The existing five-request offline fixture exercises the new view through
 repeated requests, a changed prompt, a longer request, and graph release/rebuild.
 Both precisions use `assets/resources/b.wav` with eight CPU threads:
 
-```powershell
-.\build\windows-cpu-release\bin\mira_tts_warm_bench.exe --model ..\models_v3_test\MiraTTS-GGUF\mira-tts-q8.gguf --model-spec-override model_specs/mira_tts.json --backend cpu --voice-ref assets/resources/b.wav --request-file tests/mira_tts/offline_requests.json --audio-out-dir ../outputs/mira-local-head-q8-offline --summary-file ../outputs/mira-local-head-q8-offline.json --log-file ../outputs/mira-local-head-q8-offline.log
-```
+[Archived command](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/LOCAL_HEAD_VALIDATION.md) (pre-cleanup backup).
 
 Repeat with `bf16` instead of `q8` for the second precision. The fixture's token
 budgets cap outputs at 5.12 and 15.36 seconds; these requests test lifecycle and

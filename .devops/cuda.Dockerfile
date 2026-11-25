@@ -50,7 +50,6 @@ RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
         -DAUDIOCPP_VERSION="${AUDIOCPP_VERSION}" \
         -DENGINE_BUILD_EXAMPLES=OFF \
         -DENGINE_BUILD_TESTS=OFF \
-        -DENGINE_BUILD_WARMBENCH=OFF \
         ${ADDITIONAL_CMAKE_ARGS} \
         -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined && \
     cmake --build build --parallel $(nproc) \

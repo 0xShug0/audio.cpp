@@ -669,7 +669,6 @@ See the [server guide](app/server/README.md) for configuration and usage.
 | `ENGINE_BUILD_TESTS` | Build framework unit tests. | `OFF` |
 | `ENGINE_BUILD_EXTENDED_TESTS` | Build extended non-model tests and probes, such as server/app/package-manager checks and backend graph tests. | `OFF` |
 | `ENGINE_BUILD_MODEL_TESTS` | Build model-specific tests and probes. Other test options do not enable them. | `OFF` |
-| `ENGINE_BUILD_WARMBENCH` | Build warmbench helper binaries. | `OFF` |
 | `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER` | Build the standalone native model manager and enable server-side WebUI downloads/install management. This opt-in feature builds the HTTP/TLS dependency. | `OFF` |
 | `AUDIOCPP_USE_SYSTEM_OPENSSL` | Use system OpenSSL instead of bundled BoringSSL when native model management is enabled. | `OFF` |
 | `AUDIOCPP_DEPLOYMENT_BUILD` | Compile package specs into CLI/server binaries for standalone GGUF and package-spec fallback loading. Script builds expose this as `--deployment-build` on Linux/macOS and `-DeploymentBuild` on Windows. | `OFF` |
@@ -941,7 +940,9 @@ The repository includes both framework-level parity validation and app-level end
   <img src="assets/figure/parity_test_flow.png" alt="Parity test flow" width="720" />
 </p>
 
-The main harness under `tests/` is `tests/warmbench.py`. It is used for long-lived multi-request validation, parity checks against Python references, and performance-oriented session reuse scenarios. The `tests/` tree also contains model-specific C++ and Python warmbench entrypoints that `warmbench.py` coordinates.
+The `tests/` tree contains framework and model component checks, including comparisons against independent Python references.
+
+The pre-cleanup tests, tools and fixtures are preserved in the backup tag [`checkpoint/before-tests-cleanup`](https://github.com/0xShug0/audio.cpp/tree/checkpoint/before-tests-cleanup), including the removed warmbench system and its original instructions.
 
 The main app-facing test tooling under `tools/` is `tools/audiocpp_cli/run_audiocpp_cli_path_tests.py`. It drives `audiocpp_cli` through cataloged offline and streaming cases, verifies expected outputs such as audio or JSON artifacts, and is useful for checking real user-facing request paths rather than just lower-level model components. Streaming coverage is model-specific and applies to models documented with streaming support.
 

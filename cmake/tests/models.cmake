@@ -61,6 +61,13 @@ if (auk IN_LIST AUDIOCPP_LINKED_MODELS)
     target_sources(auk_vae_test PRIVATE src/community_models/auk/vae.cpp)
 endif()
 
+# campplus_shared_default_probe
+add_engine_test_target(campplus_shared_default_probe tests/glm_tts/campplus_shared_default_probe.cpp)
+set_target_properties(campplus_shared_default_probe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(campplus_shared_default_probe PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 # c_api
 if (AUDIOCPP_BUILD_C_API)
     if (GGML_BACKEND_DL)
@@ -433,6 +440,20 @@ if (AUDIOCPP_FUN_ASR_NANO_TEST_MODEL)
     endif()
 endif()
 
+# glm_tts
+if (glm_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    foreach(probe IN ITEMS
+        glm_tts_tokenizer_probe glm_tts_assets_probe glm_tts_prompt_probe
+        glm_tts_speech_tokenizer_probe glm_tts_flow_probe glm_tts_flow_conditioned_probe
+        glm_tts_frontend_probe glm_tts_campplus_probe glm_tts_llama_probe)
+        add_engine_test_target(${probe} tests/glm_tts/${probe}.cpp)
+        set_target_properties(${probe} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(${probe} PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endforeach()
+endif()
+
 # granite5asr
 add_executable(test_granite5asr_golden_transcription
     tests/granite5asr/test_granite5asr_golden_transcription.cpp
@@ -563,6 +584,19 @@ if (kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
     if (AUDIOCPP_STATIC_ESPEAK)
         audiocpp_stage_espeak(kokoro_g2p_probe)
     endif()
+endif()
+
+# kroko_asr
+if (kroko_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+    foreach(probe IN ITEMS
+        kroko_asr_encoder_probe kroko_asr_frontend_probe
+        kroko_asr_streaming_probe kroko_asr_zipformer_probe)
+        add_engine_test_target(${probe} tests/kroko_asr/${probe}.cpp)
+        set_target_properties(${probe} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(${probe} PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endforeach()
 endif()
 
 # kugelaudio
@@ -1147,6 +1181,11 @@ target_sources(soprano_text_cleaning_test PRIVATE
 
 # sopro_tts
 if (sopro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test_target(sopro_probe tests/sopro_tts/sopro_probe.cpp)
+    set_target_properties(sopro_probe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(sopro_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
     add_executable(test_sopro_tts_audio_ops
         tests/sopro_tts/test_sopro_tts_audio_ops.cpp
     )

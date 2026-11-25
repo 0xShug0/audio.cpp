@@ -15,7 +15,6 @@ GPU_TARGETS=""
 USE_CCACHE="OFF"
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
-WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 DEPLOYMENT_BUILD_SET="OFF"
 AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="OFF"
@@ -117,10 +116,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --with-examples)
             WITH_EXAMPLES="ON"
-            shift
-            ;;
-        --with-warmbench)
-            WITH_WARMBENCH="ON"
             shift
             ;;
         --deployment-build)
@@ -409,7 +404,6 @@ echo "Native CPU optimization: $NATIVE_CPU"
 echo "llamafile SGEMM: $LLAMAFILE"
 echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
-echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
 echo "Native model manager: $AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
 if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" == "ON" ]]; then
@@ -434,7 +428,6 @@ CMAKE_ARGS=(
     -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE"
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES"
     -DENGINE_BUILD_TESTS="$WITH_TESTS"
-    -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
     -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
     -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
     -DAUDIOCPP_USE_SYSTEM_OPENSSL="$AUDIOCPP_USE_SYSTEM_OPENSSL"

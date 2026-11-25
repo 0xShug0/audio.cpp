@@ -47,20 +47,12 @@ pip install pyarrow soundfile numpy
 python3 tests/parakeet_tdt/multilingual/fetch_fleurs.py 5   # 5 clips/language
 ```
 
-## Running the comparison
+## Historical comparison workflow
 
-```bash
-cmake --build build/<preset> --target parakeet_warm_bench
-python3 tests/parakeet_tdt/multilingual/compare_weight_types.py native f16 bf16 q8_0
-```
-
-All clips for a given weight type go through a **single** process via
-`--audio-sequence`, so the model and its quantized weights are built once
-rather than once per clip. The first named type is the reference everything
-else is compared against, so put `native` first.
-
-Environment overrides: `FLEURS_DIR` (corpus location, default `tmp/fleurs`),
-`PARAKEET_BENCH` (bench binary), `PARAKEET_THREADS`.
+The removed session runner, comparison command and environment overrides are
+preserved in the [pre-cleanup guide](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/multilingual/README.md).
+It processed all clips for each weight type in one process; no replacement
+corpus run or performance results are claimed.
 
 The checked-in results under `results/` were produced from the upstream
 safetensors package with each storage type selected at session creation. The

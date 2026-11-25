@@ -1,5 +1,10 @@
 # Phonon-2: minimal variant validation
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/phonon2_validation.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 Revision responding to [maintainer feedback](https://github.com/0xShug0/audio.cpp/pull/863#issuecomment-6100453087).
 The existing Parakeet family/loader/backend math remains in use. Model-local
 hotwords, rolling streaming and `word_timestamp_mode` remain. The F32 precision
@@ -120,7 +125,7 @@ the combined runtime build used:
 cmake -S . -B ../build-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release \
   '-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8' \
   -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=parakeet_tdt \
-  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON \
+  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON \
   -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_BUILD_SERVER_FRONTENDS=OFF \
   -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DGGML_CCACHE=OFF \
   -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON -DCMAKE_CUDA_ARCHITECTURES=86
