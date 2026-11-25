@@ -12,14 +12,17 @@ and short-burst noise. Each voice carries its own end-of-sentence pitch floor.
 
 ## Convert
 
+Package downloads target `audio-cpp/audio.cpp-gguf/kale-tts-1-GGUF`.
+Until the converted files are published there, use the local conversion commands below.
+
 The weights are the release's float32 graph (`kale-tts-1-nano.fp32.onnx` / `kale-tts-1-tiny.fp32.onnx`); the converter stores them as float32 under their
 PyTorch names, with the voices, the word lists and (tiny) the Ettin tokenizer:
 
 ```bash
 pip install numpy onnx safetensors
-python tools/community_models/convert_kale_tts.py --source /path/to/kale-tts-1-nano \
+python tools/gguf/kale_tts_convert.py --source /path/to/kale-tts-1-nano \
   --output models/kale-tts-1-GGUF/kale-tts-1-nano-f32.gguf
-python tools/community_models/convert_kale_tts.py --source /path/to/kale-tts-1-tiny \
+python tools/gguf/kale_tts_convert.py --source /path/to/kale-tts-1-tiny \
   --output models/kale-tts-1-GGUF/kale-tts-1-tiny-f32.gguf
 ```
 
@@ -43,7 +46,7 @@ Voices: `kenzie`, `simone`, `amy` (British), `frankie`, `darlene`, `owen`, `toby
 | `voice_id` | a voice above | `kenzie` | Built-in voice, also set with `--voice-id`. |
 | `speed` | 0.25 to 4 | `1.0` | Speech speed; 1.0 is each voice's own pace. |
 | `seed` | whole number, 0 or more | `0` | Seed of the decoder noise; the same seed gives the same audio. |
-| `phonemes` | list of strings | | Kokoro-symbol phonemes to speak instead of reading the text, one entry per sentence (C API / server list option). For tiny, the text should hold the same sentences: its word reader reads them. |
+| `phonemes` | list of strings | | Kokoro-symbol phonemes to speak instead of reading the text, one entry per sentence (native C++ / C API list option). For tiny, the text should hold the same sentences: its word reader reads them. |
 | `text_chunk_mode` | `default`, `tag_aware`, `japanese`, `endline` | `default` | Framework long-form text chunking mode. |
 | `text_chunk_size` | positive integer | `400` | Maximum Unicode codepoints per chunk. |
 
@@ -66,6 +69,10 @@ loaded and need not be installed. The IPA is written in Kokoro's
 own symbols, as the models were trained. The release's full text front end (dates, money and units by rule, a g2p
 model for unknown words) is JavaScript; to use it, pass its output with the `phonemes` option.
 
+Each sentence accepts at most 510 phoneme symbols and 4096 prosody frames. Oversized sentences return an error; reduce `text_chunk_size`
+or provide shorter entries in the native `phonemes` list. Input is never silently truncated.
+The runtime retains one prepared graph per phase, reusing it while its shape is unchanged.
+
 ## Backends
 
 The text side, durations and the pitch and loudness heads (small, sequential LSTMs) run on the CPU, where the duration
@@ -79,7 +86,7 @@ checkpoint, and a `kokoro_id` per voice in its `voices.json` (`af_kenzie`, `bf_a
 Kokoro-style voice ids, whose first letter selects the language:
 
 ```bash
-python tools/models/prepare_kokoro_gguf.py --source /path/to/kale-tts-1-base --output-dir models/kale-tts-1-GGUF \
+python tools/gguf/kokoro_tts_convert.py --source /path/to/kale-tts-1-base --output-dir models/kale-tts-1-GGUF \
   --checkpoint kale-tts-1-base.pth --name kale-tts-1-base --type bf16
 audiocpp_cli --task tts --family kokoro_tts --model models/kale-tts-1-GGUF/kale-tts-1-base-bf16.gguf \
   --backend cpu --text "Hello there!" --voice-id af_kenzie --out base.wav

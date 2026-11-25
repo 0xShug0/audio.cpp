@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Pack kale-tts-1-tiny or kale-tts-1-nano as one GGUF file for audio.cpp.
 
-    python tools/community_models/convert_kale_tts.py \
+    python tools/gguf/kale_tts_convert.py \
         --source /path/to/kale-tts-1-nano --output models/kale-tts-1-GGUF/kale-tts-1-nano-f32.gguf
 
 ``--source`` is a copy of https://huggingface.co/KaleComputer/kale-tts-1-nano (or -tiny). The weights come from its
 float32 graph (``kale-tts-1-nano.fp32.onnx`` / ``kale-tts-1-tiny.fp32.onnx``); every weight is stored as float32 under its PyTorch module name and layout (LSTM
 gates reordered from ONNX's i, o, f, c to PyTorch's i, f, g, o). The voices (style table + per-voice values), the word
 lists and, for tiny, the Ettin tokenizer are stored as they are. kale-tts-1-base is plain Kokoro: use
-``tools/models/prepare_kokoro_gguf.py`` (see docs/models/kale_tts.md).
+``tools/gguf/kokoro_tts_convert.py`` (see docs/models/kale_tts.md).
 
 Needs numpy, onnx and safetensors, and a built ``audiocpp_gguf``.
 """
@@ -214,7 +214,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--source", type=Path, required=True, help="A copy of KaleComputer/kale-tts-1-nano or kale-tts-1-tiny")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--converter", type=Path, default=REPO / "build/bin/audiocpp_gguf")
+    parser.add_argument("--converter", type=Path, default=REPO / "build/debug/bin/audiocpp_gguf")
     parser.add_argument("--directory", type=Path, help="Also keep the unpacked model folder here (loadable as it is)")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()

@@ -76,6 +76,7 @@ void KaleTtsSession::prepare(const runtime::SessionPreparationRequest & request)
 
 runtime::TaskResult KaleTtsSession::run(const runtime::TaskRequest & request) {
     require_prepared("kale-tts run");
+    const auto start = std::chrono::steady_clock::now();
     if (!request.text_input.has_value() || request.text_input->text.empty()) {
         throw std::runtime_error("kale-tts requires text input");
     }
@@ -136,7 +137,6 @@ runtime::TaskResult KaleTtsSession::run(const runtime::TaskRequest & request) {
         throw runtime::InvalidRequestError("kale-tts: nothing in the text could be read");
     }
 
-    const auto start = std::chrono::steady_clock::now();
     const auto rate = static_cast<int>(assets_->config.sample_rate);
     const std::vector<float> gap(static_cast<size_t>(kGapSeconds * static_cast<float>(rate)), 0.0F);
     runtime::AudioBuffer audio;
@@ -150,7 +150,8 @@ runtime::TaskResult KaleTtsSession::run(const runtime::TaskRequest & request) {
         r.speed = speed;
         r.seed = seed + static_cast<uint32_t>(k);
         if (static_cast<int64_t>(s.ids.size()) > assets_->config.max_tokens) {
-            s.ids.resize(static_cast<size_t>(assets_->config.max_tokens));
+            throw runtime::InvalidRequestError("kale-tts: sentence exceeds " + std::to_string(assets_->config.max_tokens) +
+                " phonemes; reduce text_chunk_size or split the phonemes list into shorter sentences");
         }
         r.ids = s.ids;
         if (!parity_noise_.empty()) r.noise = &parity_noise_;

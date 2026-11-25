@@ -58,8 +58,23 @@ bool is_word_char(unsigned char c) {
     return std::isalnum(c) != 0 || c >= 0x80;
 }
 
-// Technical terms: exact written form -> words to say, whole words only.
-std::string apply_terms(const std::string & text, const std::unordered_map<std::string, std::string> & terms) {
+// Spoken forms from the release frontend, then exact whole-word technical terms.
+std::string apply_terms(std::string text, const std::unordered_map<std::string, std::string> & terms) {
+    // Match the release dizione abbreviation rule: capitalized Dr before a
+    // capitalized name is Doctor. A trailing address abbreviation remains Drive.
+    for (size_t at = 0; at + 2 <= text.size(); ++at) {
+        if (text.compare(at, 2, "Dr") != 0 || (at > 0 && is_word_char(static_cast<unsigned char>(text[at - 1])))) continue;
+        size_t end = at + 2;
+        if (end < text.size() && text[end] == '.') ++end;
+        if (end == at + 2 && end < text.size() && is_word_char(static_cast<unsigned char>(text[end]))) continue;
+        size_t next = end;
+        while (next < text.size() && std::isspace(static_cast<unsigned char>(text[next]))) ++next;
+        if ((next < text.size() && text[next] >= 'A' && text[next] <= 'Z') ||
+            (next == text.size() && end > at + 2)) {
+            text.replace(at, end - at, next == end && next < text.size() ? "Doctor " : "Doctor");
+            at += 5;
+        }
+    }
     if (terms.empty()) return text;
     std::vector<std::pair<std::string, std::string>> sorted(terms.begin(), terms.end());
     std::sort(sorted.begin(), sorted.end(), [](const auto & a, const auto & b) { return a.first.size() > b.first.size(); });

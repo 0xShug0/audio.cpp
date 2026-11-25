@@ -3,15 +3,16 @@
 #include "engine/community_models/kale_tts/source_filter.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/runtime/errors.h"
+#include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/sampling/noise.h"
 
-#include "ggml-alloc.h"
 #include "ggml-backend.h"
 
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <cmath>
 #include <string>
 #include <unordered_map>
@@ -22,77 +23,58 @@ namespace {
 namespace core = engine::core;
 
 constexpr float kLeak = 0.2F;
-constexpr size_t kGraphNodes = 1 << 17;
-
-struct ContextDeleter {
-    void operator()(ggml_context * c) const noexcept {
-        if (c != nullptr) ggml_free(c);
-    }
-};
-
-// One graph: inputs in their own context (kept on the backend), everything else allocated by gallocr.
+constexpr int64_t kMaxProsodyFrames = 4096;
+// Keep only the latest shape for each phase; PreparedGraph owns plans, buffers
+// and CUDA capture cleanup. Reused shapes upload every input on every call.
 struct Graph {
-    ggml_backend_t backend = nullptr;
-    std::unique_ptr<ggml_context, ContextDeleter> inputs;
-    std::unique_ptr<ggml_context, ContextDeleter> nodes;
-    ggml_backend_buffer_t input_buffer = nullptr;
-    ggml_gallocr_t allocator = nullptr;
-    ggml_cgraph * graph = nullptr;
-    std::vector<std::pair<ggml_tensor *, std::vector<char>>> uploads;
+    std::vector<int64_t> shape;
+    core::PreparedGraph prepared;
+    std::vector<ggml_tensor *> inputs;
+    std::vector<ggml_tensor *> outputs;
+    size_t input_index = 0;
 
-    explicit Graph(ggml_backend_t b) : backend(b) {
-        inputs.reset(ggml_init({64 * ggml_tensor_overhead(), nullptr, true}));
-        nodes.reset(ggml_init({kGraphNodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(kGraphNodes, false), nullptr, true}));
-        if (!inputs || !nodes) throw std::runtime_error("kale-tts: failed to create graph contexts");
-    }
-    ~Graph() {
-        if (allocator != nullptr) ggml_gallocr_free(allocator);
-        if (input_buffer != nullptr) ggml_backend_buffer_free(input_buffer);
-    }
-    ggml_context * ctx() const { return nodes.get(); }
+    Graph(const core::ExecutionContext & execution, std::vector<int64_t> dimensions,
+          size_t nodes, const char * label)
+        : shape(std::move(dimensions)),
+          prepared(execution, {label, 2 * nodes * ggml_tensor_overhead() +
+              ggml_graph_overhead_custom(nodes, false), nodes,
+              64 * ggml_tensor_overhead()}) {}
 
-    ggml_tensor * f32(const std::vector<float> & values, int64_t ne0, int64_t ne1 = 1) {
-        ggml_tensor * t = ggml_new_tensor_2d(inputs.get(), GGML_TYPE_F32, ne0, ne1);
-        ggml_set_input(t);
-        std::vector<char> bytes(values.size() * sizeof(float));
-        std::memcpy(bytes.data(), values.data(), bytes.size());
-        uploads.emplace_back(t, std::move(bytes));
-        return t;
+    ggml_context * ctx() { return prepared.build_context().ggml; }
+
+    ggml_tensor * input(ggml_type type, int64_t ne0, int64_t ne1) {
+        ggml_tensor * tensor;
+        if (!prepared.allocated()) {
+            tensor = ggml_new_tensor_2d(prepared.persistent_build_context().ggml, type, ne0, ne1);
+            ggml_set_input(tensor);
+            inputs.push_back(tensor);
+        } else {
+            tensor = inputs.at(input_index);
+        }
+        ++input_index;
+        return tensor;
+    }
+    ggml_tensor * f32(const std::vector<float> &, int64_t ne0, int64_t ne1 = 1) {
+        return input(GGML_TYPE_F32, ne0, ne1);
     }
     ggml_tensor * i32(const std::vector<int32_t> & values) {
-        ggml_tensor * t = ggml_new_tensor_1d(inputs.get(), GGML_TYPE_I32, static_cast<int64_t>(values.size()));
-        ggml_set_input(t);
-        std::vector<char> bytes(values.size() * sizeof(int32_t));
-        std::memcpy(bytes.data(), values.data(), bytes.size());
-        uploads.emplace_back(t, std::move(bytes));
-        return t;
+        return input(GGML_TYPE_I32, static_cast<int64_t>(values.size()), 1);
     }
-
-    void run(const std::vector<ggml_tensor *> & outputs, const char * label) {
-        graph = ggml_new_graph_custom(ctx(), kGraphNodes, false);
+    void allocate(std::vector<ggml_tensor *> result) {
+        outputs = std::move(result);
         for (ggml_tensor * out : outputs) {
             ggml_set_output(out);
-            ggml_build_forward_expand(graph, out);
+            ggml_build_forward_expand(prepared.graph(), out);
         }
-        input_buffer = ggml_backend_alloc_ctx_tensors(inputs.get(), backend);
-        allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-        if (input_buffer == nullptr || allocator == nullptr || !ggml_gallocr_alloc_graph(allocator, graph)) {
-            throw std::runtime_error(std::string("kale-tts: failed to allocate the ") + label + " graph");
-        }
-        core::validate_backend_graph_supported(backend, graph, label);
-        for (auto & [tensor, bytes] : uploads) {
-            ggml_backend_tensor_set(tensor, bytes.data(), 0, bytes.size());
-        }
-        ggml_backend_graph_plan_t plan = core::create_backend_graph_plan_if_host(backend, graph);
-        const auto status = core::compute_backend_graph(backend, graph, plan, label);
-        core::free_backend_graph_plan(backend, plan);
-        ggml_backend_synchronize(backend);
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error(std::string("kale-tts: the ") + label + " graph failed");
-        }
+        prepared.allocate_persistent();
+        prepared.allocate();
     }
-
-    static std::vector<float> read(ggml_tensor * t) {
+    template<class T>
+    void upload(size_t index, const std::vector<T> & values) {
+        ggml_backend_tensor_set(inputs.at(index), values.data(), 0, values.size() * sizeof(T));
+    }
+    std::vector<float> read(size_t index) const {
+        ggml_tensor * t = outputs.at(index);
         std::vector<float> out(static_cast<size_t>(ggml_nelements(t)));
         ggml_backend_tensor_get(t, out.data(), 0, out.size() * sizeof(float));
         return out;
@@ -120,8 +102,17 @@ public:
     }
 
     ggml_tensor * layer_norm(ggml_tensor * x, const std::string & name, float eps, bool bias = true) const {
-        ggml_tensor * y = ggml_mul(c_, ggml_norm(c_, x, eps), W(name + ".weight"));
-        return bias ? ggml_add(c_, y, W(name + ".bias")) : y;
+        modules::NormConfig config;
+        config.hidden_size = x->ne[0];
+        config.eps = eps;
+        config.use_bias = bias;
+        config.preserve_input_layout = true;
+        modules::NormWeights weights;
+        weights.weight = core::wrap_tensor(W(name + ".weight"), core::TensorShape::from_dims({x->ne[0]}));
+        if (bias) weights.bias = core::wrap_tensor(W(name + ".bias"), core::TensorShape::from_dims({x->ne[0]}));
+        auto & build = g_.prepared.build_context();
+        return modules::LayerNormModule(config).build(build,
+            core::wrap_tensor(x, core::TensorShape::from_dims({x->ne[1], x->ne[0]})), weights).tensor;
     }
 
     // per-channel vector [C] -> [1, C] for tc tensors
@@ -300,6 +291,7 @@ struct KaleRuntime::State {
     // on the CPU backend, where their duration rounding matches the reference graphs. The decoder graph runs on the
     // session's backend.
     struct Device {
+        std::unique_ptr<core::ExecutionContext> execution;
         ggml_backend_t backend = nullptr;
         std::shared_ptr<core::BackendWeightStore> store;
         std::unordered_map<std::string, ggml_tensor *> weights;
@@ -307,9 +299,22 @@ struct KaleRuntime::State {
     std::shared_ptr<const KaleAssets> assets;
     Device cpu, main;
     bool same = true;
+    std::unique_ptr<Graph> text, prosody, decoder;
+
+    Graph & prepare(std::unique_ptr<Graph> & cached, const Device & device,
+                    std::vector<int64_t> shape, size_t nodes, const char * label) {
+        if (!cached || cached->shape != shape || !cached->prepared.allocated()) {
+            cached.reset();
+            cached = std::make_unique<Graph>(*device.execution, std::move(shape), nodes, label);
+            engine::debug::trace_log_scalar(std::string(label) + ".built", int64_t{1});
+        }
+        cached->input_index = 0;
+        return *cached;
+    }
 
     void load(Device & d, core::BackendConfig config) {
-        d.backend = core::init_backend(config);
+        d.execution = std::make_unique<core::ExecutionContext>(config);
+        d.backend = d.execution->backend();
         core::set_backend_threads(d.backend, config.threads);
         const auto & source = *assets->weights;
         const auto tensors = source.tensors();
@@ -322,9 +327,12 @@ struct KaleRuntime::State {
     }
 
     ~State() {
+        decoder.reset();
+        prosody.reset();
+        text.reset();
         for (Device * d : {&main, &cpu}) {
             d->store.reset();
-            if (d->backend != nullptr && (d == &cpu || !same)) ggml_backend_free(d->backend);
+            d->execution.reset();
         }
     }
 };
@@ -375,114 +383,137 @@ std::vector<float> KaleRuntime::synthesize(const KaleRequest & r) {
     // 1. text side, durations, text encoder
     std::vector<float> durations, d_values, t_en_values;
     {
-        Graph g(s.cpu.backend);
+        Graph & g = s.prepare(s.text, s.cpu, {T, static_cast<int64_t>(r.ettin_ids.size()), r.ettin_words},
+            static_cast<size_t>(T * (c.n_layer + 2) * 96 + 8192), "kale_tts.text");
         Builder b(g, s.cpu.weights);
         ggml_context * x = g.ctx();
         ggml_tensor * tokens = g.i32(ids);
         ggml_tensor * pos = g.i32(positions);
         ggml_tensor * sv = g.f32(style, c.style_dim);
         ggml_tensor * zeros = g.f32(zero_values, width);
-        ggml_tensor * d_en = nullptr;
-        if (!c.ettin) {
-            ggml_tensor * e = ggml_add(x, ggml_get_rows(x, b.W("bert.embeddings.word_embeddings.weight"), tokens),
-                                       ggml_get_rows(x, b.W("bert.embeddings.position_embeddings.weight"), pos));
-            ggml_tensor * type0 = ggml_view_1d(x, b.W("bert.embeddings.token_type_embeddings.weight"), c.albert_embedding, 0);
-            e = b.layer_norm(ggml_add(x, e, type0), "bert.embeddings.LayerNorm", 1e-12F);
-            ggml_tensor * h = b.linear(e, "bert.encoder.embedding_hidden_mapping_in");
-            const std::string L = "bert.encoder.albert_layer_groups.0.albert_layers.0.";
-            for (int64_t layer = 0; layer < c.albert_layers; ++layer) {
-                ggml_tensor * a = b.attention(b.linear(h, L + "attention.query"), b.linear(h, L + "attention.key"),
-                                              b.linear(h, L + "attention.value"), c.albert_heads, nullptr, nullptr, 0.0F);
-                ggml_tensor * attended = b.layer_norm(ggml_add(x, b.linear(a, L + "attention.dense"), h), L + "attention.LayerNorm", 1e-12F);
-                ggml_tensor * f = b.linear(ggml_gelu(x, b.linear(attended, L + "ffn")), L + "ffn_output");
-                h = b.layer_norm(ggml_add(x, f, attended), L + "full_layer_layer_norm", 1e-12F);
-            }
-            d_en = b.linear(h, "bert_encoder");
-        } else {
-            const auto S = static_cast<int64_t>(r.ettin_ids.size());
-            std::vector<int32_t> spos(static_cast<size_t>(S));
-            std::vector<float> local(static_cast<size_t>(S * S));
+        const auto S = static_cast<int64_t>(r.ettin_ids.size());
+        std::vector<int32_t> spos(static_cast<size_t>(S));
+        std::vector<float> local(static_cast<size_t>(S * S));
+        std::vector<int32_t> widx;
+        ggml_tensor * sub = nullptr, * sub_pos = nullptr, * mask = nullptr, * wavg = nullptr, * word_of = nullptr;
+        if (c.ettin) {
             for (int64_t i = 0; i < S; ++i) {
                 spos[static_cast<size_t>(i)] = static_cast<int32_t>(i);
                 for (int64_t j = 0; j < S; ++j) {
                     local[static_cast<size_t>(i * S + j)] = std::llabs(i - j) <= c.ettin_local_window / 2 ? 0.0F : -INFINITY;
                 }
             }
-            ggml_tensor * sub = g.i32(r.ettin_ids);
-            ggml_tensor * sub_pos = g.i32(spos);
-            ggml_tensor * mask = g.f32(local, S, S);
-            ggml_tensor * h = b.layer_norm(ggml_get_rows(x, b.W("ettin.embeddings.tok_embeddings.weight"), sub), "ettin.embeddings.norm", 1e-5F, false);
-            ggml_tensor * previous = h;
-            const int64_t E = c.ettin_hidden;
-            for (int64_t layer = 0; layer < c.ettin_layers; ++layer) {
-                const std::string L = "ettin.layers." + std::to_string(layer) + ".";
-                previous = h;
-                ggml_tensor * n = layer == 0 ? h : b.layer_norm(h, L + "attn_norm", 1e-5F, false);
-                ggml_tensor * qkv = b.linear(n, L + "attn.Wqkv", false);
-                auto part = [&](int64_t k) { return ggml_view_2d(x, qkv, E, S, qkv->nb[1], static_cast<size_t>(k * E) * sizeof(float)); };
-                const bool global = layer % c.ettin_global_every == 0;
-                ggml_tensor * a = b.attention(part(0), part(1), part(2), c.ettin_heads, global ? nullptr : mask, sub_pos, c.ettin_rope_theta);
-                h = ggml_add(x, h, b.linear(a, L + "attn.Wo", false));
-                ggml_tensor * wi = b.linear(b.layer_norm(h, L + "mlp_norm", 1e-5F, false), L + "mlp.Wi", false);
-                const int64_t I = c.ettin_intermediate;
-                ggml_tensor * input = ggml_cont(x, ggml_view_2d(x, wi, I, S, wi->nb[1], 0));
-                ggml_tensor * gate = ggml_cont(x, ggml_view_2d(x, wi, I, S, wi->nb[1], static_cast<size_t>(I) * sizeof(float)));
-                h = ggml_add(x, h, b.linear(ggml_mul(x, ggml_gelu_erf(x, input), gate), L + "mlp.Wo", false));
-            }
-            ggml_tensor * words = ggml_scale(x, ggml_add(x, h, previous), 0.5F);                      // [E, S]
-            ggml_tensor * wavg = g.f32(r.ettin_wavg, S, r.ettin_words);
-            ggml_tensor * wfeat = ggml_mul_mat(x, b.tr(words), wavg);                                  // [E, W]
-            std::vector<int32_t> widx = {r.word_index.front()};
+            widx.push_back(r.word_index.front());
             widx.insert(widx.end(), r.word_index.begin(), r.word_index.end());
             widx.push_back(r.word_index.back());
-            ggml_tensor * word_of = g.i32(widx);
-            ggml_tensor * st = ggml_get_rows(x, b.W("student.emb.weight"), tokens);                   // [Cs, T]
-            for (int64_t k = 0; k < c.student_conv_blocks; ++k) {
-                const std::string L = "student.convs." + std::to_string(k) + ".";
-                ggml_tensor * y = b.tr(b.conv(b.tr(st), L + "conv", 1, 2));
-                st = ggml_add(x, st, ggml_gelu_erf(x, b.layer_norm(y, L + "norm", 1e-5F)));
+            sub = g.i32(r.ettin_ids);
+            sub_pos = g.i32(spos);
+            mask = g.f32(local, S, S);
+            wavg = g.f32(r.ettin_wavg, S, r.ettin_words);
+            word_of = g.i32(widx);
+        }
+        if (!g.prepared.allocated()) {
+            ggml_tensor * d_en = nullptr;
+            if (!c.ettin) {
+                ggml_tensor * e = ggml_add(x, ggml_get_rows(x, b.W("bert.embeddings.word_embeddings.weight"), tokens),
+                                           ggml_get_rows(x, b.W("bert.embeddings.position_embeddings.weight"), pos));
+                ggml_tensor * type0 = ggml_view_1d(x, b.W("bert.embeddings.token_type_embeddings.weight"), c.albert_embedding, 0);
+                e = b.layer_norm(ggml_add(x, e, type0), "bert.embeddings.LayerNorm", 1e-12F);
+                ggml_tensor * h = b.linear(e, "bert.encoder.embedding_hidden_mapping_in");
+                const std::string L = "bert.encoder.albert_layer_groups.0.albert_layers.0.";
+                for (int64_t layer = 0; layer < c.albert_layers; ++layer) {
+                    ggml_tensor * a = b.attention(b.linear(h, L + "attention.query"), b.linear(h, L + "attention.key"),
+                                                  b.linear(h, L + "attention.value"), c.albert_heads, nullptr, nullptr, 0.0F);
+                    ggml_tensor * attended = b.layer_norm(ggml_add(x, b.linear(a, L + "attention.dense"), h), L + "attention.LayerNorm", 1e-12F);
+                    ggml_tensor * f = b.linear(ggml_gelu(x, b.linear(attended, L + "ffn")), L + "ffn_output");
+                    h = b.layer_norm(ggml_add(x, f, attended), L + "full_layer_layer_norm", 1e-12F);
+                }
+                d_en = b.linear(h, "bert_encoder");
+            } else {
+                ggml_tensor * h = b.layer_norm(ggml_get_rows(x, b.W("ettin.embeddings.tok_embeddings.weight"), sub), "ettin.embeddings.norm", 1e-5F, false);
+                ggml_tensor * previous = h;
+                const int64_t E = c.ettin_hidden;
+                for (int64_t layer = 0; layer < c.ettin_layers; ++layer) {
+                    const std::string L = "ettin.layers." + std::to_string(layer) + ".";
+                    previous = h;
+                    ggml_tensor * n = layer == 0 ? h : b.layer_norm(h, L + "attn_norm", 1e-5F, false);
+                    ggml_tensor * qkv = b.linear(n, L + "attn.Wqkv", false);
+                    auto part = [&](int64_t k) { return ggml_view_2d(x, qkv, E, S, qkv->nb[1], static_cast<size_t>(k * E) * sizeof(float)); };
+                    const bool global = layer % c.ettin_global_every == 0;
+                    ggml_tensor * a = b.attention(part(0), part(1), part(2), c.ettin_heads, global ? nullptr : mask, sub_pos, c.ettin_rope_theta);
+                    h = ggml_add(x, h, b.linear(a, L + "attn.Wo", false));
+                    ggml_tensor * wi = b.linear(b.layer_norm(h, L + "mlp_norm", 1e-5F, false), L + "mlp.Wi", false);
+                    const int64_t I = c.ettin_intermediate;
+                    ggml_tensor * input = ggml_cont(x, ggml_view_2d(x, wi, I, S, wi->nb[1], 0));
+                    ggml_tensor * gate = ggml_cont(x, ggml_view_2d(x, wi, I, S, wi->nb[1], static_cast<size_t>(I) * sizeof(float)));
+                    h = ggml_add(x, h, b.linear(ggml_mul(x, ggml_gelu_erf(x, input), gate), L + "mlp.Wo", false));
+                }
+                ggml_tensor * words = ggml_scale(x, ggml_add(x, h, previous), 0.5F);                      // [E, S]
+                ggml_tensor * wfeat = ggml_mul_mat(x, b.tr(words), wavg);                                  // [E, W]
+                ggml_tensor * st = ggml_get_rows(x, b.W("student.emb.weight"), tokens);                   // [Cs, T]
+                for (int64_t k = 0; k < c.student_conv_blocks; ++k) {
+                    const std::string L = "student.convs." + std::to_string(k) + ".";
+                    ggml_tensor * y = b.tr(b.conv(b.tr(st), L + "conv", 1, 2));
+                    st = ggml_add(x, st, ggml_gelu_erf(x, b.layer_norm(y, L + "norm", 1e-5F)));
+                }
+                ggml_tensor * w = b.linear(ggml_gelu_erf(x, b.linear(ggml_get_rows(x, wfeat, word_of), "student.wproj.0")), "student.wproj.2");
+                st = ggml_add(x, ggml_add(x, st, w), ggml_get_rows(x, b.W("student.pos.weight"), pos));
+                const int64_t Cs = c.student_channels;
+                for (int64_t k = 0; k < c.student_transformer_blocks; ++k) {
+                    const std::string L = "student.tf." + std::to_string(k) + ".";
+                    ggml_tensor * qkv = b.linear(b.layer_norm(st, L + "n1", 1e-5F), L + "qkv");
+                    auto part = [&](int64_t j) { return ggml_view_2d(x, qkv, Cs, T, qkv->nb[1], static_cast<size_t>(j * Cs) * sizeof(float)); };
+                    st = ggml_add(x, st, b.linear(b.attention(part(0), part(1), part(2), c.student_heads, nullptr, nullptr, 0.0F), L + "o"));
+                    ggml_tensor * f = b.linear(ggml_gelu_erf(x, b.linear(b.layer_norm(st, L + "n2", 1e-5F), L + "ff.0")), L + "ff.2");
+                    st = ggml_add(x, st, f);
+                }
+                d_en = b.linear(st, "student.out");
             }
-            ggml_tensor * w = b.linear(ggml_gelu_erf(x, b.linear(ggml_get_rows(x, wfeat, word_of), "student.wproj.0")), "student.wproj.2");
-            st = ggml_add(x, ggml_add(x, st, w), ggml_get_rows(x, b.W("student.pos.weight"), pos));
-            const int64_t Cs = c.student_channels;
-            for (int64_t k = 0; k < c.student_transformer_blocks; ++k) {
-                const std::string L = "student.tf." + std::to_string(k) + ".";
-                ggml_tensor * qkv = b.linear(b.layer_norm(st, L + "n1", 1e-5F), L + "qkv");
-                auto part = [&](int64_t j) { return ggml_view_2d(x, qkv, Cs, T, qkv->nb[1], static_cast<size_t>(j * Cs) * sizeof(float)); };
-                st = ggml_add(x, st, b.linear(b.attention(part(0), part(1), part(2), c.student_heads, nullptr, nullptr, 0.0F), L + "o"));
-                ggml_tensor * f = b.linear(ggml_gelu_erf(x, b.linear(b.layer_norm(st, L + "n2", 1e-5F), L + "ff.0")), L + "ff.2");
-                st = ggml_add(x, st, f);
+            // duration encoder: [LSTM, AdaLayerNorm] x n_layer, the voice's style next to every step
+            ggml_tensor * sx = ggml_repeat(x, ggml_reshape_2d(x, sv, c.style_dim, 1), ggml_new_tensor_2d(x, GGML_TYPE_F32, c.style_dim, T));
+            ggml_tensor * dx = ggml_concat(x, d_en, sx, 0);
+            for (int64_t layer = 0; layer < c.n_layer; ++layer) {
+                dx = b.bilstm(dx, "predictor.text_encoder.lstms." + std::to_string(2 * layer), zeros);
+                dx = b.ada_layer_norm(dx, sv, "predictor.text_encoder.lstms." + std::to_string(2 * layer + 1));
+                dx = ggml_concat(x, dx, sx, 0);
             }
-            d_en = b.linear(st, "student.out");
+            ggml_tensor * logits = b.linear(b.bilstm(dx, "predictor.lstm", zeros), "predictor.duration_proj.linear_layer");
+            ggml_tensor * dur = ggml_sum_rows(x, ggml_sigmoid(x, logits));                          // [1, T]
+            // text encoder
+            ggml_tensor * te = ggml_get_rows(x, b.W("text_encoder.embedding.weight"), tokens);
+            for (int64_t k = 0; k < c.n_layer; ++k) {
+                const std::string L = "text_encoder.cnn." + std::to_string(k) + ".";
+                te = b.tr(b.conv(b.tr(te), L + "0", 1, 2));
+                te = ggml_leaky_relu(x, b.layer_norm(te, L + "1", 1e-5F), kLeak, false);
+            }
+            te = b.bilstm(te, "text_encoder.lstm", zeros);
+            g.allocate({dur, dx, te});
         }
-        // duration encoder: [LSTM, AdaLayerNorm] x n_layer, the voice's style next to every step
-        ggml_tensor * sx = ggml_repeat(x, ggml_reshape_2d(x, sv, c.style_dim, 1), ggml_new_tensor_2d(x, GGML_TYPE_F32, c.style_dim, T));
-        ggml_tensor * dx = ggml_concat(x, d_en, sx, 0);
-        for (int64_t layer = 0; layer < c.n_layer; ++layer) {
-            dx = b.bilstm(dx, "predictor.text_encoder.lstms." + std::to_string(2 * layer), zeros);
-            dx = b.ada_layer_norm(dx, sv, "predictor.text_encoder.lstms." + std::to_string(2 * layer + 1));
-            dx = ggml_concat(x, dx, sx, 0);
+        g.upload(0, ids);
+        g.upload(1, positions);
+        g.upload(2, style);
+        g.upload(3, zero_values);
+        if (c.ettin) {
+            g.upload(4, r.ettin_ids);
+            g.upload(5, spos);
+            g.upload(6, local);
+            g.upload(7, r.ettin_wavg);
+            g.upload(8, widx);
         }
-        ggml_tensor * logits = b.linear(b.bilstm(dx, "predictor.lstm", zeros), "predictor.duration_proj.linear_layer");
-        ggml_tensor * dur = ggml_sum_rows(x, ggml_sigmoid(x, logits));                          // [1, T]
-        // text encoder
-        ggml_tensor * te = ggml_get_rows(x, b.W("text_encoder.embedding.weight"), tokens);
-        for (int64_t k = 0; k < c.n_layer; ++k) {
-            const std::string L = "text_encoder.cnn." + std::to_string(k) + ".";
-            te = b.tr(b.conv(b.tr(te), L + "0", 1, 2));
-            te = ggml_leaky_relu(x, b.layer_norm(te, L + "1", 1e-5F), kLeak, false);
-        }
-        te = b.bilstm(te, "text_encoder.lstm", zeros);
-        g.run({dur, dx, te}, "kale_tts.text");
-        durations = Graph::read(dur);
-        d_values = Graph::read(dx);
-        t_en_values = Graph::read(te);
+        g.prepared.compute();
+        durations = g.read(0);
+        d_values = g.read(1);
+        t_en_values = g.read(2);
     }
 
     // durations -> the token of every frame
     std::vector<int32_t> frame_token;
     for (int64_t t = 0; t < T; ++t) {
         const auto n = std::max<int64_t>(1, static_cast<int64_t>(std::nearbyint(durations[static_cast<size_t>(t)] / r.speed)));
+        // Bound the unrolled recurrent graph before constructing any frame nodes.
+        if (n > kMaxProsodyFrames - static_cast<int64_t>(frame_token.size())) {
+            throw runtime::InvalidRequestError("kale-tts: sentence exceeds 4096 prosody frames; reduce text_chunk_size or increase speed");
+        }
         frame_token.insert(frame_token.end(), static_cast<size_t>(n), static_cast<int32_t>(t));
     }
     const auto F = static_cast<int64_t>(frame_token.size());
@@ -490,25 +521,32 @@ std::vector<float> KaleRuntime::synthesize(const KaleRequest & r) {
     // 2. pitch and loudness
     std::vector<float> f0, loud;
     {
-        Graph g(s.cpu.backend);
+        Graph & g = s.prepare(s.prosody, s.cpu, {T, F}, static_cast<size_t>(F * 96 + 8192), "kale_tts.prosody");
         Builder b(g, s.cpu.weights);
         ggml_context * x = g.ctx();
         ggml_tensor * d = g.f32(d_values, hd + c.style_dim, T);
         ggml_tensor * idx = g.i32(frame_token);
         ggml_tensor * sv = g.f32(style, c.style_dim);
         ggml_tensor * zeros = g.f32(zero_values, width);
-        ggml_tensor * shared = b.tr(b.bilstm(ggml_get_rows(x, d, idx), "predictor.shared", zeros));   // [F, hd]
-        auto branch = [&](const std::string & name) {
-            ggml_tensor * y = b.adain_block(shared, sv, "predictor." + name + ".0", false);
-            y = b.adain_block(y, sv, "predictor." + name + ".1", true);
-            y = b.adain_block(y, sv, "predictor." + name + ".2", false);
-            return b.conv(y, "predictor." + name + "_proj", 1, 0);
-        };
-        ggml_tensor * pitch = branch("F0");
-        ggml_tensor * energy = branch("N");
-        g.run({pitch, energy}, "kale_tts.prosody");
-        f0 = Graph::read(pitch);
-        loud = Graph::read(energy);
+        if (!g.prepared.allocated()) {
+            ggml_tensor * shared = b.tr(b.bilstm(ggml_get_rows(x, d, idx), "predictor.shared", zeros));   // [F, hd]
+            auto branch = [&](const std::string & name) {
+                ggml_tensor * y = b.adain_block(shared, sv, "predictor." + name + ".0", false);
+                y = b.adain_block(y, sv, "predictor." + name + ".1", true);
+                y = b.adain_block(y, sv, "predictor." + name + ".2", false);
+                return b.conv(y, "predictor." + name + "_proj", 1, 0);
+            };
+            ggml_tensor * pitch = branch("F0");
+            ggml_tensor * energy = branch("N");
+            g.allocate({pitch, energy});
+        }
+        g.upload(0, d_values);
+        g.upload(1, frame_token);
+        g.upload(2, style);
+        g.upload(3, zero_values);
+        g.prepared.compute();
+        f0 = g.read(0);
+        loud = g.read(1);
     }
 
     // end clamp: in the last frames of the sentence, voiced pitch is held at or above the voice's floor; then pitch below
@@ -539,7 +577,7 @@ std::vector<float> KaleRuntime::synthesize(const KaleRequest & r) {
     // 3. decoder trunk and the head's network part
     std::vector<float> head, burst;
     {
-        Graph g(s.main.backend);
+        Graph & g = s.prepare(s.decoder, s.same ? s.cpu : s.main, {T, F}, 8192 + static_cast<size_t>(c.head_blocks) * 256, "kale_tts.decoder");
         Builder b(g, s.main.weights);
         ggml_context * x = g.ctx();
         ggml_tensor * te = g.f32(t_en_values, hd, T);
@@ -547,29 +585,37 @@ std::vector<float> KaleRuntime::synthesize(const KaleRequest & r) {
         ggml_tensor * pitch = g.f32(f0, static_cast<int64_t>(f0.size()), 1);
         ggml_tensor * energy = g.f32(loud, static_cast<int64_t>(loud.size()), 1);
         ggml_tensor * sound = g.f32(r.voice->sound, c.voice_sound_dim);
-        ggml_tensor * asr = b.tr(ggml_get_rows(x, te, idx));                                     // [F, hd]
-        ggml_tensor * f0c = b.conv(pitch, "decoder.F0_conv", 2, 1);                              // [F, 1]
-        ggml_tensor * nc = b.conv(energy, "decoder.N_conv", 2, 1);
-        ggml_tensor * h = b.adain_block(ggml_concat(x, ggml_concat(x, asr, f0c, 1), nc, 1), sound, "decoder.encode", false);
-        ggml_tensor * res = b.conv(asr, "decoder.asr_res.0", 1, 0);
-        for (int k = 0; k < 4; ++k) {
-            h = ggml_concat(x, ggml_concat(x, ggml_concat(x, h, res, 1), f0c, 1), nc, 1);
-            h = b.adain_block(h, sound, "decoder.decode." + std::to_string(k), k == 3);
+        if (!g.prepared.allocated()) {
+            ggml_tensor * asr = b.tr(ggml_get_rows(x, te, idx));                                     // [F, hd]
+            ggml_tensor * f0c = b.conv(pitch, "decoder.F0_conv", 2, 1);                              // [F, 1]
+            ggml_tensor * nc = b.conv(energy, "decoder.N_conv", 2, 1);
+            ggml_tensor * h = b.adain_block(ggml_concat(x, ggml_concat(x, asr, f0c, 1), nc, 1), sound, "decoder.encode", false);
+            ggml_tensor * res = b.conv(asr, "decoder.asr_res.0", 1, 0);
+            for (int k = 0; k < 4; ++k) {
+                h = ggml_concat(x, ggml_concat(x, ggml_concat(x, h, res, 1), f0c, 1), nc, 1);
+                h = b.adain_block(h, sound, "decoder.decode." + std::to_string(k), k == 3);
+            }
+            // head network: input conv, ConvNeXt blocks, norm, the two output layers
+            ggml_tensor * z = b.layer_norm(b.tr(b.conv(h, "decoder.head.inp", 1, 3)), "decoder.head.norm0", 1e-5F);   // [D, 2F]
+            for (int64_t k = 0; k < c.head_blocks; ++k) {
+                const std::string L = "decoder.head.blocks." + std::to_string(k) + ".";
+                ggml_tensor * y = b.layer_norm(b.tr(b.depthwise(b.tr(z), L + "dw")), L + "norm", 1e-5F);
+                y = b.linear(ggml_gelu_erf(x, b.linear(y, L + "pw1")), L + "pw2");
+                z = ggml_add(x, z, ggml_mul(x, y, b.W(L + "gamma")));
+            }
+            ggml_tensor * hn = b.layer_norm(z, "decoder.head.norm1", 1e-5F);
+            ggml_tensor * out = b.linear(hn, "decoder.head.out");
+            ggml_tensor * out_b = b.linear(hn, "decoder.head.out_b");
+            g.allocate({out, out_b});
         }
-        // head network: input conv, ConvNeXt blocks, norm, the two output layers
-        ggml_tensor * z = b.layer_norm(b.tr(b.conv(h, "decoder.head.inp", 1, 3)), "decoder.head.norm0", 1e-5F);   // [D, 2F]
-        for (int64_t k = 0; k < c.head_blocks; ++k) {
-            const std::string L = "decoder.head.blocks." + std::to_string(k) + ".";
-            ggml_tensor * y = b.layer_norm(b.tr(b.depthwise(b.tr(z), L + "dw")), L + "norm", 1e-5F);
-            y = b.linear(ggml_gelu_erf(x, b.linear(y, L + "pw1")), L + "pw2");
-            z = ggml_add(x, z, ggml_mul(x, y, b.W(L + "gamma")));
-        }
-        ggml_tensor * hn = b.layer_norm(z, "decoder.head.norm1", 1e-5F);
-        ggml_tensor * out = b.linear(hn, "decoder.head.out");
-        ggml_tensor * out_b = b.linear(hn, "decoder.head.out_b");
-        g.run({out, out_b}, "kale_tts.decoder");
-        head = Graph::read(out);
-        burst = Graph::read(out_b);
+        g.upload(0, t_en_values);
+        g.upload(1, frame_token);
+        g.upload(2, f0);
+        g.upload(3, loud);
+        g.upload(4, r.voice->sound);
+        g.prepared.compute();
+        head = g.read(0);
+        burst = g.read(1);
     }
 
     // 4. the waveform: sine source + noise through the network's filter

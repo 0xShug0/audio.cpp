@@ -117,7 +117,7 @@
   "package_defaults": {
     "download": {
       "kind": "huggingface_snapshot",
-      "repo": "KaleComputer/kale-tts-1-GGUF",
+      "repo": "audio-cpp/audio.cpp-gguf",
       "revision": "main",
       "gated": false
     }
@@ -131,8 +131,9 @@
       "precision": "f32",
       "target_directory": "kale-tts-1-GGUF",
       "files": [
-        "kale-tts-1-nano-f32.gguf"
-      ]
+        "kale-tts-1-GGUF/kale-tts-1-nano-f32.gguf"
+      ],
+      "strip_prefix": "kale-tts-1-GGUF"
     },
     {
       "id": "kale_tts_1_tiny_f32",
@@ -141,8 +142,9 @@
       "precision": "f32",
       "target_directory": "kale-tts-1-GGUF",
       "files": [
-        "kale-tts-1-tiny-f32.gguf"
-      ]
+        "kale-tts-1-GGUF/kale-tts-1-tiny-f32.gguf"
+      ],
+      "strip_prefix": "kale-tts-1-GGUF"
     }
   ],
   "dependencies": [],
