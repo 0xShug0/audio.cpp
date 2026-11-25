@@ -14,13 +14,17 @@ its JAX and TFLite dependencies. Use a separate reference environment.
 |---|---|
 | `musiccoca_reference.py` / `magenta_musiccoca_parity` | Official text embeddings, mapper with aligned noise, RVQ codes, audio frontend, and audio embeddings. |
 | `reference.py` / `magenta_codec_parity` | Teacher-forced official AR codes through the C++ codec; final-waveform cosine must exceed 0.99999. Tests one/four-frame blocks, padded final blocks, and reset/reuse. |
-| `reference.py` / `magenta_greedy_parity` | Unforced greedy AR generation with aligned conditioning and F32 precision, then final-waveform comparison. |
+| `reference.py` / `magenta_greedy_parity` | Unforced greedy AR generation with aligned conditioning and F32 precision: every code must match exactly, then waveform cosine must exceed 0.99999. |
 | `magenta_validation` | Normal generation, repeated requests after different lengths/prompts, and exact concatenation of streaming events. |
 | `benchmark.py` | Official Python system using the same prompts, durations, and seed as `cases.json`. |
 
 For greedy parity, convert the selected generator with `--type orig` and generate
 a matching F32 reference. Storage/compute differences can change greedy
-choices and then the subsequent sequence; use the teacher-forced waveform test
+choices and then the subsequent sequence; that is a failure of the exact greedy
+contract, even if waveform cosine remains high. Empty, non-finite or zero-energy
+generated/reference waveforms fail, as does a non-finite cosine. The cosine bound
+is the existing codec/greedy acceptance criterion, unchanged by this repair.
+Use the teacher-forced waveform test
 to validate codec decoding independently.
 
 ```bash

@@ -96,7 +96,12 @@ for measured results.
 
 ## Performance
 
-Real-time factor (RTF) is processing time divided by audio duration, so values below 1.0 run faster than real time. On CPU (AMD Ryzen 9 9950X3D with AVX512-BF16, 16 threads, default Q8_0 cache and 4-frame blocks, best of three, `voice_isolator_warm_bench --backend cpu --threads 16`):
+The measurements below are historical. The removed
+[session harness](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/voice_isolator/voice_isolator_warm_bench.cpp)
+and [original measurement notes](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/models/voice_isolator.md)
+are pinned to the pre-cleanup backup tag; no replacement results are claimed.
+
+Real-time factor (RTF) is processing time divided by audio duration, so values below 1.0 run faster than real time. On CPU (AMD Ryzen 9 9950X3D with AVX512-BF16, 16 threads, default Q8_0 cache and 4-frame blocks, best of three, CPU harness with `--backend cpu --threads 16`):
 
 | Case | F32 weights | BF16 weights | Push p50 / p95 (BF16) |
 |---|---:|---:|---:|
@@ -109,7 +114,7 @@ Real-time factor (RTF) is processing time divided by audio duration, so values b
 
 Offline audio is rendered in 12 s windows that overlap by 2 s, so a clip a little longer than one window costs two: a 14 s clip runs at about 1.0 with BF16 weights, and a 418 s recording at 0.78. A 10 ms push runs one frame per graph and does not keep up with real time on this CPU; pushes of 40 ms or more do. The CLI feeds a stream in chunks of `block_frames` frames, 40 ms by default.
 
-On CUDA (NVIDIA RTX 5090, F32 weights, default F16 cache, best of three, `voice_isolator_warm_bench --backend cuda`):
+On CUDA (NVIDIA RTX 5090, F32 weights, default F16 cache, best of three, CUDA harness with `--backend cuda`):
 
 | Case | RTF | Push p50 / p95 |
 |---|---:|---:|

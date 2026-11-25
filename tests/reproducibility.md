@@ -89,10 +89,42 @@ build/debug/bin/moss_tts_local_codec_decode_parity --codec /path/to/v2-codec \
 ```
 
 The encoder checks codes against the independent Python capture. The decoder
-probe emits a deterministic waveform; it does not on its own establish waveform
-parity. `tests/moss_tts_local/moss_tts_local_codec_parity.py`
-can generate the corresponding Python decoding. Its printed metrics are
-observations, not a newly enforced quality gate in this cleanup.
+capture checks 48 kHz stereo format, exact frame count and finite samples, using
+the framework WAV writer. Compare its complete WAV against the independent
+Python decoding (no truncation to the shorter output):
+
+```sh
+: "${MOSS_MIN_COSINE:?set a reviewed cosine acceptance bound}"
+: "${MOSS_MAX_ABS_ERROR:?set a reviewed absolute-error acceptance bound}"
+conda run --no-capture-output -n qwen3-tts python \
+  tests/moss_tts_local/moss_tts_local_codec_parity.py --codec /path/to/v2-codec \
+  --cpp-wav /path/to/external/cpp.wav --out /path/to/external/python.wav \
+  --min-cosine "$MOSS_MIN_COSINE" --max-abs-error "$MOSS_MAX_ABS_ERROR" \
+  > /path/to/external/codec-comparison.log 2>&1
+```
+
+Use bounds established for the same checkpoint/backend/precision; there is no
+unverified default. Missing, malformed, wrong-length or numerically mismatched
+outputs fail. This is a teacher-forced codec comparison, not free-running TTS
+waveform similarity.
+
+## MOSS generation and prompt captures
+
+Generation smoke requests use the ordinary CLI/session path. The maintained
+catalog `tools/audiocpp_cli/audiocpp_cli_path_cases.json` contains
+`moss_tts_local_long_lived_session` and `moss_voicegen_radio_voice_design`.
+The duplicate standalone generation binaries and the broken model-specific
+memory wrapper are removed. Shared resource monitoring reports per-case peaks;
+it does not claim the deleted wrapper's inferred per-request attribution.
+
+The retained capture paths do not orchestrate another production pipeline:
+
+- `moss_tts_local_prompt_probe --model MODEL --clone-ref CODES_CSV --text TEXT
+  --dump PREFIX_CSV` captures the production text processor's clone prefix for
+  comparison with the upstream processor. It does not construct a backbone.
+- `moss_voicegen_generation_parity` retains the independent prompt/generated-row
+  reference assertions. Optional `--dump-codes CODES_JSON` saves its de-delayed
+  codes for independent codec replay; it does not replace those assertions.
 
 ## Conversion scripts
 
@@ -108,3 +140,30 @@ observations, not a newly enforced quality gate in this cleanup.
 See each script's `--help` for its remaining checkpoint and quantization options.
 For F5-specific controlled-reference generation and probe invocations, see
 [f5_tts/README.md](f5_tts/README.md).
+
+## SheetSage2 component assertions
+
+`tests/yue2/sheetsage2_decoder_parity_probe.cpp` validates finite inputs and
+outputs and the runtime's single-batch tensor shapes in capture mode. Encoder
+output is `[1, subsampled_frames, 1024]`; decoder output is the final token's
+`[31678]` logits, not every teacher-forced row. Every encoder `--runs` iteration
+is checked, including against the reference when supplied.
+
+Numerical comparison requires both `--reference FILE` and
+`--max-abs-error VALUE`. VALUE must be finite and nonnegative; there is no
+passing default. Choose and record an independently justified bound for the
+checkpoint, precision, backend and component before assessing candidate output.
+The probe rejects empty/mismatched/non-finite tensors, zero-energy comparisons,
+non-finite metrics and max absolute error greater than VALUE. RMSE and cosine
+are diagnostics, not additional calibrated thresholds.
+
+Keep `tests/yue2/sheetsage2_reference_dump.py` as the independent Python oracle.
+It writes mixed encoder state, decoder IDs, logits and `meta.json`. Match
+`--memory-steps` to that metadata and use the final-token logits as the decoder
+reference: if `logits_shape` includes multiple token rows, select its final row
+externally without regenerating values from C++. The probe requires exactly
+one vocabulary row. Encoder comparison uses the mixed-state oracle and the
+corresponding normalized mel input; the generator does not currently export
+that mel input. A capture without a reference establishes shape/finiteness
+only, never numerical parity. Save output and `--log` diagnostics to an external
+log file when invoking the probe.

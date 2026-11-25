@@ -497,7 +497,7 @@ int main(int argc, char ** argv) {
     const char * audio_path = (argc > 2) ? argv[2] : "assets/resources/sample_16k.wav";
     const char * backend_name = (argc > 3) ? argv[3] : "cpu";
     /* 44.1 kHz stereo, for families that fix their input rate. */
-    const char * alt_audio_path = (argc > 4) ? argv[4] : "tests/ace_step/assets/complete_source_demucs_8s.wav";
+    const char * alt_audio_path = (argc > 4 && argv[4][0]) ? argv[4] : NULL;
     /* Separation dominates this test's wall time and scales with threads (191s
      * at 4 against 113s at 16), and thread count does not change results --
      * verified bit-identical stems at both. Detected rather than defaulted to a
@@ -526,8 +526,28 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
-    if (!load_wav(alt_audio_path, &alt_clip)) {
-        printf("note: no alternate clip at %s; rate-fixed families will skip\n", alt_audio_path);
+    if (alt_audio_path != NULL) {
+        if (!load_wav(alt_audio_path, &alt_clip)) {
+            fprintf(stderr, "cannot read %s\n", alt_audio_path);
+            free(clip.samples);
+            return 1;
+        }
+    } else {
+        /* Eight seconds of distinct, deterministic PCM16 ramps per channel.
+         * Keep identical to parity.py's temporary WAV, including quantisation. */
+        alt_clip.frames = 8 * 44100;
+        alt_clip.sample_rate = 44100;
+        alt_clip.channels = 2;
+        alt_clip.samples = (float *)malloc(alt_clip.frames * 2 * sizeof(float));
+        if (alt_clip.samples == NULL) {
+            fprintf(stderr, "cannot allocate alternate audio\n");
+            free(clip.samples);
+            return 1;
+        }
+        for (i = 0; i < alt_clip.frames; ++i) {
+            alt_clip.samples[2 * i] = (float)((int)(i % 200) * 80 - 7960) / 32768.0f;
+            alt_clip.samples[2 * i + 1] = (float)((int)(i % 300) * 40 - 5980) / 32768.0f;
+        }
     }
 
     printf("models_root=%s\naudio=%s frames=%zu rate=%d\nbackend=%s\n",
@@ -535,7 +555,8 @@ int main(int argc, char ** argv) {
     printf("threads=%d\n", threads);
     if (alt_clip.samples != NULL) {
         printf("alt_audio=%s frames=%zu rate=%d ch=%d\n",
-               alt_audio_path, alt_clip.frames, alt_clip.sample_rate, alt_clip.channels);
+               alt_audio_path != NULL ? alt_audio_path : "generated",
+               alt_clip.frames, alt_clip.sample_rate, alt_clip.channels);
     }
 
     for (i = 0; i < CASE_COUNT; ++i) {

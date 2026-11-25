@@ -12,6 +12,7 @@ skip code) when no model is present.
 """
 
 import argparse
+import array
 import json
 import os
 import re
@@ -118,7 +119,7 @@ def main():
     parser.add_argument("--models-root", required=True)
     parser.add_argument("--audio", default="assets/resources/sample_16k.wav")
     # Separation families fix their input rate, so they need their own clip.
-    parser.add_argument("--alt-audio", default="tests/ace_step/assets/complete_source_demucs_8s.wav")
+    parser.add_argument("--alt-audio", help="alternate WAV override (default: temporary 8s 44.1 kHz stereo PCM16)")
     parser.add_argument("--backend", default="cpu")
     # Separation dominates the wall time and scales with threads, and thread
     # count does not change results (verified bit-identical stems at 4 and 16).
@@ -130,11 +131,10 @@ def main():
     # the repo-relative defaults would not exist. Silently losing a fixture is
     # how a case skips while the run still reports OK.
     args.audio = os.path.abspath(args.audio)
-    args.alt_audio = os.path.abspath(args.alt_audio)
-    for path in (args.audio, args.alt_audio):
+    args.alt_audio = os.path.abspath(args.alt_audio) if args.alt_audio else None
+    for path in (args.audio,) + ((args.alt_audio,) if args.alt_audio else ()):
         if not os.path.exists(path):
-            print(f"missing audio fixture {path}; skipping")
-            return SKIP
+            parser.error(f"missing audio fixture {path}")
 
     binaries = os.path.join(args.build_dir, "bin")
     cli = os.path.join(binaries, "audiocpp_cli")
@@ -153,17 +153,28 @@ def main():
         print(f"no models under {args.models_root}; skipping")
         return SKIP
 
-    # One C API run covers every family; parse its parity: lines. The alternate
-    # clip and thread count are passed explicitly so this matches what the C
-    # test does when CTest runs it directly.
-    capi = run([model_test, args.models_root, args.audio, args.backend,
-                args.alt_audio, args.threads] + (["--log"] if args.log else []), args.log)
-    values = dict(re.findall(r"^parity:(\S+?)=(.*)$", capi, re.M))
-
     failures = []
     checked = 0
 
     with tempfile.TemporaryDirectory() as tmp:
+        if args.alt_audio is None:
+            args.alt_audio = os.path.join(tmp, "stereo_44100.wav")
+            # Match model_test.c's standalone default exactly; PCM16 avoids
+            # differences between the CLI decoder and the C test's WAV loader.
+            samples = array.array("h", (value for i in range(8 * 44100)
+                                       for value in (i % 200 * 80 - 7960,
+                                                     i % 300 * 40 - 5980)))
+            if sys.byteorder == "big":
+                samples.byteswap()
+            with wave.open(args.alt_audio, "wb") as handle:
+                handle.setparams((2, 2, 44100, 0, "NONE", "not compressed"))
+                handle.writeframes(samples.tobytes())
+
+        # Independent C API and CLI runs consume the same temporary input.
+        capi = run([model_test, args.models_root, args.audio, args.backend,
+                    args.alt_audio, args.threads] + (["--log"] if args.log else []), args.log)
+        values = dict(re.findall(r"^parity:(\S+?)=(.*)$", capi, re.M))
+
         for family, case in sorted(available.items()):
             model = os.path.join(args.models_root, case["model"])
             base = [cli, "--task", case["task"], "--family", family, "--model", model,

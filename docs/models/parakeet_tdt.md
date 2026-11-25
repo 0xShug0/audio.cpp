@@ -12,29 +12,24 @@ archive.
 ## Build and run
 
 ```bash
-cmake --build build/<preset> --target parakeet_warm_bench
-
-build/<preset>/bin/parakeet_warm_bench \
-    --model models/parakeet-tdt-0.6b-v3 \
-    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
-    --backend cpu   # or: --backend cuda
+cmake --build build/<preset> --target audiocpp_cli --parallel
 ```
 
-Equivalent CLI commands:
+CLI commands:
 
 ```bash
 # Offline full-context
 build/<preset>/bin/audiocpp_cli \
     --task asr --family parakeet_tdt \
     --model models/parakeet-tdt-0.6b-v3 --backend cpu \
-    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav
+    --audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav
 
 # Offline bounded-window long-form
 build/<preset>/bin/audiocpp_cli \
     --task asr --family parakeet_tdt \
     --model models/parakeet-tdt-0.6b-v3 --backend cpu \
     --session-option parakeet_tdt.offline_mode=long_form \
-    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav
+    --audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav
 
 # Buffered streaming from raw mono 16 kHz PCM
 ffmpeg -loglevel error -i input.wav -f f32le -ac 1 -ar 16000 - \
@@ -223,7 +218,7 @@ Source checkpoint SHA-256:
 `031c8ddab4845aeced904a7cde8e8aa57993b2e344716cf83a545b079c473b56`.
 
 Validated on CUDA (RTX 4070 Ti SUPER) against the golden clip
-(`tests/parakeet_tdt/assets/2086-149220-0033.wav`): all four storage
+([historical recording](https://github.com/0xShug0/audio.cpp/raw/9b286bc49bf255655968259759f6c525a9060873/tests/parakeet_tdt/assets/2086-149220-0033.wav)): all four storage
 variants reproduce the checked-in stock transcription byte-identically with
 word timestamps — F32 (~210 ms, ~35x realtime), F16 (~141 ms, ~53x),
 BF16 (~186 ms, ~40x), Q8_0 (~162 ms, ~46x); tested files are about 2.5 GB
@@ -312,18 +307,20 @@ defaults, not a deliberately handicapped configuration: `--threads` defaults
 to 8, and `parakeet_tdt.matmul_weight_type` defaults to `native`, which for
 this checkpoint means f32 (`config.json` declares `dtype: float32`).
 
-Re-measured on the current tree with the drift-cancelling harness (ABBA, 4
+For the historical measurements below, set `PARAKEET_HISTORICAL_AUDIO` to a
+local copy of the [original 7.435 s recording](https://github.com/0xShug0/audio.cpp/raw/9b286bc49bf255655968259759f6c525a9060873/tests/parakeet_tdt/assets/2086-149220-0033.wav).
+The shared input used by current tests is different; these timings were not rerun.
+
+Historically re-measured with the drift-cancelling harness (ABBA, 4
 passes, median of 5 iterations per run): tuned is **1.72x** default on CPU and
 **1.31x** on CUDA. Both defaults reproduce earlier figures closely; the CPU
 tuned row previously read ~750 ms, which was measured before the optimization
 pass and is now slightly conservative.
 
-```bash
-build/<preset>/bin/parakeet_warm_bench \
-    --model models/parakeet-tdt-0.6b-v3 --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
-    --backend cpu --threads 12 \
-    --session-option parakeet_tdt.matmul_weight_type=q8_0
-```
+The historical command and session harness are preserved in the
+[pre-cleanup guide](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/models/parakeet_tdt.md) and
+[harness source](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/parakeet_warm_bench.cpp).
+These numbers were not re-measured after harness removal.
 
 Two settings account for essentially all of the tunable gap:
 

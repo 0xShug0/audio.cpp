@@ -21,8 +21,7 @@ constexpr int kExitPass = 0;
 constexpr int kExitFail = 1;
 constexpr int kExitSkip = 125;
 constexpr const char* kExpectedText =
-    "Well, I don't wish to see it any more, observed Phoebe, turning away "
-    "her eyes. It is certainly very like the old portrait.";
+    "Concord returned to its place amidst the tents,";
 
 std::filesystem::path repo_path(const std::string& relative) {
     return std::filesystem::path(ENGINE_REPO_ROOT) / relative;
@@ -66,7 +65,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path model_path = arg_value(
         argc, argv, "--model", repo_path("models/parakeet-tdt-0.6b-v3").string());
     const std::filesystem::path audio_path = arg_value(
-        argc, argv, "--audio", repo_path("tests/parakeet_tdt/assets/2086-149220-0033.wav").string());
+        argc, argv, "--audio", repo_path("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav").string());
     const std::string weight_type = arg_value(argc, argv, "--weight-type", "q8_0");
     const bool model_available =
         engine::io::is_existing_file(model_path) ||

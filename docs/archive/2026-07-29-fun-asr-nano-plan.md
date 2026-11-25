@@ -1,5 +1,10 @@
 # Fun-ASR-Nano Native Runtime Implementation Plan
 
+Historical plan: warmbench tasks and commands below describe the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/archive/2026-07-29-fun-asr-nano-plan.md), not the current build.
+Removed harness sources and catalogs are preserved in the
+[pinned test directory](https://github.com/0xShug0/audio.cpp/tree/checkpoint/before-tests-cleanup/tests/fun_asr_nano/).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add complete offline Fun-ASR-Nano transcription to audio.cpp for official HF safetensors and audio.cpp GGUF on CPU and CUDA.

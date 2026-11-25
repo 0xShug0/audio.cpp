@@ -11,58 +11,58 @@
         {
           "id": "warmup_a",
           "text": "Please leave the lamp beside the window.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         },
         {
           "id": "long_a",
           "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         },
         {
           "id": "long_repeat_a",
           "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         },
         {
           "id": "short_a",
           "text": "The tickets are on the kitchen table.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         },
         {
           "id": "long_after_short_a",
           "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         },
         {
           "id": "short_b",
           "text": "Our train leaves tomorrow morning.",
-          "voice_ref": "resources/b.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_other_7902-96591-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "I AM FROM THE CUTTER LYING OFF THE COAST", "language": "English"}
         },
         {
           "id": "long_reencoded_a",
           "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         },
         {
           "id": "long_rewarmed_a",
           "text": "The museum opened early on Saturday so that visitors could watch the restoration team at work. Behind a glass screen, two specialists carefully cleaned an old map of the coast. A guide explained how they used photographs and written records to identify the faded names of villages. Outside, children gathered around a model ship and asked how sailors found their way before satellite navigation. At noon, the team covered the map and invited everyone upstairs to see the finished exhibition.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         }
       ]
     }

@@ -1,8 +1,8 @@
 // Parity probe for the ported VibeASR VAE encoder.
 //
-// Without --reference-* the probe only checks that the graph runs and produces a
-// sane feature block. With a reference dump from VibeASR.cpp's own vae_server
-// (raw float32, frames * dim, row-major) it reports max abs error, mean abs
+// Sanity mode checks dimensions, value count, finiteness and nonzero features.
+// --mode parity requires both reference dumps from VibeASR.cpp's own vae_server
+// (raw float32, frames * dim, row-major). It reports max abs error, mean abs
 // error, and cosine similarity, and fails outside the tolerances below.
 //
 // Upstream: https://github.com/microsoft/VibeASR.cpp
@@ -12,7 +12,10 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/io/filesystem.h"
+#include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -63,10 +66,11 @@ std::vector<float> read_f32_dump(const std::filesystem::path & path) {
     if (!file) {
         throw std::runtime_error("cannot open reference dump: " + path.string());
     }
-    const auto bytes = static_cast<size_t>(file.tellg());
-    if (bytes % sizeof(float) != 0) {
-        throw std::runtime_error("reference dump is not a whole number of floats: " + path.string());
+    const std::streamoff length = file.tellg();
+    if (length <= 0 || length % static_cast<std::streamoff>(sizeof(float)) != 0) {
+        throw std::runtime_error("reference dump must contain a nonempty whole number of floats: " + path.string());
     }
+    const auto bytes = static_cast<size_t>(length);
     std::vector<float> values(bytes / sizeof(float));
     file.seekg(0);
     file.read(reinterpret_cast<char *>(values.data()), static_cast<std::streamsize>(bytes));
@@ -81,7 +85,8 @@ bool check_features(
     const engine::community_models::vibeasr::VAEEncoderFeatures & features,
     int64_t expected_dim,
     int64_t expected_frames) {
-    if (features.frames != expected_frames || features.dim != expected_dim) {
+    if (expected_frames <= 0 || expected_dim <= 0 ||
+        features.frames != expected_frames || features.dim != expected_dim) {
         std::fprintf(
             stderr,
             "FAIL: %s features are [%lld frames, %lld dim], expected [%lld, %lld]\n",
@@ -93,6 +98,11 @@ bool check_features(
         return false;
     }
 
+    if (features.values.size() % static_cast<size_t>(expected_dim) != 0 ||
+        features.values.size() / static_cast<size_t>(expected_dim) != static_cast<size_t>(expected_frames)) {
+        std::fprintf(stderr, "FAIL: %s feature value count does not match dimensions\n", branch);
+        return false;
+    }
     double amax = 0.0;
     for (float value : features.values) {
         if (!std::isfinite(value)) {
@@ -137,6 +147,10 @@ bool compare_reference(
     for (size_t i = 0; i < reference.size(); ++i) {
         const double a = features.values[i];
         const double b = reference[i];
+        if (!std::isfinite(a) || !std::isfinite(b)) {
+            std::fprintf(stderr, "FAIL: %s generated/reference features contain non-finite values\n", branch);
+            return false;
+        }
         const double diff = std::fabs(a - b);
         max_abs = std::max(max_abs, diff);
         sum_abs += diff;
@@ -145,16 +159,21 @@ bool compare_reference(
         norm_a += a * a;
         norm_b += b * b;
     }
+    if (!(norm_a > 0.0) || !(norm_b > 0.0)) {
+        std::fprintf(stderr, "FAIL: %s generated/reference features have zero energy\n", branch);
+        return false;
+    }
     const double mean_abs = sum_abs / static_cast<double>(reference.size());
-    const double cosine = (norm_a > 0.0 && norm_b > 0.0) ? dot / std::sqrt(norm_a * norm_b) : 0.0;
-    const double max_relative = reference_amax > 0.0 ? max_abs / reference_amax : max_abs;
-    const double mean_relative = reference_amax > 0.0 ? mean_abs / reference_amax : mean_abs;
+    const double cosine = dot / std::sqrt(norm_a * norm_b);
+    const double max_relative = max_abs / reference_amax;
+    const double mean_relative = mean_abs / reference_amax;
 
     std::printf(
         "%s vs reference: max abs %.6g (%.3g of range), mean abs %.6g (%.3g of range), cosine %.8f\n",
         branch, max_abs, max_relative, mean_abs, mean_relative, cosine);
 
-    bool ok = true;
+    bool ok = std::isfinite(mean_relative) && std::isfinite(cosine);
+    if (!ok) std::fprintf(stderr, "FAIL: %s comparison metrics are non-finite\n", branch);
     if (mean_relative > kMaxMeanRelativeError) {
         std::fprintf(stderr, "FAIL: %s mean relative error %.6g exceeds %.6g\n",
                      branch, mean_relative, kMaxMeanRelativeError);
@@ -174,6 +193,21 @@ int main(int argc, char ** argv) {
     const std::filesystem::path audio_path = arg_value(argc, argv, "--audio", "");
     const std::filesystem::path acoustic_reference = arg_value(argc, argv, "--reference-acoustic", "");
     const std::filesystem::path semantic_reference = arg_value(argc, argv, "--reference-semantic", "");
+    const auto mode = arg_value(argc, argv, "--mode", "parity");
+    if (mode != "sanity" && mode != "parity") {
+        std::fprintf(stderr, "FAIL: --mode must be sanity or parity\n");
+        return kExitFail;
+    }
+    if ((mode == "parity" && (acoustic_reference.empty() || semantic_reference.empty())) ||
+        (mode == "sanity" && (!acoustic_reference.empty() || !semantic_reference.empty()))) {
+        std::fprintf(stderr, "FAIL: parity requires both --reference-acoustic and --reference-semantic; sanity accepts neither\n");
+        return kExitFail;
+    }
+    if (mode == "parity" && (!engine::io::is_existing_file(acoustic_reference) ||
+                             !engine::io::is_existing_file(semantic_reference))) {
+        std::fprintf(stderr, "FAIL: both parity reference dumps must exist\n");
+        return kExitFail;
+    }
     const int threads = std::atoi(arg_value(argc, argv, "--threads", "4").c_str());
 
     if (model_path.empty() || !engine::io::is_existing_file(model_path) ||
@@ -186,6 +220,10 @@ int main(int argc, char ** argv) {
     }
 
     try {
+        engine::debug::configure_logging({std::any_of(argv + 1, argv + argc,
+            [](const char * arg) { return std::string(arg) == "--log"; }),
+            arg_value(argc, argv, "--log-file", "")});
+        const auto started = std::chrono::steady_clock::now();
         const auto wav = engine::audio::read_wav_f32(audio_path);
         if (wav.channels != 1) {
             std::fprintf(stderr, "SKIP: %s has %d channels, the encoder takes mono\n",
@@ -243,16 +281,13 @@ int main(int argc, char ** argv) {
             "semantic", semantic, config.semantic.connector_hidden,
             config.semantic.frames_for_samples(num_samples));
 
-        if (!acoustic_reference.empty()) {
+        if (mode == "parity" && ok) {
             ok &= compare_reference("acoustic", acoustic, acoustic_reference);
-        }
-        if (!semantic_reference.empty()) {
             ok &= compare_reference("semantic", semantic, semantic_reference);
         }
-        if (acoustic_reference.empty() && semantic_reference.empty()) {
-            std::printf("no reference dump given: shape and sanity checks only\n");
-        }
+        std::printf("validation.mode=%s validation.status=%s\n", mode.c_str(), ok ? "passed" : "failed");
 
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         return ok ? kExitPass : kExitFail;
     } catch (const std::exception & error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

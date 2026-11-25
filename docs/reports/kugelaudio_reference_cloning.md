@@ -1,5 +1,10 @@
 # KugelAudio reference-audio cloning validation
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/kugelaudio_reference_cloning.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 Tested locally on Windows, 2026-11-13: RTX 3090 24 GiB, Ryzen 7950X3D,
 64 GiB RAM; 8 CPU threads. Initial measurements used base `eeeca9e8`; the final
 audit used `eb8281c9` and repeated the runtime checks after moving encoder
@@ -115,7 +120,7 @@ preserved; no new package is advertised as an available hosted download.
 From the workspace root in an MSVC x64 shell, configure the tested custom build:
 
 ```powershell
-cmake -S outputs/ub3p/source -B outputs/ub3p/build-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8" -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=kugelaudio -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_BUILD_SERVER_FRONTENDS=OFF -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DGGML_CCACHE=OFF -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON -DCMAKE_CUDA_ARCHITECTURES=86
+cmake -S outputs/ub3p/source -B outputs/ub3p/build-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8" -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=kugelaudio -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_BUILD_SERVER_FRONTENDS=OFF -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DGGML_CCACHE=OFF -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON -DCMAKE_CUDA_ARCHITECTURES=86
 cmake --build outputs/ub3p/build-gpu -j 4 --target audiocpp_cli audiocpp_server audiocpp_gguf kugelaudio_reference_encoder_probe kugelaudio_cloning_session_probe kugelaudio_reference_audio_test gguf_tensor_source_test model_spec_system_test
 ```
 

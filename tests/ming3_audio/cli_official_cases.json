@@ -47,13 +47,13 @@
           }
         },
         {
-          "id": "reference_us_james",
+          "id": "reference_librispeech",
           "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
-          "voice_ref": "reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/US_James.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "options": {
             "system_prompt": "You are a helpful assistant.\nListen to the user's audio and respond to their question or request.\nAnswer the question or carry out the requested task. For lists, provide several concrete examples; for why/how questions, explain the main reason or method. Follow the user's explicit instructions, including any requirements for format, wording, and length. Answer directly and keep your response concise but complete. Do not repeat or transcribe the request unless asked to do so. Before responding, silently check that your answer satisfies the requested constraints.",
             "prompt": "",
-            "reference_text": "And so everyone would be afraid of him and run away. But actually, he was the sweetest thing, he never attacked anyone.",
+            "reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS",
             "max_tokens": 256,
             "seed": 42
           }

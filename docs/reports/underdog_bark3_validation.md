@@ -23,8 +23,8 @@ results are separated in [Historical Pro comparison](#historical-pro-comparison)
 - Identical mono 16 kHz audio and the publisher's 4,000-sample silence prefix.
   Native word positions exclude that prefix and are checked against the original
   recording bounds.
-- Six unique short fixtures: checked-in LibriSpeech
-  [`2086-149220-0033.wav`](../../tests/parakeet_tdt/assets/2086-149220-0033.wav)
+- Six unique short fixtures: historical LibriSpeech
+  [`2086-149220-0033.wav`](https://github.com/0xShug0/audio.cpp/raw/9b286bc49bf255655968259759f6c525a9060873/tests/parakeet_tdt/assets/2086-149220-0033.wav)
   (7.435 s), four non-public recording excerpts (7.9925, 12, 12, and 30 s), and
   one second of silence. Sessions also repeat short/long/short without reloading.
 - The full recording is 299.99375 s. It is not distributed with the repository;

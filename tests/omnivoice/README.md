@@ -26,7 +26,7 @@ every combination of `--num-inference-steps` (8 to 64),
 
 ```bash
 ./tests/omnivoice/run_clone_benchmark.sh
-./tests/omnivoice/run_clone_batch_benchmark.sh
+BATCH_FILE=/path/to/prompts.txt ./tests/omnivoice/run_clone_batch_benchmark.sh
 ```
 
 Each script runs 375 combinations, so a full sweep takes hours. Edit
@@ -42,13 +42,18 @@ produces unusable audio without being any faster, while
 
 ## Assets
 
-`assets/` holds the shared Bengali fixtures used by every script here:
+General clone and batch tests reuse the shared English LibriSpeech pair:
 
-```text
-ref_audio_01.wav  ref_text_01.txt   longer reference voice
-ref_audio_02.wav  ref_text_02.txt   reference voice used by default
-clone_batch_prompts.txt             10 prompts, one request per line
-```
+- `assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav`
+- its matching `.txt` transcript
+
+The pair has source/license metadata in `assets/asr_validation/`. Prompts are
+English; supply your own batch requests with `BATCH_FILE=/path/to/prompts.txt`
+for the sweep script or `--text-file /path/to/prompts.txt` for the native test.
+The prompt file contains one request per non-empty line.
+Rate variants should be created temporarily from this shared input rather than
+stored as another recording. The removed local Bengali examples were not used
+by a Bengali-specific assertion.
 
 ## Python-to-C++ integration
 
@@ -56,45 +61,12 @@ clone_batch_prompts.txt             10 prompts, one request per line
 keeping inference in C++, by sending HTTP requests to `audiocpp_server` using
 only the Python standard library.
 
-## Warm benchmark
+## Historical session and batch benchmarks
 
-`omnivoice_warm_bench.cpp` and `omnivoice_python_warm_bench.py` are the
-framework warmbench helpers driven by `tests/warmbench.py`, and are unrelated to
-the sweep scripts above.
-
-## Native batch test
-
-`omnivoice_batch_test.cpp` (target `omnivoice_batch_test`, built with
-`-DENGINE_BUILD_WARMBENCH=ON`) runs the same requests through `run()` one at a
-time and through one `run_batch()` call for each `--batch-sizes` entry, and
-reports both wall times and per-request parity. Request *i* uses line
-*i* of `--text-file` (cycled) and seed `--seed + i`.
-
-```bash
-cmake -S . -B build -DENGINE_ENABLE_CUDA=ON -DENGINE_BUILD_WARMBENCH=ON
-cmake --build build --parallel --target omnivoice_batch_test
-./build/bin/omnivoice_batch_test --model models/OmniVoice \
-  --clone-audio tests/omnivoice/assets/ref_audio_02.wav \
-  --reference-text-file tests/omnivoice/assets/ref_text_02.txt \
-  --text-file tests/omnivoice/assets/clone_batch_prompts.txt \
-  --num-step 16 --batch-sizes 1,2,4,8 \
-  --session-option omnivoice.generator_weight_type=f16
-```
-
-- `--out-dir` keeps every output as WAV and raw float32 (`.f32`).
-- `--compare-dir <dir>` compares the `run()` outputs bit for bit with the
-  `.f32` files of an earlier build, e.g. to check that a change left the
-  single-request path untouched. A mismatch or a missing baseline makes it
-  exit with status 1.
-- The `run()` vs `run_batch()` lines are informational: with f16 weights the
-  batched kernels can round differently. The parity test below asserts the
-  exact guarantees.
-- `--timing-log <file>` writes the engine `[TIMING]` lines (generator
-  compute, readback, scoring, decode) of every call.
-- `--session-option` and `--request-option` pass options through. The
-  earlier code path is `--session-option omnivoice.packed_cfg=false
-  --session-option omnivoice.device_scoring=false --session-option
-  omnivoice.packed_projections=false`.
+The removed session runners and informational native batch benchmark are
+preserved in the [pre-cleanup guide](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/omnivoice/README.md).
+Use the batch parity test below for its documented assertions; it does not
+replace the historical timing measurements.
 
 ## Batch parity test
 

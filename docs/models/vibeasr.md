@@ -163,3 +163,29 @@ tensor being uploaded. Graph arenas are 64 MB (encoder) + 256 MB (prefill) +
   `src/lm.cpp`, `src/asr_server.cpp`, `utils/prompt_builder.h`)
 - Base model: VibeVoice ASR, also in tree as [`vibevoice_asr`](../asr.md#vibevoice-asr)
 - Weights: <https://huggingface.co/microsoft/VibeVoice-ASR-BitNet>
+
+## VAE encoder checks
+
+`test_vibeasr_vae_encoder --mode sanity --model VAE.gguf --audio INPUT.wav`
+checks both acoustic and semantic dimensions, exact feature value counts,
+finiteness and nonzero features. It establishes shape/sanity, not parity.
+
+`--mode parity` requires both `--reference-acoustic ACOUSTIC.f32` and
+`--reference-semantic SEMANTIC.f32`, captured independently from upstream
+VibeASR.cpp's `vae_server` for the same model and input audio. Dumps are nonempty
+raw float32 `[frames, dim]` arrays in row-major order. Missing, partial,
+non-finite, zero-energy or incorrectly sized references fail. Both branches
+must pass the existing mean absolute error / reference peak bound of 0.02 and
+cosine lower bound of 0.98. The source documents the upstream INT8 one-LSB
+sensitivity evidence behind those existing bounds; this repair does not
+recalibrate them or claim new runtime validation.
+
+Omitted `--mode` selects parity and requires both reference paths. A partial
+pair fails. Explicit `--mode sanity` rejects oracle arguments. Preserve both
+independent oracle dumps outside the repository. Invoke with
+`--log --log-file /external/vae.log` and save stdout/stderr alongside it;
+completed checks emit `session.wall_ms`.
+
+CMake registers `test_vibeasr_vae_encoder_sanity` with `--mode sanity`, skip code
+125 and timeout 300. Numerical parity is a separate manual invocation requiring
+both independent reference dumps; the sanity CTest does not claim parity.

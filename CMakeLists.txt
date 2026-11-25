@@ -164,7 +164,6 @@ option(ENGINE_BUILD_EXAMPLES "Build example binaries" OFF)
 option(ENGINE_BUILD_TESTS "Build framework unit tests" OFF)
 option(ENGINE_BUILD_EXTENDED_TESTS "Build extended non-model tests and probes" OFF)
 option(ENGINE_BUILD_MODEL_TESTS "Build model-specific tests and probes" OFF)
-option(ENGINE_BUILD_WARMBENCH "Build warmbench helper binaries" OFF)
 option(AUDIOCPP_BUILD_C_API "Build the C ABI (include/audiocpp.h) as a shared library" OFF)
 option(AUDIOCPP_BUILD_C_API_STATIC "Also build the C ABI as a static library (libaudiocpp.a) for embedding" OFF)
 set(AUDIOCPP_C_API_MODEL_ROOT "" CACHE PATH
@@ -3717,10 +3716,6 @@ if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
         tools/gguf/kitten_tts2/kitten_tts2_voices_prepare.cpp)
     audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
     target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
-endif()
-
-if (ENGINE_BUILD_WARMBENCH)
-    include(cmake/tests/warmbench.cmake)
 endif()
 
 # Shared test setup; declarations and category selection stay separate.

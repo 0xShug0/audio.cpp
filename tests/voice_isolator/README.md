@@ -54,17 +54,12 @@ python tools/gguf/voice_isolator_convert.py \
 The converter checks the checkpoint's SHA-256 and embeds the model spec and the
 architecture JSON the checkpoint carries as metadata.
 
-## Timing
+## Historical timing
 
-`voice_isolator_warm_bench` (`ENGINE_BUILD_WARMBENCH=ON`) reports the real-time factor
-of an offline render or of a stream, with per-push latency percentiles:
-
-```bash
-build/debug/bin/voice_isolator_warm_bench --model models/voice-isolator/denoiser_realtime.safetensors \
-  --backend cpu --threads 16 --seconds 20 --push 480
-build/debug/bin/voice_isolator_warm_bench --model models/voice-isolator/denoiser.safetensors \
-  --offline --backend cuda --seconds 30
-```
+The removed timing harness and invocation examples are preserved in the
+[pre-cleanup guide](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/voice_isolator/README.md) and
+[harness source](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/voice_isolator/voice_isolator_warm_bench.cpp).
+Historical results remain in the [model guide](../../docs/models/voice_isolator.md).
 
 `cli_cases.json` supplies offline, streaming and request-reuse cases for the existing
 CLI path runner.

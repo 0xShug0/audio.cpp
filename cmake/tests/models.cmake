@@ -61,6 +61,13 @@ if (auk IN_LIST AUDIOCPP_LINKED_MODELS)
     target_sources(auk_vae_test PRIVATE src/community_models/auk/vae.cpp)
 endif()
 
+# campplus_shared_default_probe
+add_engine_test_target(campplus_shared_default_probe tests/glm_tts/campplus_shared_default_probe.cpp)
+set_target_properties(campplus_shared_default_probe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+if (ENGINE_ENABLE_OPENMP)
+    target_link_libraries(campplus_shared_default_probe PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
 # c_api
 if (AUDIOCPP_BUILD_C_API)
     if (GGML_BACKEND_DL)
@@ -96,7 +103,6 @@ if (AUDIOCPP_BUILD_C_API)
             --build-dir "${CMAKE_BINARY_DIR}"
             --models-root "${AUDIOCPP_C_API_MODEL_ROOT}"
             --audio "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
-            --alt-audio "${CMAKE_CURRENT_SOURCE_DIR}/tests/ace_step/assets/complete_source_demucs_8s.wav"
             --threads "${AUDIOCPP_C_API_TEST_THREADS}")
         set_tests_properties(audiocpp_c_api_parity PROPERTIES SKIP_RETURN_CODE 77)
     endif()
@@ -108,7 +114,7 @@ if (AUDIOCPP_BUILD_C_API)
         "${AUDIOCPP_C_API_MODEL_ROOT}"
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
         "cpu"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/ace_step/assets/complete_source_demucs_8s.wav"
+        ""
         "${AUDIOCPP_C_API_TEST_THREADS}")
     set_tests_properties(audiocpp_c_api_model PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(audiocpp_c_api_path_test tests/capi/path_test.c)
@@ -202,13 +208,6 @@ if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
     target_include_directories(f5_cfg_parity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(f5_cfg_parity PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-    add_executable(f5_e2e tests/f5_tts/f5_e2e_main.cpp)
-    target_compile_definitions(f5_e2e PRIVATE F5_MEL_TEST=1)
-    target_link_libraries(f5_e2e PRIVATE engine_runtime ggml)
-    target_include_directories(f5_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(f5_e2e PRIVATE OpenMP::OpenMP_CXX)
     endif()
     add_executable(f5_parity tests/f5_tts/f5_parity_main.cpp)
     target_compile_definitions(f5_parity PRIVATE F5_MEL_TEST=1)
@@ -441,6 +440,20 @@ if (AUDIOCPP_FUN_ASR_NANO_TEST_MODEL)
     endif()
 endif()
 
+# glm_tts
+if (glm_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    foreach(probe IN ITEMS
+        glm_tts_tokenizer_probe glm_tts_assets_probe glm_tts_prompt_probe
+        glm_tts_speech_tokenizer_probe glm_tts_flow_probe glm_tts_flow_conditioned_probe
+        glm_tts_frontend_probe glm_tts_campplus_probe glm_tts_llama_probe)
+        add_engine_test_target(${probe} tests/glm_tts/${probe}.cpp)
+        set_target_properties(${probe} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(${probe} PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endforeach()
+endif()
+
 # granite5asr
 add_executable(test_granite5asr_golden_transcription
     tests/granite5asr/test_granite5asr_golden_transcription.cpp
@@ -571,6 +584,19 @@ if (kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
     if (AUDIOCPP_STATIC_ESPEAK)
         audiocpp_stage_espeak(kokoro_g2p_probe)
     endif()
+endif()
+
+# kroko_asr
+if (kroko_asr IN_LIST AUDIOCPP_LINKED_MODELS)
+    foreach(probe IN ITEMS
+        kroko_asr_encoder_probe kroko_asr_frontend_probe
+        kroko_asr_streaming_probe kroko_asr_zipformer_probe)
+        add_engine_test_target(${probe} tests/kroko_asr/${probe}.cpp)
+        set_target_properties(${probe} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(${probe} PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+    endforeach()
 endif()
 
 # kugelaudio
@@ -834,13 +860,7 @@ endif()
 if (moss IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test_target(moss_tts_local_codec_decode_parity tests/moss_tts_local/codec_decode_parity.cpp)
     add_engine_test_target(moss_tts_local_codec_encode_parity tests/moss_tts_local/codec_encode_parity.cpp)
-    add_executable(moss_tts_local_smoke
-        tests/moss_tts_local/moss_tts_local_smoke.cpp
-    )
-    target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
-    endif()
+    add_engine_test_target(moss_tts_local_prompt_probe tests/moss_tts_local/prompt_probe.cpp)
 endif()
 
 # moss_tts_nano
@@ -921,13 +941,6 @@ if (moss_voicegen IN_LIST AUDIOCPP_LINKED_MODELS)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(moss_voicegen_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
-    add_executable(moss_voicegen_smoke
-        tests/moss_voicegen/voicegen_smoke.cpp
-    )
-    target_link_libraries(moss_voicegen_smoke PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(moss_voicegen_smoke PRIVATE OpenMP::OpenMP_CXX)
-    endif()
 endif()
 
 # mossformer2
@@ -977,8 +990,8 @@ if (omnivoice IN_LIST AUDIOCPP_LINKED_MODELS)
     if (AUDIOCPP_OMNIVOICE_TEST_MODEL)
         add_test(NAME omnivoice_batch_parity COMMAND omnivoice_batch_parity_test
             --model "${AUDIOCPP_OMNIVOICE_TEST_MODEL}"
-            --clone-audio "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_audio_02.wav"
-            --reference-text-file "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_text_02.txt")
+            --clone-audio "${CMAKE_CURRENT_SOURCE_DIR}/assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav"
+            --reference-text-file "${CMAKE_CURRENT_SOURCE_DIR}/assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.txt")
     endif()
 endif()
 
@@ -1168,6 +1181,11 @@ target_sources(soprano_text_cleaning_test PRIVATE
 
 # sopro_tts
 if (sopro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test_target(sopro_probe tests/sopro_tts/sopro_probe.cpp)
+    set_target_properties(sopro_probe PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    if (ENGINE_ENABLE_OPENMP)
+        target_link_libraries(sopro_probe PRIVATE OpenMP::OpenMP_CXX)
+    endif()
     add_executable(test_sopro_tts_audio_ops
         tests/sopro_tts/test_sopro_tts_audio_ops.cpp
     )
@@ -1241,12 +1259,12 @@ if (vibeasr IN_LIST AUDIOCPP_LINKED_MODELS)
         target_link_libraries(test_vibeasr_vae_encoder PRIVATE OpenMP::OpenMP_CXX)
     endif()
     add_test(
-        NAME test_vibeasr_vae_encoder
-        COMMAND test_vibeasr_vae_encoder
+        NAME test_vibeasr_vae_encoder_sanity
+        COMMAND test_vibeasr_vae_encoder --mode sanity
         --model ${CMAKE_CURRENT_SOURCE_DIR}/models/vibeasr/vibeasr-vae-encoder-i8_s.gguf
         --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav
     )
-    set_tests_properties(test_vibeasr_vae_encoder PROPERTIES
+    set_tests_properties(test_vibeasr_vae_encoder_sanity PROPERTIES
         SKIP_RETURN_CODE 125
         TIMEOUT 300
     )

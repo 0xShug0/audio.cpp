@@ -320,34 +320,7 @@ float top_margin(const std::vector<float> & logits) {
     return logits[best] - logits[second];
 }
 
-// --- always-run: budget + binding constants ---
-
-void test_budget_rules() {
-    bool threw = false;
-    try {
-        g2b::granite_speech5_require_generation_budget(0, 8);
-    } catch (const std::runtime_error &) {
-        threw = true;
-    }
-    test::require(threw, "empty prompt rejected");
-    threw = false;
-    try {
-        g2b::granite_speech5_require_generation_budget(50, 0);
-    } catch (const std::runtime_error &) {
-        threw = true;
-    }
-    test::require(threw, "non-positive budget rejected");
-    threw = false;
-    try {
-        g2b::granite_speech5_require_generation_budget(16380, 5);
-    } catch (const std::runtime_error &) {
-        threw = true;
-    }
-    test::require(threw, "over-cap request rejected");
-    // Exact cap fits; small requests fit.
-    g2b::granite_speech5_require_generation_budget(16380, 4);
-    g2b::granite_speech5_require_generation_budget(51, 8);
-}
+// --- always-run: binding constants (budget branches live in D) ---
 
 void test_binding_values() {
     // C2 table verbatim: every constant the decoder binds.
@@ -1111,7 +1084,6 @@ int main(int argc, char ** argv) {
     engine::debug::configure_logging({argc > 1 && std::string(argv[1]) == "--log"});
     const auto started = std::chrono::steady_clock::now();
     try {
-        test_budget_rules();
         test_binding_values();
         test_neutral_defaults();
         test_single_application();

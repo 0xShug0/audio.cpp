@@ -29,26 +29,40 @@ def main():
     # Include short/long/short and silence transitions without reconstructing
     # the model or preparing a new session for each utterance.
     sequence = cases + [cases[0], max(cases, key=lambda c: c["audio_seconds"]), cases[0]]
-    if any("," in c["path"] for c in sequence):
-        parser.error("warm-bench CSV audio paths cannot contain commas")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    binary = args.bin_dir / ("parakeet_warm_bench.exe" if os.name == "nt" else "parakeet_warm_bench")
-    command = [str(binary.resolve()), "--model", str(args.model.resolve()),
-               "--model-spec-override", "embedded",
-               "--audio", cases[0]["path"], "--audio-sequence", ",".join(c["path"] for c in sequence),
+    requests = [{"id": f"request_{i}", "audio": str(Path(case["path"]).resolve())}
+                for i, case in enumerate(sequence)]
+    sequence_path = (args.output_dir / "sequence.json").resolve()
+    sequence_path.write_text(json.dumps({"requests": requests}, indent=2), encoding="utf-8")
+    binary = args.bin_dir / ("audiocpp_cli.exe" if os.name == "nt" else "audiocpp_cli")
+    command = [str(binary.resolve()), "--task", "asr", "--family", "parakeet_tdt",
+               "--model", str(args.model.resolve()), "--model-spec-override", "embedded",
+               "--request-sequence", str(sequence_path), "--out-dir", str(args.output_dir.resolve()),
                "--backend", args.backend, "--device", str(args.device), "--threads", str(args.threads),
-               "--warmup", "0", "--iterations", "1",
-               "--timing-file", str((args.output_dir / "timing.log").resolve())]
+               "--log"]
     if args.offline_mode:
-        command += ["--offline-mode", args.offline_mode]
+        command += ["--session-option", f"parakeet_tdt.offline_mode={args.offline_mode}"]
     with (args.output_dir / "native.log").open("w", encoding="utf-8") as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True,
                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     raw = (args.output_dir / "native.log").read_text(encoding="utf-8")
-    summary = json.loads(raw.split("summary_json=", 1)[1])
-    steps = summary["sequence_steps"]
-    if len(steps) != len(sequence):
-        raise AssertionError("native request count differs from reference")
+    steps = []
+    for line in raw.splitlines():
+        if line.startswith("request_id="):
+            steps.append({"request_id": line.removeprefix("request_id="), "word_timestamps": []})
+        elif line.startswith("text_output="):
+            if not steps:
+                raise AssertionError("text output appeared before request id")
+            if "text_output" in steps[-1]:
+                raise AssertionError("duplicate text output for request")
+            steps[-1]["text_output"] = line.removeprefix("text_output=")
+        elif line.startswith("word_timestamps="):
+            if not steps:
+                raise AssertionError("timestamps appeared before request id")
+            steps[-1]["word_timestamps"] = json.loads(line.removeprefix("word_timestamps="))
+    if [step["request_id"] for step in steps] != [request["id"] for request in requests]:
+        raise AssertionError("native request ids/count differ from reference")
+    summary = {"sequence_steps": steps}
     checks = []
     for expected, actual in zip(sequence, steps):
         limit = round(expected["audio_seconds"] * 16000)

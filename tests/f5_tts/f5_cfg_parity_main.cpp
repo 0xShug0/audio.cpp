@@ -5,6 +5,7 @@
 #include "engine/community_models/f5_tts/runtime.h"
 #include "engine/framework/debug/trace.h"
 #include <chrono>
+#include <cerrno>
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -60,7 +62,9 @@ double cosine(const std::vector<float> & a, const std::vector<float> & b) {
 double max_abs(const std::vector<float> & a, const std::vector<float> & b) {
     double m = 0;
     for (size_t i = 0; i < a.size(); ++i) {
-        m = std::max(m, std::abs(static_cast<double>(a[i]) - b[i]));
+        const double error = std::abs(static_cast<double>(a[i]) - b[i]);
+        if (!std::isfinite(error)) return std::numeric_limits<double>::infinity();
+        m = std::max(m, error);
     }
     return m;
 }
@@ -70,8 +74,32 @@ double max_abs(const std::vector<float> & a, const std::vector<float> & b) {
 int main(int argc, char ** argv) {
     engine::debug::configure_logging({true, std::nullopt});
     const auto started = std::chrono::steady_clock::now();
-    if (argc < 3) {
-        std::fprintf(stderr, "usage: %s <checkpoint> <reference-dir> [device]\n", argv[0]);
+    if (argc < 5 || argc > 7 || std::string(argv[3]) != "--max-abs-error" ||
+        (argc == 7 && std::string(argv[6]) != "--log")) {
+        std::fprintf(stderr, "usage: %s <checkpoint> <reference-dir> --max-abs-error <bound> [device] [--log]\n", argv[0]);
+        return 2;
+    }
+    char * bound_end = nullptr;
+    errno = 0;
+    const double max_abs_error = std::strtod(argv[4], &bound_end);
+    if (errno == ERANGE || bound_end == argv[4] || *bound_end != '\0' ||
+        !std::isfinite(max_abs_error) || max_abs_error < 0.0) {
+        std::fprintf(stderr, "--max-abs-error requires a finite non-negative acceptance bound\n");
+        return 2;
+    }
+    int device = 0;
+    if (argc > 5 && std::string(argv[5]) != "--log") {
+        char * device_end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol(argv[5], &device_end, 10);
+        if (errno == ERANGE || device_end == argv[5] || *device_end != '\0' || parsed < 0 ||
+            parsed > std::numeric_limits<int>::max()) {
+            std::fprintf(stderr, "device must be a non-negative integer\n");
+            return 2;
+        }
+        device = static_cast<int>(parsed);
+    } else if (argc == 7) {
+        std::fprintf(stderr, "unexpected argument after --log\n");
         return 2;
     }
     const std::string ckpt = argv[1];
@@ -87,17 +115,22 @@ int main(int argc, char ** argv) {
     engine::models::f5_tts::F5Architecture arch;
     engine::models::f5_tts::F5ComputeDevice dev;
     dev.use_cuda = std::getenv("F5_CUDA") != nullptr;
-    dev.device = argc > 3 && std::string(argv[3]) != "--log" ? std::stoi(argv[3]) : 0;
+    dev.device = device;
 
     const auto [got_cond, got_null] = engine::models::f5_tts::f5_dit_forward_cfg(
         ckpt, x, cond, ids, 0.42F, N, arch, &dev);
 
     int failures = 0;
     auto check = [&](const char * name, const std::vector<float> & got, const std::vector<float> & want) {
+        if (got.empty() || got.size() != want.size()) {
+            std::fprintf(stderr, "%s: empty output or mismatched tensor size\n", name);
+            ++failures;
+            return;
+        }
         const double c = cosine(got, want);
         const double m = max_abs(got, want);
-        const bool ok = c >= 0.999 && std::isfinite(c);
-        std::printf("%-14s cosine=%.6f maxabs=%.5f %s\n", name, c, m, ok ? "OK" : "FAIL");
+        const bool ok = c >= 0.999 && std::isfinite(c) && m <= max_abs_error;
+        std::printf("%-14s cosine=%.6f maxabs=%.9g bound=%.9g %s\n", name, c, m, max_abs_error, ok ? "OK" : "FAIL");
         if (!ok) ++failures;
     };
     check("cfg_cond", got_cond, want_cond);

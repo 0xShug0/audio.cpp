@@ -146,7 +146,7 @@ exactly.
 | Q8_0 (local GGUF) | <= 20 ms (1 frame) | 0-sample max diff | measured |
 
 Q8_0 parity was measured on the full validation set: all 24 words of the
-English request, the 4-request warmbench set (apostrophe, Dutch-on-English,
+English request, the historical [4-request warmbench set](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mms_forced_aligner/mms_forced_aligner_warm_bench_cases.json) (apostrophe, Dutch-on-English,
 full sample) and the 72-word windowed long-form are bit-identical to the F32
 safetensors and F16 GGUF outputs (0-sample boundary diff on every request).
 
