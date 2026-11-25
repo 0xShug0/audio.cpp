@@ -1,3 +1,10 @@
+// The build defines _POSIX_C_SOURCE (for libyaml), which on Apple platforms hides dladdr()
+// and Dl_info unless _DARWIN_C_SOURCE is defined, as ggml does. It must come before any
+// system header.
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
+
 #include "engine/framework/assets/bundled_assets.h"
 
 #include <string>
