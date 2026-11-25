@@ -55,7 +55,25 @@ async function runManagedScenario(context) {
         family: 'yue2',
         model_path: 'models/Yue2-3B-GGUF',
         load_options: {},
-        session_options: {}
+        session_options: {
+          'yue2.model_gguf': 'yue2-3b-q8_0.gguf',
+          'yue2.vae_gguf': 'yue2-vae-f16.gguf'
+        }
+      }
+    },
+    {
+      id: 'yue2_main_q4_0',
+      installed: true,
+      size_bytes: 100,
+      state: 'ok',
+      load_target: {
+        family: 'yue2',
+        model_path: 'models/Yue2-3B-GGUF',
+        load_options: {},
+        session_options: {
+          'yue2.model_gguf': 'yue2-3b-q4_0.gguf',
+          'yue2.vae_gguf': 'yue2-vae-f16.gguf'
+        }
       }
     }
   ];
@@ -147,8 +165,45 @@ async function runManagedScenario(context) {
   assert.equal(loads.at(-1).session_options['yue2.vae_gguf'], nextVae);
   console.log('PASS changing weight setting in model panel prompts and reloads with new weight');
 
-  // Mobile layout check while prompt is visible
+  await page.locator('#param-main_gguf').selectOption('yue2-3b-bf16.gguf');
+  await page.locator('.reload-prompt button', { hasText: 'Reload model' }).click();
+  await page.locator('.reload-prompt').waitFor({ state: 'hidden' });
+  const loadsBeforeNavigation = loads.length;
+  const unloadsBeforeNavigation = unloads.length;
+  await page.getByRole('button', { name: /^Text to speech/ }).click();
+  await page.getByRole('button', { name: /^Music \/ video generation/ }).click();
+  assert.equal(await page.locator('#param-main_gguf').inputValue(), 'yue2-3b-bf16.gguf');
+  assert.equal(await page.locator('.reload-prompt').count(), 0, 'Returning to resident YuE2 must retain its settings');
+  assert.equal(loads.length, loadsBeforeNavigation);
+  assert.equal(unloads.length, unloadsBeforeNavigation);
   await page.locator('#param-vae_gguf').selectOption(currentVae);
+  await page.locator('.reload-prompt button', { hasText: 'Reload model' }).click();
+  await page.locator('.reload-prompt').waitFor({ state: 'hidden' });
+  assert.equal(loads.at(-1).session_options['yue2.model_gguf'], 'yue2-3b-bf16.gguf');
+  console.log('PASS workflow return restores resident YuE2 settings in controls and load requests');
+
+  await page.locator('#param-main_gguf').selectOption('yue2-3b-q8_0.gguf');
+  await page.locator('.reload-prompt button', { hasText: 'Reload model' }).click();
+  await page.locator('.reload-prompt').waitFor({ state: 'hidden' });
+  const loadsBeforePackageChoice = loads.length;
+  const unloadsBeforePackageChoice = unloads.length;
+  await page.getByRole('button', { name: 'Models', exact: true }).click();
+  await page.getByRole('searchbox', { name: 'Search models' }).fill('yue2');
+  await page.locator('#package-yue2').selectOption('yue2_main_q4_0');
+  await page.locator('.model-row').filter({ has: page.locator('#package-yue2') })
+    .getByRole('button', { name: 'Open in Studio' }).click();
+  assert.equal(await page.locator('#param-main_gguf').inputValue(), 'yue2-3b-q4_0.gguf');
+  assert.equal(registered.get('yue2').session_options['yue2.model_gguf'], 'yue2-3b-q8_0.gguf');
+  assert.equal(loads.length, loadsBeforePackageChoice, 'Opening a package must not load it');
+  assert.equal(unloads.length, unloadsBeforePackageChoice, 'Opening a package must not unload its resident model');
+  await page.locator('.reload-prompt').waitFor({ state: 'visible' });
+  await page.locator('.reload-prompt button', { hasText: 'Reload model' }).click();
+  await page.locator('.reload-prompt').waitFor({ state: 'hidden' });
+  assert.equal(loads.at(-1).session_options['yue2.model_gguf'], 'yue2-3b-q4_0.gguf');
+  console.log('PASS explicit Q4 package selection overrides resident Q8 in controls and load requests');
+
+  // Mobile layout check while prompt is visible
+  await page.locator('#param-vae_gguf').selectOption(nextVae);
   await page.locator('.reload-prompt').waitFor({ state: 'visible' });
   await page.setViewportSize({ width: 390, height: 844 });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'Mobile layout must not overflow horizontally');
