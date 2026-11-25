@@ -93,6 +93,8 @@ std::set<std::string> explicit_key_value_overrides(
     return keys;
 }
 
+}  // namespace
+
 const std::unordered_map<std::string, std::string> & request_option_aliases() {
     static const std::unordered_map<std::string, std::string> option_keys = {
         {"--language", "language"},
@@ -152,6 +154,8 @@ const std::unordered_map<std::string, std::string> & moe_session_option_aliases(
     };
     return option_keys;
 }
+
+namespace {
 
 std::set<std::string> explicit_request_option_overrides(const std::vector<std::string> & arguments) {
     const auto & option_keys = request_option_aliases();

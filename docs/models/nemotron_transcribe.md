@@ -338,7 +338,7 @@ and package round-trips, then run:
 
 ```sh
 uv run --no-project --python .venv-nemotron python \
-  tests/community_models/nemotron_transcribe/test_quantize.py
+  tests/nemotron_transcribe/test_quantize.py
 ```
 
 In PowerShell, set the executable with

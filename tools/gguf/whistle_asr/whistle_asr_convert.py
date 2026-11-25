@@ -11,7 +11,7 @@ import hashlib
 import subprocess
 from pathlib import Path
 
-from extract_assets import extract
+from whistle_asr_assets_extract import extract
 
 SOURCE = {
     "whistle.safetensors": (

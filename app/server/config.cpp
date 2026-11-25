@@ -5,6 +5,7 @@
 
 #include "engine/framework/io/json.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -452,6 +453,100 @@ void apply_default_session_options(const ServerConfig & config, ServerModelConfi
         if (key.rfind(prefix, 0) == 0) {
             model.session_options.emplace(key, value);
         }
+    }
+}
+
+void apply_model_cli_options(ServerConfig & config, int argc, char ** argv) {
+    std::unordered_map<std::string, std::string> fields, load, session, request;
+    const auto & request_aliases = minitts::cli::request_option_aliases();
+    const auto & session_aliases = minitts::cli::moe_session_option_aliases();
+    for (int i = 1; i < argc; ++i) {
+        const std::string flag = argv[i];
+        if (flag == "--text") {
+            throw std::runtime_error("--text is request input; send input to /v1/audio/speech or enter text in Studio");
+        }
+        const bool field = flag == "--model" || flag == "--model-id" || flag == "--family" ||
+                           flag == "--task" || flag == "--mode" || flag == "--voice-ref" || flag == "--voice-id";
+        const bool options = flag == "--load-option" || flag == "--session-option" || flag == "--request-option";
+        const auto request_alias = request_aliases.find(flag);
+        const auto session_alias = session_aliases.find(flag);
+        if (!field && !options && request_alias == request_aliases.end() && session_alias == session_aliases.end()) {
+            continue;
+        }
+        if (i + 1 == argc || std::string(argv[i + 1]).empty() ||
+            ((field || options) && std::string(argv[i + 1]).rfind("--", 0) == 0)) {
+            throw std::runtime_error(flag + " requires a value");
+        }
+        const std::string value = argv[++i];
+        if (field) {
+            fields[flag] = value;
+        } else if (options) {
+            const auto separator = value.find('=');
+            if (separator == std::string::npos || separator == 0 || separator + 1 == value.size()) {
+                throw std::runtime_error(flag + " requires key=value");
+            }
+            auto & target = flag == "--load-option" ? load : flag == "--session-option" ? session : request;
+            minitts::cli::set_option(target, value.substr(0, separator), value.substr(separator + 1));
+        } else if (request_alias != request_aliases.end()) {
+            minitts::cli::set_option(request, request_alias->second, value);
+        } else {
+            minitts::cli::set_option(session, session_alias->second, value);
+        }
+    }
+    if (fields.empty() && load.empty() && session.empty() && request.empty()) {
+        return;
+    }
+
+    const auto id = fields.find("--model-id");
+    if (config.models.empty()) {
+        if (fields.count("--model") == 0 || fields.count("--family") == 0) {
+            throw std::runtime_error("creating a server model requires --model and --family");
+        }
+        ServerModelConfig model;
+        model.id = id != fields.end() ? id->second : fields.at("--family");
+        model.lazy = config.lazy_load;
+        config.models.push_back(std::move(model));
+    }
+    auto selected = config.models.begin();
+    if (id != fields.end()) {
+        selected = std::find_if(config.models.begin(), config.models.end(), [&](const ServerModelConfig & model) {
+            return model.id == id->second;
+        });
+        if (selected == config.models.end()) {
+            throw std::runtime_error("unknown --model-id: " + id->second);
+        }
+    } else if (config.models.size() != 1) {
+        throw std::runtime_error("model overrides require --model-id when the config contains multiple models");
+    }
+    auto & model = *selected;
+    if (fields.count("--model")) model.path = std::filesystem::absolute(fields.at("--model"));
+    if (fields.count("--family")) model.family = fields.at("--family");
+    if (fields.count("--task")) model.task = fields.at("--task");
+    if (fields.count("--mode")) model.mode = fields.at("--mode");
+    for (const auto & [key, value] : load) model.load_options[key] = value;
+    for (const auto & [key, value] : session) model.session_options[key] = value;
+    for (const auto & [key, value] : request) model.default_request_options[key] = value;
+    apply_default_session_options(config, model);
+
+    const bool voice_source = fields.count("--voice-ref") || fields.count("--voice-id");
+    if (voice_source || request.count("reference_text") ||
+        (!request.empty() && (model.default_voice_preset || model.default_voice_preset_id))) {
+        auto preset = voice_source ? ServerModelConfig::VoicePreset{} : model.default_voice_preset_id
+            ? model.voice_presets.at(*model.default_voice_preset_id)
+            : model.default_voice_preset.value_or(ServerModelConfig::VoicePreset{});
+        if (fields.count("--voice-ref")) {
+            preset.voice_ref = std::filesystem::absolute(fields.at("--voice-ref"));
+        }
+        if (fields.count("--voice-id")) preset.voice_id = fields.at("--voice-id");
+        if (request.count("reference_text")) preset.reference_text = request.at("reference_text");
+        // CLI defaults supersede the configured default preset too. Explicit
+        // request voices still select the original, unmodified named presets.
+        for (const auto & [key, value] : request) {
+            (void) value;
+            preset.options.erase(key);
+        }
+        model.default_voice_preset = std::move(preset);
+        model.default_voice_preset_id.reset();
     }
 }
 
