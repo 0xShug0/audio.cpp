@@ -3997,6 +3997,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     if (ENGINE_BUILD_TESTS)
         add_engine_unittest(gated_delta_net_module_test tests/unittests/test_gated_delta_net_module.cpp)
         add_test(NAME gated_delta_net_module_test COMMAND gated_delta_net_module_test cpu --log)
+        add_engine_unittest(silero_vad_resample_test tests/silero_vad/resample_test.cpp)
+        add_test(NAME silero_vad_resample_test COMMAND silero_vad_resample_test
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/framework/models/silero_vad"
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav")
     endif()
 
     if (ENGINE_BUILD_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)

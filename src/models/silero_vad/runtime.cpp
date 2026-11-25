@@ -610,10 +610,26 @@ runtime::StreamEvent SileroRuntime::build_stream_event(
 
 runtime::TaskResult SileroRuntime::run_offline(const runtime::AudioBuffer & audio, const SileroVADConfig & config) {
     const auto total_start = Clock::now();
-    const auto mono = require_mono_audio(audio, "Silero VAD offline run");
+    auto mono = require_mono_audio(audio, "Silero VAD offline run");
+    // The model runs at 16 kHz. Other rates are resampled the way torchaudio.functional.resample
+    // does it, and the segments are reported in samples of the input.
+    const bool resampled = audio.sample_rate != kSampleRate;
+    const auto input_frames = static_cast<int64_t>(mono.size());
+    if (resampled) {
+        mono = engine::audio::resample_mono_torchaudio_sinc_hann(mono, audio.sample_rate, kSampleRate);
+    }
     engine::debug::timing_log_scalar("silero_vad.offline.audio_prepare_ms", engine::debug::elapsed_ms(total_start));
     const auto infer_start = Clock::now();
-    auto result = build_offline_result(mono, audio.sample_rate, config);
+    auto result = build_offline_result(mono, kSampleRate, config);
+    if (resampled) {
+        const auto to_input = [&](int64_t sample, bool round_up) {
+            const int64_t scaled = sample * audio.sample_rate + (round_up ? kSampleRate - 1 : 0);
+            return std::min(scaled / kSampleRate, input_frames);
+        };
+        for (auto & segment : result.speech_segments) {
+            segment.span = {to_input(segment.span.start_sample, false), to_input(segment.span.end_sample, true)};
+        }
+    }
     engine::debug::timing_log_scalar("silero_vad.offline.infer_total_ms", engine::debug::elapsed_ms(infer_start));
     engine::debug::timing_log_scalar("silero_vad.offline.total_ms", engine::debug::elapsed_ms(total_start));
     return result;
