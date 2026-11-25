@@ -3806,7 +3806,7 @@ if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_link_libraries(audiocpp_model_manager PRIVATE audiocpp_package_manager)
 endif()
 
-add_executable(model_perf
+add_executable(model_perf EXCLUDE_FROM_ALL
     tests/perf/model_perf.cpp
     app/cli/args.cpp
     app/cli/request.cpp
