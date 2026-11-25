@@ -3806,19 +3806,6 @@ if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_link_libraries(audiocpp_model_manager PRIVATE audiocpp_package_manager)
 endif()
 
-add_executable(model_perf EXCLUDE_FROM_ALL
-    tests/perf/model_perf.cpp
-    app/cli/args.cpp
-    app/cli/request.cpp
-    app/common/base64.cpp
-)
-target_link_libraries(model_perf PRIVATE engine_runtime ggml)
-audiocpp_use_utf8_codepage(model_perf)
-target_include_directories(model_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-if (ENGINE_ENABLE_OPENMP)
-    target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
     if (ENGINE_BUILD_MODEL_TESTS AND "kitten_tts" IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(kitten_tts_mini_parity_test tests/kitten_tts/test_tts2_mini_parity.cpp)
