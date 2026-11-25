@@ -236,7 +236,7 @@ saved the complete prepared index during packaging, pass its path to `--voices`
 below. Otherwise, create a local GGUF and retain its index with:
 
 ```sh
-python tools/community_models/prepare_kitten_tts2_gguf.py \
+python tools/gguf/kitten_tts2/kitten_tts2_convert.py \
   --model /absolute/path/kitten-tts-2 \
   --converter build-kitten2/bin/audiocpp_gguf --type q8_0 \
   --output build-kitten2/kitten-tts2-q8-v2-multilingual.gguf \

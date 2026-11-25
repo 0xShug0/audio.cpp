@@ -20,17 +20,17 @@ everything else through byte for byte:
 
 ```bash
 # inspect first
-python3 tools/community_models/convert_vibeasr_gguf.py \
+python3 tools/gguf/vibeasr_convert.py \
     --input vibeasr-vae-encoder-i8_s.gguf --list
 
 # fix both GGUFs in place (703 MB encoder, 993 MB decoder)
-python3 tools/community_models/convert_vibeasr_gguf.py \
+python3 tools/gguf/vibeasr_convert.py \
     --input models/vibeasr/vibeasr-vae-encoder-i8_s.gguf --in-place
-python3 tools/community_models/convert_vibeasr_gguf.py \
+python3 tools/gguf/vibeasr_convert.py \
     --input models/vibeasr/vibeasr-lm-i2_s-embed-q6_k.gguf --in-place
 
 # confirm an already-converted package needs no further remapping
-python3 tools/community_models/convert_vibeasr_gguf.py \
+python3 tools/gguf/vibeasr_convert.py \
     --input models/vibeasr/vibeasr-lm-i2_s-embed-q6_k.gguf --check
 ```
 

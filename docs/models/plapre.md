@@ -103,7 +103,7 @@ tokenizer, Kanade, the required WavLM layers, and CosyVoice2 HiFT tensors.
 Python is needed for conversion, not C++ inference.
 
 ```bash
-python tools/models/convert_plapre_gguf.py \
+python tools/gguf/plapre_convert.py \
   --source /path/to/plapre-3 \
   --kanade /path/to/kanade-25hz-clean \
   --hift /path/to/CosyVoice2-0.5B/hift.pt \

@@ -3806,19 +3806,6 @@ if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_link_libraries(audiocpp_model_manager PRIVATE audiocpp_package_manager)
 endif()
 
-add_executable(model_perf EXCLUDE_FROM_ALL
-    tests/perf/model_perf.cpp
-    app/cli/args.cpp
-    app/cli/request.cpp
-    app/common/base64.cpp
-)
-target_link_libraries(model_perf PRIVATE engine_runtime ggml)
-audiocpp_use_utf8_codepage(model_perf)
-target_include_directories(model_perf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-if (ENGINE_ENABLE_OPENMP)
-    target_link_libraries(model_perf PRIVATE OpenMP::OpenMP_CXX)
-endif()
-
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
     if (ENGINE_BUILD_MODEL_TESTS AND "kitten_tts" IN_LIST AUDIOCPP_LINKED_MODELS)
         add_executable(kitten_tts_mini_parity_test tests/kitten_tts/test_tts2_mini_parity.cpp)
@@ -3841,7 +3828,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # (moved next to the other moss_tts_nano tests)
     endif()
     if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
-        add_executable(audiocpp_kitten_tts2_prepare_voices tools/community_models/prepare_kitten_tts2_voices.cpp)
+        add_executable(audiocpp_kitten_tts2_prepare_voices tools/gguf/kitten_tts2/kitten_tts2_voices_prepare.cpp)
         audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
         target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
         add_executable(kitten_tts2_session_probe tests/kitten_tts2/session_probe.cpp)
@@ -3994,12 +3981,22 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(shared_mel_migration_probe PRIVATE src/models/chatterbox)
     endif()
 
+    if (ENGINE_BUILD_EXTENDED_TESTS)
+        add_executable(stft_parity_dump tests/audio/stft_parity_dump.cpp)
+        target_link_libraries(stft_parity_dump PRIVATE engine_runtime ggml)
+    endif()
+
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 
     function(add_engine_unittest target source)
         add_executable(${target} ${source})
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
+
+    if (ENGINE_BUILD_TESTS)
+        add_engine_unittest(gated_delta_net_module_test tests/unittests/test_gated_delta_net_module.cpp)
+        add_test(NAME gated_delta_net_module_test COMMAND gated_delta_net_module_test cpu --log)
+    endif()
 
     if (ENGINE_BUILD_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(index_tts2_request_test tests/index_tts2/request_test.cpp)
@@ -5581,14 +5578,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             endif()
         endif()
 
-        add_executable(torch_bin_parity
-            tests/vibevoice/torch_bin_parity.cpp
-        )
-        target_link_libraries(torch_bin_parity PRIVATE engine_runtime ggml)
-        if (ENGINE_ENABLE_OPENMP)
-            target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
-        endif()
-
         if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(vibevoice_finetune_overlay_check
                 tests/vibevoice/finetune_overlay_check.cpp
@@ -5607,6 +5596,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
         endif()
+        endif()
+
+        if (moss IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(moss_tts_local_codec_encode_parity tests/moss_tts_local/codec_encode_parity.cpp)
+            add_engine_unittest(moss_tts_local_codec_decode_parity tests/moss_tts_local/codec_decode_parity.cpp)
         endif()
 
         if (moss_voicegen IN_LIST AUDIOCPP_LINKED_MODELS)

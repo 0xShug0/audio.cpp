@@ -70,7 +70,7 @@ From the repository root, convert a checkpoint directory containing
 `pytorch_model.bin` and `config.yaml`:
 
 ```bash
-python tests/universr/convert_universr_gguf.py \
+python tools/gguf/universr_convert.py \
   --model-dir /path/to/universr-audio \
   --output models/UniverSR-GGUF/universr-audio-orig.gguf \
   --log universr-conversion.log

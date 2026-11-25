@@ -6,7 +6,7 @@ The converter checks its SHA256 and verifies the complete tensor inventory, shap
 and retained F32 tensor bytes after packaging.
 
 ```bash
-python tests/realtime_reuse/convert_gguf.py --source SOURCE \
+python tools/gguf/realtime_reuse_convert.py --source SOURCE \
   --output models/Real-time-RE-USE-GGUF/realtime-reuse-f32.gguf \
   --log conversion.log
 ```

@@ -127,14 +127,14 @@ implemented.
 
 ## Conversion and Storage
 
-Use `tools/community_models/convert_phonon2.py` with the official Fermion
+Use `tools/gguf/phonon2_asr_convert.py` with the official Fermion
 Research artifact at revision `7e153e4054c0a10db6d47d6fff5c062d4c77c154` and
 Parakeet config/tokenizer sidecars at revision
 `541d1f99c6b0c3cd0b11a95167540bb8edefd82b`. Conversion needs NumPy,
 safetensors and zstandard, but not PyTorch or NeMo.
 
 ```bash
-python tools/community_models/convert_phonon2.py \
+python tools/gguf/phonon2_asr_convert.py \
   --source-dir models/Phonon-2-source \
   --reference-dir models/Phonon-2-source/parakeet-reference \
   --output-dir models/Phonon-2-F32 \

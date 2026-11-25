@@ -89,7 +89,7 @@ Download the [official checkpoint](https://huggingface.co/OpenMOSS-Team/MOSS-Sou
 at revision `e35df4d82fbe87fcd5d14e5d100e349c0c3c076d`, then run:
 
 ```bash
-python tools/models/moss_soundeffect/convert_gguf.py \
+python tools/gguf/moss_soundeffect_convert.py \
   --model-dir MOSS-SoundEffect-v2.0 \
   --output-dir MOSS-SoundEffect-v2-GGUF --type q8_0
 ```

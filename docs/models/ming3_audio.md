@@ -191,7 +191,7 @@ identical clone WAVs, so this omission is not caused by Thinker quantization.
 Build the Debug `audiocpp_gguf` target, then convert the complete official snapshot:
 
 ```bash
-python tools/models/convert_ming3_audio_gguf.py \
+python tools/gguf/ming3_audio_convert.py \
   --source /path/to/Ming-3.0-audio-tiny \
   --output /path/to/ming-3.0-audio-tiny-bf16.gguf \
   --type orig --temporary-dir /path/to/conversion-work --log

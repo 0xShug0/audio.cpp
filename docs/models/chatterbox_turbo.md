@@ -24,7 +24,7 @@ audio.cpp. It ships as two loose GGUF files (T3 and S3Gen) with a flat dot-separ
 namespace and abbreviated S3Gen tensor names that don't match this codebase's own naming.
 
 Rather than teach the runtime a compatibility layer for that third-party layout,
-[`tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py`](../../tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py)
+[`tools/gguf/chatterbox_turbo_repack.py`](../../tools/gguf/chatterbox_turbo_repack.py)
 repacks it offline into one self-contained, audio.cpp-native GGUF:
 
 - T3 and built-in-conditional tensors are moved from the upstream flat `t3.`/`conds.` dot
@@ -58,7 +58,7 @@ hf download cstr/chatterbox-turbo-GGUF \
 
 # 3. Repack
 pip install gguf numpy safetensors
-python3 tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py \
+python3 tools/gguf/chatterbox_turbo_repack.py \
     --t3-source /tmp/chatterbox-turbo-src/chatterbox-turbo-t3-q8_0.gguf \
     --s3gen-source /tmp/chatterbox-turbo-src/chatterbox-turbo-s3gen-q8_0.gguf \
     --output models/Chatterbox-Turbo-GGUF/chatterbox-turbo-q8_0.gguf \

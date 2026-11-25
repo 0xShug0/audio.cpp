@@ -12,7 +12,7 @@ namespace engine::community_models::chatterbox_turbo {
 
 // Loads and runs Chatterbox Turbo's S3Gen half (speech tokens -> waveform) by delegating to the
 // shared framework S3Gen runtime's meanflow decoder and HiFT vocoder. The native, repacked GGUF (see
-// tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py) stores S3Gen tensors
+// tools/gguf/chatterbox_turbo_repack.py) stores S3Gen tensors
 // under the same names those loaders already expect, so no name translation is needed here.
 //
 // Only the built-in default voice baked into the T3 GGUF's `conds.gen.*` tensors is supported.

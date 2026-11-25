@@ -29,7 +29,7 @@ Options:
 > warning. Output may differ from SOXR.
 
 Convert the four upstream checkpoints with
-[`tools/community_models/convert_dettato.py`](../../tools/community_models/convert_dettato.py).
+[`tools/gguf/dettato_convert.py`](../../tools/gguf/dettato_convert.py).
 The converter accepts `--source`, `--upstream`, `--output`, `--weight-type` and
 `--log-file`; use `--help` for the full command syntax.
 

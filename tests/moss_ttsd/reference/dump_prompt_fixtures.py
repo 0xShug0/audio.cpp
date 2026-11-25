@@ -9,9 +9,17 @@ import json, os, sys
 import torch
 from transformers import AutoProcessor
 
-MODEL = "/mnt/data/models/MOSS-TTSD-v1.0"
-CODEC = "/mnt/data/models/MOSS-Audio-Tokenizer"
-OUT = os.path.dirname(os.path.abspath(__file__))
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--model", type=Path, required=True)
+parser.add_argument("--codec", type=Path, required=True)
+parser.add_argument("--output", type=Path, required=True)
+args = parser.parse_args()
+MODEL, CODEC, OUT = str(args.model), str(args.codec), str(args.output)
+args.output.mkdir(parents=True, exist_ok=True)
+
 
 proc = AutoProcessor.from_pretrained(MODEL, trust_remote_code=True, codec_path=CODEC)
 pm = sys.modules[type(proc).__module__]

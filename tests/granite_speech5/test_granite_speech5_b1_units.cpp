@@ -241,12 +241,14 @@ void test_can_load() {
     test::require(!g2b::granite_speech5_can_load(ctc), "turboctc refused");
     const fs::path nar = root / "nar";
     fs::create_directories(nar);
-    write_text(nar / "config.json", triple);
-    // NAR advertises its own model_type.
-    std::string nar_text = triple;
-    nar_text.replace(nar_text.find("granite_speech5\""), std::string("granite_speech5\"").size(),
-                     "granite_speech5_nar\"");
-    write_text(nar / "config.json", nar_text);
+    // NAR advertises its own model_type, not the conditional-generation type.
+    write_text(nar / "config.json", R"json({
+        "model_type": "granite_speech5_nar",
+        "has_lora_adapter": false,
+        "encoder_config": {"model_type": "granite_speech_encoder"},
+        "projector_config": {"model_type": "blip_2_qformer"},
+        "text_config": {"model_type": "granite"}
+    })json");
     test::require(!g2b::granite_speech5_can_load(nar), "nar refused");
     const fs::path lora = root / "lora";
     fs::create_directories(lora);

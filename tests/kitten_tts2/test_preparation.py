@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 import zipfile
 
-MODULE_PATH = Path(__file__).resolve().parents[2] / 'tools/community_models/prepare_kitten_tts2_gguf.py'
+MODULE_PATH = Path(__file__).resolve().parents[2] / 'tools/gguf/kitten_tts2/kitten_tts2_convert.py'
 SPEC = importlib.util.spec_from_file_location('kitten_prepare', MODULE_PATH)
 PREPARE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PREPARE)

@@ -97,7 +97,7 @@ and obtain the [OpenVoice source](https://github.com/myshell-ai/OpenVoice).
 Build `audiocpp_gguf`, then run:
 
 ```bash
-python tests/tone_color_vc/convert_gguf.py \
+python tools/gguf/tone_color_vc_convert.py \
   --upstream /path/to/OpenVoice \
   --checkpoint-dir /path/to/OpenVoiceV2/converter \
   --output models/Tone-Color-VC-GGUF/tone-color-vc-f32.gguf

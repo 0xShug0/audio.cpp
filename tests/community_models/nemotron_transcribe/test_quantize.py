@@ -21,7 +21,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("quantize_nemotron_transcribe",
-    ROOT / "tools/community_models/quantize_nemotron_transcribe.py")
+    ROOT / "tools/gguf/nemotron_transcribe/nemotron_transcribe_quantize.py")
 assert SPEC and SPEC.loader
 quant = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = quant

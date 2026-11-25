@@ -143,7 +143,7 @@ python tests/parakeet_tdt/validate_phonon2_hotwords.py \
 
 `validate_phonon2.py` audits weights and numerical bounds; exact text/timing is
 diagnostic unless `--require-exact-reference` is supplied for the controlled CPU
-F32 run. The [portable JSON](../../tests/parakeet_tdt/phonon2_validation.json) includes source/model hashes,
+F32 run. The [portable JSON](https://github.com/0xShug0/audio.cpp/blob/4363a483002df5b0c3eb83ae93addf0073de388c/tests/parakeet_tdt/phonon2_validation.json) includes source/model hashes,
 all matrix summaries and differing fixture IDs. Raw commands/configs/outputs are
 under `outputs/phonon2-review-20261010/`; earlier pre-compensation evidence is
 preserved in its `pre-bn-compensation/` directory. No user audio is uploaded.

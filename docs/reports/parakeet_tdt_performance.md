@@ -121,8 +121,8 @@ That has now been done properly, with the
 [multilingual harness](../../tests/parakeet_tdt/multilingual/README.md): 120
 FLEURS clips, 5 per language, across the 24 European languages the model
 supports that FLEURS covers, 21.8 minutes of audio. Every transcript from that
-run — reference plus all four weight types, per clip — is checked in under
-[`multilingual/results/`](../../tests/parakeet_tdt/multilingual/results/README.md),
+run — reference plus all four weight types, per clip — is archived at the pre-cleanup checkpoint under
+[`multilingual/results/`](https://github.com/0xShug0/audio.cpp/blob/4363a483002df5b0c3eb83ae93addf0073de388c/tests/parakeet_tdt/multilingual/results/README.md),
 so these numbers can be re-derived (or re-scored with a different WER
 normalization) without re-running anything.
 

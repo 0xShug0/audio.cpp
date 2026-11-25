@@ -99,7 +99,7 @@ path and is preserved beside the benchmark. Device indices depend on the machine
 The benchmark composition enables CUDA as well as Vulkan and uses the Phonon
 conversion documented in #863; only these two source files differ between trials.
 
-The [portable JSON](../../tests/parakeet_tdt/parakeet_vulkan_optimization.json) records exact timing samples,
+The [portable JSON](https://github.com/0xShug0/audio.cpp/blob/4363a483002df5b0c3eb83ae93addf0073de388c/tests/parakeet_tdt/parakeet_vulkan_optimization.json) records exact timing samples,
 both process peaks, model/source hashes and the eight standalone cases. Commands,
 server configs, logs and preserved before/after binaries remain under
 `outputs/phonon2-review-20261010/`. No user audio is uploaded.

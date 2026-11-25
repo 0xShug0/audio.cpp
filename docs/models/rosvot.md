@@ -22,7 +22,7 @@ Its three subdirectories, `rosvot`, `rwbd` and `rmvpe`, must remain together.
 Build `audiocpp_gguf`, then convert:
 
 ```bash
-python tests/rosvot/convert_gguf.py \
+python tools/gguf/rosvot_convert.py \
   --source models/ROSVOT/rosvot \
   --staging models/ROSVOT/staging \
   --output models/ROSVOT-GGUF/rosvot-f32.gguf \

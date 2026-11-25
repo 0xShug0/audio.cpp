@@ -15,7 +15,7 @@ when redistributing; other converted models may have different licenses.
 Convert a model with its published manifest:
 
 ```bash
-conda run -n qwen3-tts python tools/models/convert_micro_wake_word_gguf.py \
+conda run -n qwen3-tts python tools/gguf/micro_wake_word_convert.py \
   model.tflite model.gguf --manifest model.json
 ```
 

@@ -45,7 +45,7 @@ $staging = "models\Sortformer-Diar-v2.1-local"
 
 uv run --python 3.12 `
   --with torch --with numpy --with pyyaml --with safetensors `
-  python tools\community_models\convert_sortformer_v2_1.py `
+  python tools\gguf\sortformer_diar_v2\sortformer_diar_v2_convert.py `
   --checkpoint $checkpoint `
   --output-dir $staging `
   --converter $converter `
@@ -136,5 +136,5 @@ ctest --test-dir build/sortformer-v2-cuda -C Release \
 The tensor mapping is adapted from `handy-computer/transcribe.cpp` under the
 MIT License. The AOSC state and streaming scheduler are adapted from
 `NVIDIA/NeMo-Speech.cpp` under Apache License 2.0. See
-`tools/community_models/SORTFORMER_THIRD_PARTY_NOTICES.md` for the complete
+`tools/gguf/sortformer_diar_v2/sortformer_diar_v2_NOTICES.md` for the complete
 notices and source revisions.

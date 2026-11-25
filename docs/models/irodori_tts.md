@@ -203,7 +203,7 @@ To convert a downloaded inference checkpoint, including its tokenizer, and the
 DACVAE safetensors:
 
 ```bash
-python tools/models/convert_irodori_gguf.py \
+python tools/gguf/irodori_tts/irodori_tts_convert.py \
   --model models/Irodori-TTS-v4.1-Small-MF/model.safetensors \
   --codec models/Semantic-DACVAE-Japanese-32dim/weights.safetensors \
   --type q8_0 \
@@ -225,7 +225,7 @@ T5Gemma 2 weights and configuration, and its `tokenizer/` folder holds the Gemma
 tokenizer, so the gated T5Gemma 2 repository is not needed:
 
 ```bash
-python tools/models/convert_irodori_gguf.py \
+python tools/gguf/irodori_tts/irodori_tts_convert.py \
   --model models/Irodori-TTS-v4-Large/model.safetensors \
   --codec models/Semantic-DACVAE-Japanese-32dim/weights.safetensors \
   --type q8_0 \

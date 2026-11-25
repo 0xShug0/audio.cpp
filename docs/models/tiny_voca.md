@@ -94,7 +94,7 @@ Download `tiny-voca.pt`, `config.json` and the `phonemizer` folder from the
 [model repository](https://huggingface.co/n4ze3m/tiny-voca), then run:
 
 ```bash
-python tools/community_models/convert_tiny_voca.py \
+python tools/gguf/tiny_voca_convert.py \
   --source /path/to/tiny-voca \
   --output models/tiny-voca-GGUF/tiny-voca-orig.gguf --check
 ```

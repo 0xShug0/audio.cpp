@@ -8,9 +8,9 @@ original-sample timestamps and native runtime.
 
 | Variant | Pinned Hugging Face source / revision | Source weights | Converter | Recommended GGUF |
 |---|---|---|---|---|
-| Standard | [ConwayResearch/Underdog-Bark-3.0](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0) / `85db2ad18ab41e534a222ee253c29191d77ed919` | 163 MB `model.bark` | `convert_underdog_bark3_standard.py` | `underdog-bark-3.0-mixed-f16.gguf` |
-| Plus | [ConwayResearch/Underdog-Bark-3.0-Plus](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus) / `d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb` | 180 MB `model.bark` | `convert_underdog_bark3_plus.py` | `underdog-bark-3.0-plus-mixed-f16.gguf` |
-| Pro | [ConwayResearch/Underdog-Bark-3.0-Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) / `4b5c51e04aa8d16dda9ecdff71bc29f7360149e4` | About 1.25 GB BF16 safetensors | `convert_underdog_bark3.py` | `underdog-bark-3.0-pro-q8_0.gguf` |
+| Standard | [ConwayResearch/Underdog-Bark-3.0](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0) / `85db2ad18ab41e534a222ee253c29191d77ed919` | 163 MB `model.bark` | `underdog_bark3_standard_convert.py` | `underdog-bark-3.0-mixed-f16.gguf` |
+| Plus | [ConwayResearch/Underdog-Bark-3.0-Plus](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Plus) / `d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb` | 180 MB `model.bark` | `underdog_bark3_plus_convert.py` | `underdog-bark-3.0-plus-mixed-f16.gguf` |
+| Pro | [ConwayResearch/Underdog-Bark-3.0-Pro](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0-Pro) / `4b5c51e04aa8d16dda9ecdff71bc29f7360149e4` | About 1.25 GB BF16 safetensors | `underdog_bark3_convert.py` | `underdog-bark-3.0-pro-q8_0.gguf` |
 
 The compressed download sizes are not expanded GGUF/RAM/VRAM requirements.
 All three packages select the `underdog_bark3` family. Checkpoint variant
@@ -191,12 +191,12 @@ substitute the literal values.
 ```bash
 NAME=Underdog-Bark-3.0
 REVISION=85db2ad18ab41e534a222ee253c29191d77ed919
-CONVERTER=convert_underdog_bark3_standard.py
+CONVERTER=underdog_bark3_standard_convert.py
 OUTPUT=underdog-bark-3.0-mixed-f16.gguf
 TYPE=mixed-f16
 # Plus: NAME=Underdog-Bark-3.0-Plus
 #       REVISION=d4fab2f8b95681e5ad3cfb4e8c5f4e0c009b3deb
-#       CONVERTER=convert_underdog_bark3_plus.py
+#       CONVERTER=underdog_bark3_plus_convert.py
 #       OUTPUT=underdog-bark-3.0-plus-mixed-f16.gguf
 #       TYPE=mixed-f16
 
@@ -207,7 +207,7 @@ hf download nvidia/parakeet-tdt-0.6b-v3 \
   --revision 541d1f99c6b0c3cd0b11a95167540bb8edefd82b \
   --include config.json processor_config.json tokenizer.json tokenizer_config.json generation_config.json \
   --local-dir "models/$NAME-source"
-python "tools/community_models/$CONVERTER" \
+python "tools/gguf/underdog_bark3/$CONVERTER" \
   --source "models/$NAME-source" --staging "models/$NAME-prepared" \
   --gguf-tool build/bark3/bin/audiocpp_gguf --type "$TYPE" --output "models/$OUTPUT"
 ```
@@ -226,7 +226,7 @@ hf download ConwayResearch/Underdog-Bark-3.0-Pro \
     tokenizer_config.json generation_config.json NOTICE README.md coreml/LICENSE \
     runtime/transcribe_bark_pro.py runtime/requirements.txt \
   --local-dir models/Underdog-Bark-3.0-Pro-source
-python tools/community_models/convert_underdog_bark3.py \
+python tools/gguf/underdog_bark3/underdog_bark3_convert.py \
   --source models/Underdog-Bark-3.0-Pro-source --staging models/Underdog-Bark-3.0-Pro-prepared \
   --gguf-tool build/bark3/bin/audiocpp_gguf --type q8_0 \
   --output models/underdog-bark-3.0-pro-q8_0.gguf

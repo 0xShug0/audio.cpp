@@ -1,6 +1,6 @@
 # MuScriptor Conversion
 
-Use `convert_gguf.py` for the official Small, Medium and Large checkpoints.
+Use `tools/gguf/muscriptor_convert.py` for the official Small, Medium and Large checkpoints.
 It checks F32 dtypes and configuration/weight shapes, then delegates packaging
 to `audiocpp_gguf`. Tensor names and values are preserved; the GGUF embeds
 `config.json` and the model spec.

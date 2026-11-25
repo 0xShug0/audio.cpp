@@ -1,6 +1,11 @@
-﻿# Output Multimodal Transfer/Decoder
+# Output Multimodal Transfer/Decoder
 
-OMTD is a proposed output-side companion library for llama.cpp.
+OMTD is a proposed output-side companion library for llama.cpp. It is not an
+available audio.cpp library or frontend feature. The former placeholder code
+and test were removed; this document retains the design proposal.
+
+The prototype is preserved at the
+[pre-cleanup checkpoint](https://github.com/0xShug0/audio.cpp/tree/4363a483002df5b0c3eb83ae93addf0073de388c/tools/omtd).
 
 It mirrors MTMD conceptually, but runs in the opposite direction:
 
@@ -9,8 +14,8 @@ MTMD: media input -> embeddings/tokens -> language model
 OMTD: language model output -> output companion -> generated media
 ```
 
-This framework patch adds only the library boundary. Model-specific output
-implementations, such as audio, image, or video generators, should be layered on
+The proposed library would define the output boundary. Model-specific output
+implementations, such as audio, image, or video generators, would be layered on
 top in separate patches.
 
 ## Intended Frontend Support
@@ -35,9 +40,8 @@ Planned frontend responsibilities:
 - `llama-server`: accept `--omtd FILE` and expose output-generation endpoints.
 - `llama-tts`: use OMTD as the shared TTS/audio-output backend path.
 
-This OMTD-only patch does not wire those flags yet. It creates the stable shared
-library and API first. The frontend wiring should be a separate patch, followed
-by model-specific backend patches.
+These flags are proposed, not implemented. A future implementation would add the
+shared library and API first, followed by frontend wiring and concrete backends.
 
 ## Review Path
 
@@ -54,21 +58,21 @@ specific model implementation.
 
 ## Responsibilities
 
-OMTD owns:
+The proposed OMTD library would own:
 
 - A public C API for output companion detection.
 - A public C API for structured output generation requests.
 - Common status/error reporting for output generation backends.
 - Placeholder modality and model-type enums for future backends.
 
-OMTD does not own:
+It would not own:
 
 - Input media processing. That remains MTMD.
 - `--mmproj` handling.
-- A concrete output model in this framework-only patch.
+- A concrete output model in the initial library-only patch.
 - Application-specific file or HTTP response handling.
 
-## Current API
+## Proposed API
 
 Detection:
 
@@ -84,8 +88,8 @@ Audio generation boundary:
 omtd_audio_generate_file(params, error, error_size)
 ```
 
-The audio generation entry point validates required fields and returns
-`OMTD_STATUS_UNSUPPORTED` until a concrete audio backend is added.
+The removed prototype only validated required fields and returned
+`OMTD_STATUS_UNSUPPORTED`; it had no concrete audio backend.
 
 ## Diagram
 

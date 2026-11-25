@@ -1,6 +1,6 @@
 # MossFormer2 validation
 
-`convert_gguf.py` packages SS, SE, and SR checkpoints and verifies every stored
+`tools/gguf/mossformer2_convert.py` packages SS, SE, and SR checkpoints and verifies every stored
 tensor against the source (including folded SR vocoder weight normalization).
 See [conversion commands](../../docs/models/mossformer2.md#conversion).
 

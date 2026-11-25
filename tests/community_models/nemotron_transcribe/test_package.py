@@ -14,7 +14,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 MODULE = importlib.util.spec_from_file_location("prepare_nemotron_transcribe",
-    ROOT / "tools/community_models/prepare_nemotron_transcribe.py")
+    ROOT / "tools/gguf/nemotron_transcribe/nemotron_transcribe_prepare.py")
 assert MODULE and MODULE.loader
 package = importlib.util.module_from_spec(MODULE)
 MODULE.loader.exec_module(package)

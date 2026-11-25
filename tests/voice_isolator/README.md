@@ -46,7 +46,7 @@ an existing fixture directory.
 ## GGUF
 
 ```bash
-python tests/voice_isolator/convert_gguf.py \
+python tools/gguf/voice_isolator_convert.py \
   --source models/voice-isolator/denoiser_realtime.safetensors \
   --output models/voice-isolator-gguf/voice-isolator-realtime-f32.gguf
 ```

@@ -32,7 +32,7 @@ Keep an upstream source checkout for its phoneme vocabulary and example metadata
 
 ```bash
 git clone https://github.com/Soul-AILab/SoulX-Singer models/SoulX-Singer-source
-python tests/soulx_singer/convert_gguf.py --variant svs \
+python tools/gguf/soulx_singer_convert.py --variant svs \
   --source models/SoulX-Singer/model.pt \
   --phoneset models/SoulX-Singer-source/soulxsinger/utils/phoneme/phone_set.json \
   --staging models/SoulX-Singer/svs-staging --type q8_0 \
@@ -75,7 +75,7 @@ and `model.safetensors` from [openai/whisper-base](https://huggingface.co/openai
 Then convert with the built GGUF tool:
 
 ```bash
-python tests/soulx_singer/convert_gguf.py --variant svc \
+python tools/gguf/soulx_singer_convert.py --variant svc \
   --source models/SoulX-Singer/model-svc.pt \
   --whisper models/whisper-base \
   --rmvpe models/SoulX-Singer-Preprocess/rmvpe/rmvpe.pt \

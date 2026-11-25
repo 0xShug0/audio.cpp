@@ -78,7 +78,7 @@ cmake --build build/muscriptor --config Release \
 Convert the downloaded checkpoint without changing precision or model math:
 
 ```bash
-python3 tests/muscriptor/convert_gguf.py \
+python3 tools/gguf/muscriptor_convert.py \
   --source <checkpoint-directory> \
   --output models/MuScriptor-Small-GGUF/muscriptor-medium-f32.gguf \
   --converter build/muscriptor/bin/audiocpp_gguf

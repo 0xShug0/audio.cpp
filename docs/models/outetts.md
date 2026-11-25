@@ -122,7 +122,7 @@ python tools/model_manager_deprecated.py install outetts_1_0_1b --models-dir mod
 The installer places `DAC.speech.v1.0` and `Qwen3-ForcedAligner-0.6B` beside the OuteTTS directory. It converts the official DAC checkpoint to a safe tensor source. To do that conversion manually:
 
 ```bash
-python tools/community_models/outetts/convert_outetts_dac.py \
+python tools/gguf/outetts_dac_convert.py \
   models/DAC.speech.v1.0/weights_24khz_1.5kbps_v1.0.pth \
   models/DAC.speech.v1.0/model.safetensors
 ```

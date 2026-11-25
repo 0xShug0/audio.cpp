@@ -85,7 +85,7 @@ The same behavior applies to cloned voices.
 Build `audiocpp_gguf` first, then run:
 
 ```bash
-python tests/kugelaudio/convert_gguf.py \
+python tools/gguf/kugelaudio_convert.py \
   --model-dir /path/to/original-checkpoint \
   --tokenizer-dir /path/to/Qwen2.5-tokenizer \
   --output-dir /path/to/KugelAudio-0-Open-GGUF

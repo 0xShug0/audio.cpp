@@ -24,6 +24,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pad-mode", choices=("constant", "reflect"), default="constant")
     parser.add_argument("--preemphasis", type=float, default=0.0)
     parser.add_argument("--periodic-window", action="store_true")
+    parser.add_argument("--atol", type=float, default=1e-4)
+    parser.add_argument("--rtol", type=float, default=1e-5)
+    parser.add_argument("--log", action="store_true")
     return parser.parse_args()
 
 
@@ -36,6 +39,8 @@ def run_dump(
     hop_length: int,
     win_length: int,
     pad_mode: str,
+    periodic_window: bool,
+    log: bool,
 ) -> tuple[np.ndarray, tuple[int, ...]]:
     with tempfile.TemporaryDirectory(prefix=f"stft-{kind}-") as tmp:
         tmp_path = Path(tmp)
@@ -56,7 +61,11 @@ def run_dump(
                 pad_mode,
             ]
         )
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if periodic_window:
+            cmd.append("--periodic-window")
+        if log:
+            cmd.append("--log")
+        subprocess.run(cmd, check=True)
         shape = tuple(np.fromfile(shape_path, dtype=np.int64).tolist())
         spec = np.fromfile(f32_path, dtype=np.float32).reshape(shape)
         return spec, shape
@@ -70,7 +79,11 @@ def apply_preemphasis(audio: np.ndarray, coeff: float) -> np.ndarray:
     return out
 
 
-def compare(name: str, cpp_spec: np.ndarray, torch_spec: np.ndarray) -> None:
+def compare(name: str, cpp_spec: np.ndarray, torch_spec: np.ndarray, atol: float, rtol: float) -> None:
+    if cpp_spec.shape != torch_spec.shape:
+        raise AssertionError(f"shape mismatch: {cpp_spec.shape} != {torch_spec.shape}")
+    if not np.isfinite(cpp_spec).all() or not np.isfinite(torch_spec).all():
+        raise AssertionError("STFT output contains non-finite values")
     diff = cpp_spec - torch_spec
     abs_diff = np.abs(diff)
     idx = np.unravel_index(np.argmax(abs_diff), abs_diff.shape)
@@ -82,6 +95,7 @@ def compare(name: str, cpp_spec: np.ndarray, torch_spec: np.ndarray) -> None:
     print(f"  worst_idx={idx}")
     print(f"  cpp_val={float(cpp_spec[idx])}")
     print(f"  torch_val={float(torch_spec[idx])}")
+    np.testing.assert_allclose(cpp_spec, torch_spec, atol=atol, rtol=rtol)
 
 
 def main() -> int:
@@ -122,8 +136,10 @@ def main() -> int:
         args.hop_length,
         args.win_length,
         args.pad_mode,
+        args.periodic_window,
+        args.log,
     )
-    compare(args.kind, cpp_spec, torch_spec)
+    compare(args.kind, cpp_spec, torch_spec, args.atol, args.rtol)
     return 0
 
 

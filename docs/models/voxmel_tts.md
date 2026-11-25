@@ -88,7 +88,7 @@ Download the official VoxMel-0.6B and `charactr/vocos-mel-24khz` checkpoints,
 and clone the official VoxMel repository. With its Python dependencies installed:
 
 ```bash
-python tools/models/convert_voxmel_tts.py \
+python tools/gguf/voxmel_tts_convert.py \
   --source /path/to/VoxMel-0.6B --upstream /path/to/VoxMel \
   --vocos /path/to/vocos-mel-24khz --type f16 \
   --output /path/to/voxmel-tts-0.6b-f16.gguf --log-file conversion.log

@@ -212,7 +212,7 @@ unchanged.
 
 The checkpoint is local-use only pending NVIDIA Open Model License
 redistribution approval. Convert it with
-[`tools/community_models/convert_sortformer_v2_1.py`](models/sortformer_diar_v2.md#license-and-local-conversion).
+[`tools/gguf/sortformer_diar_v2/sortformer_diar_v2_convert.py`](models/sortformer_diar_v2.md#license-and-local-conversion).
 
 ```bash
 audiocpp_cli --task diar --family sortformer_diar_v2 --mode streaming \

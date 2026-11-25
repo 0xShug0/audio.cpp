@@ -401,7 +401,7 @@ void EchoTtsSession::prepare(const runtime::SessionPreparationRequest & request)
     if (codec_ == nullptr) {
         if (assets_->codec_weights == nullptr) {
             throw std::runtime_error(
-                "Echo-TTS GGUF has no codec_weights; re-run convert_echo_tts.py with "
+                "Echo-TTS GGUF has no codec_weights; re-run echo_tts_convert.py with "
                 "--fish-dir pointing at the Fish S1-DAC checkpoint");
         }
         const int threads = options().backend.threads > 0 ? options().backend.threads : 1;

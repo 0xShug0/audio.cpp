@@ -124,11 +124,11 @@ Keep `adapter_config.json` beside the adapter weights. The optional
 DiT graph caches are session-owned; the Vocos vocoder is not adapted.
 See the [LoRA routing table](../lora.md).
 
-`tools/community_models/convert_f5_tts.py` wraps `audiocpp_gguf` and produces one self-contained GGUF per
+`tools/gguf/f5_tts_convert.py` wraps `audiocpp_gguf` and produces one self-contained GGUF per
 checkpoint (`transformer` + `vocos` namespaces) plus the standalone vocoder package:
 
 ```bash
-python3 tools/community_models/convert_f5_tts.py --checkpoint-root /models/Habibi-TTS \
+python3 tools/gguf/f5_tts_convert.py --checkpoint-root /models/Habibi-TTS \
     --vocos /models/vocos-mel-24khz/vocos.safetensors \
     --converter build/bin/audiocpp_gguf --output-dir gguf-packages
 ```

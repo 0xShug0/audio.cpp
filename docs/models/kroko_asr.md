@@ -67,7 +67,7 @@ Use `--variant <directory-name>` to override the inferred target directory.
 The converter can also be called directly:
 
 ```powershell
-python .\tools\community_models\convert_kroko_onnx.py `
+python .\tools\gguf\kroko_asr\kroko_asr_onnx_extract.py `
   .\models\Kroko-ASR\Kroko-SV-Community-64-L-Streaming-001.data `
   .\models\Kroko-ASR\Kroko-SV-Community-64-L-Native `
   --overwrite
@@ -105,7 +105,7 @@ Convert the directory containing `encoder.onnx`, `decoder.onnx`, `joiner.onnx`
 and `tokens.txt` to a standalone GGUF:
 
 ```bash
-python tools/community_models/convert_kroko_offline_gguf.py \
+python tools/gguf/kroko_asr/kroko_asr_offline_convert.py \
   /path/to/Kroko-ASR-XL-EN-Offline \
   /path/to/kroko-asr-xl-en-offline-f16.gguf --type f16
 

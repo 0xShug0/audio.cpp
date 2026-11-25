@@ -331,7 +331,7 @@ preparation script applies those scales and packs each projection into an
 expert bank.
 
 ```powershell
-uv run --python 3.12 tools\community_models\convert_fish_drama3.py `
+uv run --python 3.12 tools\gguf\fish_drama3_convert.py `
   --checkpoint models\drama-3-original `
   --output models\drama3-f16-local.gguf `
   --quantized-output models\drama-3-backbone-8bit-experts-Q4_K_S.gguf `

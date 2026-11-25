@@ -3,7 +3,7 @@
 // Shared by the LFM3-Audio real-weight tests (test_lfm3_audio_{parity,asr,tts,s2s}).
 //
 // Arguments: --model <safetensors dir or GGUF> (default models/LFM3-Audio-2B), --fixtures <dir> (default
-// models/LFM3-Audio-2B/fixtures, made by tools/community_models/lfm3_audio/make_fixtures.py),
+// models/LFM3-Audio-2B/fixtures, made by tests/lfm3_audio/make_fixtures.py),
 // --backend cpu|best, --threads N, --weight-type f32|native (default f32). Skips with 125 without the model or
 // the fixtures. Every expected value comes from the fixtures at run time; nothing derived from the
 // checkpoint is compiled in.
@@ -188,7 +188,7 @@ inline std::optional<Context> parse_context(int argc, char ** argv, const char *
     if (!std::filesystem::exists(ctx.model) || !engine::io::is_existing_file(ctx.fixtures / "manifest.json")) {
         std::fprintf(stderr,
                      "SKIP: %s needs the LFM3-Audio model at '%s' and its fixtures at '%s' (--model, --fixtures).\n"
-                     "      Fixtures: tools/community_models/lfm3_audio/make_fixtures.py\n",
+                     "      Fixtures: tests/lfm3_audio/make_fixtures.py\n",
                      test, ctx.model.string().c_str(), ctx.fixtures.string().c_str());
         exit_code = kExitSkip;
         return std::nullopt;

@@ -76,7 +76,7 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
     if (config_root.find("audiocpp_matmul_precision") ||
         config_root.find("audiocpp_cpu_matmul_weight_type") ||
         enc_config.find("subsampling_input_scale") || enc_config.find("batch_norm_variance_floor")) {
-        throw std::runtime_error("Phonon development package uses removed precision/scaling controls; reconvert with the current convert_phonon2.py");
+        throw std::runtime_error("Phonon development package uses removed precision/scaling controls; reconvert with the current phonon2_asr_convert.py");
     }
     if (config_root.find("word_timestamp_mode")) {
         config.word_timestamp_mode = json::require_string(config_root, "word_timestamp_mode");

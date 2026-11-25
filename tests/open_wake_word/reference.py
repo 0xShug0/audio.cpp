@@ -9,7 +9,8 @@ import sys
 import time
 
 import numpy as np
-from conversion import write_model
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/gguf/open_wake_word"))
+from open_wake_word_weights import write_model
 from scipy.io import wavfile
 
 
