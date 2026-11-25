@@ -30,6 +30,13 @@ cmake --build build --target audiocpp
 This produces `libaudiocpp.so` / `libaudiocpp.dylib` / `audiocpp.dll` with
 `SOVERSION 0`. Nothing changes in a build that leaves the option off.
 
+On Linux, when `GGML_BLAS=ON` uses a non-system OpenBLAS installation, add the
+directory containing `libopenblas.so.0` before linking or running C API programs:
+
+```bash
+export LD_LIBRARY_PATH="/path/to/openblas/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
 ## When to use it
 
 | | best for | cost |
