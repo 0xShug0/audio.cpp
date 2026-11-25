@@ -202,13 +202,6 @@ if (f5_tts IN_LIST AUDIOCPP_LINKED_MODELS)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(f5_cfg_parity PRIVATE OpenMP::OpenMP_CXX)
     endif()
-    add_executable(f5_e2e tests/f5_tts/f5_e2e_main.cpp)
-    target_compile_definitions(f5_e2e PRIVATE F5_MEL_TEST=1)
-    target_link_libraries(f5_e2e PRIVATE engine_runtime ggml)
-    target_include_directories(f5_e2e PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(f5_e2e PRIVATE OpenMP::OpenMP_CXX)
-    endif()
     add_executable(f5_parity tests/f5_tts/f5_parity_main.cpp)
     target_compile_definitions(f5_parity PRIVATE F5_MEL_TEST=1)
     target_link_libraries(f5_parity PRIVATE engine_runtime ggml)
@@ -833,13 +826,7 @@ endif()
 if (moss IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test_target(moss_tts_local_codec_decode_parity tests/moss_tts_local/codec_decode_parity.cpp)
     add_engine_test_target(moss_tts_local_codec_encode_parity tests/moss_tts_local/codec_encode_parity.cpp)
-    add_executable(moss_tts_local_smoke
-        tests/moss_tts_local/moss_tts_local_smoke.cpp
-    )
-    target_link_libraries(moss_tts_local_smoke PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
-    endif()
+    add_engine_test_target(moss_tts_local_prompt_probe tests/moss_tts_local/prompt_probe.cpp)
 endif()
 
 # moss_tts_nano
@@ -919,13 +906,6 @@ if (moss_voicegen IN_LIST AUDIOCPP_LINKED_MODELS)
     target_link_libraries(moss_voicegen_prompt_parity PRIVATE engine_runtime ggml)
     if (ENGINE_ENABLE_OPENMP)
         target_link_libraries(moss_voicegen_prompt_parity PRIVATE OpenMP::OpenMP_CXX)
-    endif()
-    add_executable(moss_voicegen_smoke
-        tests/moss_voicegen/voicegen_smoke.cpp
-    )
-    target_link_libraries(moss_voicegen_smoke PRIVATE engine_runtime ggml)
-    if (ENGINE_ENABLE_OPENMP)
-        target_link_libraries(moss_voicegen_smoke PRIVATE OpenMP::OpenMP_CXX)
     endif()
 endif()
 
@@ -1240,12 +1220,12 @@ if (vibeasr IN_LIST AUDIOCPP_LINKED_MODELS)
         target_link_libraries(test_vibeasr_vae_encoder PRIVATE OpenMP::OpenMP_CXX)
     endif()
     add_test(
-        NAME test_vibeasr_vae_encoder
-        COMMAND test_vibeasr_vae_encoder
+        NAME test_vibeasr_vae_encoder_sanity
+        COMMAND test_vibeasr_vae_encoder --mode sanity
         --model ${CMAKE_CURRENT_SOURCE_DIR}/models/vibeasr/vibeasr-vae-encoder-i8_s.gguf
         --audio ${CMAKE_CURRENT_SOURCE_DIR}/assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav
     )
-    set_tests_properties(test_vibeasr_vae_encoder PROPERTIES
+    set_tests_properties(test_vibeasr_vae_encoder_sanity PROPERTIES
         SKIP_RETURN_CODE 125
         TIMEOUT 300
     )

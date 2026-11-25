@@ -32,6 +32,8 @@ def write(args):
     hop = model.config.hop
     args.out.mkdir(parents=True, exist_ok=True)
     texts = [line for line in args.texts.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not texts:
+        raise ValueError("texts must not be empty")
     settings = [(1.0, 0.0, 1.0)]
     if args.vary:
         settings += [(0.8, 0.0, 1.0), (1.3, 0.1155, 1.0), (1.0, -0.1155, 1.4)]
@@ -51,6 +53,11 @@ def write(args):
                 # the noise model.synthesize drew for this row
                 noise = torch.randn(frames * hop, generator=torch.Generator().manual_seed(seed + 0)).numpy().astype(np.float32)
                 key = f"u{number:04d}-{name}-{variant}"
+                if (frames <= 0 or not torch.isfinite(wave).all() or
+                        not torch.isfinite(caught["f0"]).all()):
+                    raise ValueError(f"{key}: empty or nonfinite reference output")
+                if int(lengths[0]) != frames * hop or len(phones.ids) != len(phones.stress):
+                    raise ValueError(f"{key}: inconsistent reference dimensions")
                 wave[0, :int(lengths[0])].numpy().astype(np.float32).tofile(args.out / f"{key}.f32")
                 noise.tofile(args.out / f"{key}.noise")
                 caught["f0"][0, :frames].numpy().astype(np.float32).tofile(args.out / f"{key}.f0")
@@ -59,6 +66,8 @@ def write(args):
                              "tokens": len(phones), "durations": durations, "seconds": int(lengths[0]) / model.config.sample_rate})
                 cases.append("\t".join([key, str(voice), repr(speed), repr(shift), repr(spread), " ".join(map(str, phones.ids)),
                                         " ".join(map(str, phones.stress)), str((args.out / f"{key}.noise").resolve())]))
+    if not rows:
+        raise ValueError("reference generated no utterances")
     (args.out / "cases.tsv").write_text("\n".join(cases) + "\n", encoding="utf-8")
     (args.out / "rows.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
     print(f"{len(rows)} utterances, {sum(row['seconds'] for row in rows):.1f} s of audio")
@@ -66,44 +75,49 @@ def write(args):
 
 def compare(args):
     rows = json.loads((args.out / "rows.json").read_text(encoding="utf-8"))
-    errors, same, lengths, worst, pitch, level = [], 0, 0, [], [], []
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("rows.json must contain a nonempty list")
+    names = set()
     for row in rows:
-        reference = np.fromfile(args.out / f"{row['name']}.f32", dtype=np.float32)
-        path = args.cpp / f"{row['name']}.f32"
-        if not path.exists():
-            print("MISSING", row["name"])
-            continue
-        ported = np.fromfile(path, dtype=np.float32)
-        durations = [int(x) for x in (args.cpp / f"{row['name']}.dur").read_text().split()]
-        equal = durations == row["durations"]
-        same += equal
-        if len(ported) == len(reference):
-            lengths += 1
-            error = float(np.abs(ported - reference).max() / np.abs(reference).max())
-            errors.append(error)
-            worst.append((error, row["name"]))
-            level.append(float(np.sqrt(np.mean((ported - reference) ** 2)) / np.sqrt(np.mean(reference ** 2))))
-            ours, theirs = args.cpp / f"{row['name']}.f0", args.out / f"{row['name']}.f0"
-            if ours.exists() and theirs.exists():
-                a, b = np.fromfile(ours, dtype=np.float32), np.fromfile(theirs, dtype=np.float32)
-                if len(a) == len(b):
-                    pitch.append(float((np.abs(a - b) / b).max()) if len(b) else 0.0)
-        if not equal:
-            where = [(i, a, b) for i, (a, b) in enumerate(zip(row["durations"], durations)) if a != b]
-            print(f"DURATIONS {row['name']}: {len(where)} of {len(durations)} tokens differ, {where[:6]}; text: {row['text'][:70]}")
-    errors = np.array(errors)
-    print(f"{len(rows)} utterances; durations equal in {same}; same length in {lengths}")
-    if len(errors):
-        print(f"waveform error as a fraction of the peak, where the lengths agree: median {np.median(errors):.2e}, "
-              f"mean {errors.mean():.2e}, largest {errors.max():.2e}")
-        for error, name in sorted(worst, reverse=True)[:5]:
-            print(f"  {name}: {error:.2e}")
-        level = np.array(level)
-        print(f"difference over signal (RMS): median {20 * np.log10(np.median(level)):.0f} dB, largest {20 * np.log10(level.max()):.0f} dB")
-    if pitch:
-        pitch = np.array(pitch)
-        print(f"pitch of the frames, largest relative difference in an utterance: median {np.median(pitch):.1e}, largest {pitch.max():.1e} "
-              f"({len(pitch)} utterances)")
+        name = row["name"]
+        if not isinstance(name, str) or not name or Path(name).name != name or name in names:
+            raise ValueError("invalid or duplicate row name")
+        names.add(name)
+        expected = row["durations"]
+        if (not isinstance(expected, list) or not expected or
+                any(type(x) is not int or x < 0 for x in expected) or
+                len(expected) != row["tokens"] or sum(expected) <= 0):
+            raise ValueError(f"{name}: invalid reference durations")
+        durations = [int(x) for x in (args.cpp / f"{name}.dur").read_text().split()]
+        if durations != expected:
+            raise ValueError(f"{name}: duration mismatch")
+        arrays = {}
+        for suffix in ("f32", "f0"):
+            pair = []
+            for directory in (args.out, args.cpp):
+                path = directory / f"{name}.{suffix}"
+                if path.stat().st_size == 0 or path.stat().st_size % 4:
+                    raise ValueError(f"{path}: empty or malformed float32 data")
+                values = np.fromfile(path, dtype=np.float32).astype(np.float64)
+                if not np.isfinite(values).all():
+                    raise ValueError(f"{path}: nonfinite values")
+                pair.append(values)
+            if pair[0].shape != pair[1].shape:
+                raise ValueError(f"{name}: {suffix} shape mismatch")
+            arrays[suffix] = pair
+        reference, ported = arrays["f32"]
+        f0, actual_f0 = arrays["f0"]
+        if len(f0) != sum(expected) or len(reference) % len(f0):
+            raise ValueError(f"{name}: inconsistent frame/sample counts")
+        peak = float(np.max(np.abs(reference)))
+        if peak == 0:
+            raise ValueError(f"{name}: zero reference waveform norm")
+        error = float(np.max(np.abs(ported - reference)) / peak)
+        pitch_error = float(np.max(np.abs(actual_f0 - f0)))
+        print(f"{name}: peak_relative_error={error:.9g} pitch_max_abs={pitch_error:.9g}")
+        if error > args.max_peak_relative_error or pitch_error > args.max_pitch_abs_error:
+            raise ValueError(f"{name}: numerical acceptance failed")
+    print(f"PASS: {len(rows)} utterances")
 
 
 def main():
@@ -115,7 +129,19 @@ def main():
     parser.add_argument("--cpp", type=Path)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--vary", action="store_true", help="also speak every fourth text at other speeds and pitches")
+    parser.add_argument("--max-peak-relative-error", type=float,
+                        help="required comparison acceptance; no unverified default")
+    parser.add_argument("--max-pitch-abs-error", type=float,
+                        help="required absolute pitch tolerance in Hz")
     args = parser.parse_args()
+    if args.command == "compare":
+        if args.cpp is None:
+            parser.error("compare requires --cpp")
+        for value in (args.max_peak_relative_error, args.max_pitch_abs_error):
+            if value is None or not np.isfinite(value) or value < 0:
+                parser.error("compare requires finite nonnegative numerical acceptance parameters")
+    elif args.checkpoint is None or args.texts is None:
+        parser.error("write requires --checkpoint and --texts")
     {"write": write, "compare": compare}[args.command](args)
 
 

@@ -30,10 +30,13 @@ Terminal 1, and keep it open until the server reports it is ready:
 Terminal 2:
 
 ```bash
-python3 tests/omnivoice/python_cpp_simple/test_python.py
+python3 tests/omnivoice/python_cpp_simple/client.py
 ```
 
 Writes `tests/omnivoice/outputs/python_cpp_simple/python_output.wav`.
+
+This is an HTTP usage example. The two WAVs are not automatically compared;
+it is not an independent Python inference or numerical-parity test.
 
 ## Files
 
@@ -41,7 +44,7 @@ Writes `tests/omnivoice/outputs/python_cpp_simple/python_output.wav`.
 run_cpp.sh       audiocpp_cli baseline
 run_server.sh    starts audiocpp_server with server.json
 server.json      server config, paths are relative to this file
-test_python.py   POST /v1/audio/speech client
+client.py   POST /v1/audio/speech client
 ```
 
 Change weight types for the C++ baseline in `run_cpp.sh`, and for the server

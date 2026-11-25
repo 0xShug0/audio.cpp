@@ -6,11 +6,13 @@ memory grows request over request. This starts audiocpp_server once, fires N req
 the same session, and reports per-request latency next to GPU memory sampled from sysfs.
 
     python3 tests/moss_voicegen/moss_voicegen_session_soak.py \
-        --server build_hip/bin/audiocpp_server --model /path/to/moss-voicegen.gguf \
-        --backend hip --device 0 --card /sys/class/drm/card1/device --requests 12
+        --server build/debug/bin/audiocpp_server --model /path/to/moss-voicegen.gguf \
+        --backend cuda --device 0 --requests 12 --server-log soak-server.log
 """
 
 import argparse
+import io
+import wave
 import json
 import pathlib
 import subprocess
@@ -32,13 +34,16 @@ TEXTS = [
 INSTRUCTION = "A warm male radio voice in his fifties, calm, never shrill."
 
 
-def vram_mib(card: pathlib.Path | None) -> int:
+def vram_mib(card: pathlib.Path | None) -> float | None:
     if card is None:
-        return 0
+        return None
     try:
-        return int((card / "mem_info_vram_used").read_text()) // (1024 * 1024)
-    except OSError:
-        return 0
+        value = int((card / "mem_info_vram_used").read_text())
+        if value < 0:
+            raise ValueError("negative VRAM telemetry")
+        return value / (1024 * 1024)
+    except OSError as error:
+        raise RuntimeError(f"cannot read requested telemetry from {card}") from error
 
 
 def main() -> None:
@@ -50,9 +55,11 @@ def main() -> None:
     parser.add_argument("--card", help="sysfs device dir, e.g. /sys/class/drm/card1/device")
     parser.add_argument("--requests", type=int, default=12)
     parser.add_argument("--port", type=int, default=8123)
-    parser.add_argument("--server-log", help="capture server stdout here to compare internal timing against wall time")
+    parser.add_argument("--server-log", required=True, help="save server logs; --log is always enabled")
     args = parser.parse_args()
 
+    if args.requests <= 0:
+        parser.error("--requests must be positive")
     card = pathlib.Path(args.card) if args.card else None
     config = {
         "host": "127.0.0.1",
@@ -75,10 +82,11 @@ def main() -> None:
         json.dump(config, handle)
         config_path = handle.name
 
-    print(f"idle VRAM: {vram_mib(card)} MiB")
+    idle = vram_mib(card)
+    print(f"idle VRAM: {str(idle) + ' MiB' if idle is not None else 'unavailable'}")
     log_handle = open(args.server_log, "w") if args.server_log else subprocess.DEVNULL
     server = subprocess.Popen(
-        [args.server, "--config", config_path] + (["--log"] if args.server_log else []),
+        [args.server, "--config", config_path, "--log"],
         stdout=log_handle,
         stderr=subprocess.STDOUT if args.server_log else subprocess.DEVNULL,
     )
@@ -92,8 +100,10 @@ def main() -> None:
                 if server.poll() is not None:
                     raise SystemExit("server exited before becoming ready")
                 time.sleep(2)
+        else:
+            raise RuntimeError("server readiness timed out")
         loaded = vram_mib(card)
-        print(f"after load: {loaded} MiB\n")
+        print(f"after load VRAM: {loaded if loaded is not None else 'unavailable'}\n")
         print(f"{'req':>4} {'seconds':>8} {'bytes':>9} {'VRAM MiB':>9} {'growth':>8}")
 
         first = None
@@ -122,11 +132,20 @@ def main() -> None:
             elapsed = time.monotonic() - start
             used = vram_mib(card)
             first = used if first is None else first
-            seconds = max(0, len(body) - 44) / 48000            # 24 kHz mono pcm16
+            with wave.open(io.BytesIO(body), "rb") as audio:
+                frames, rate = audio.getnframes(), audio.getframerate()
+                channels, width = audio.getnchannels(), audio.getsampwidth()
+                samples = audio.readframes(frames)
+                if (rate != 24000 or channels != 1 or width != 2 or frames <= 0 or
+                        audio.getcomptype() != "NONE" or len(samples) != frames * channels * width):
+                    raise ValueError(f"request {index}: expected complete nonempty 24 kHz mono PCM16 WAV")
+            seconds = frames / rate
             durations.append(seconds)
             latencies.append(elapsed)
-            vram_samples.append(used)
-            print(f"{index:4d} {elapsed:8.2f} {len(body):9d} {used:9d} {used-first:+8d}")
+            if used is not None:
+                vram_samples.append(used)
+            memory = f"{used:9.2f} {used-first:+8.2f}" if used is not None else "unavailable unavailable"
+            print(f"{index:4d} {elapsed:8.2f} {len(body):9d} {memory}")
 
         print()
         ok = len(latencies)
@@ -141,13 +160,21 @@ def main() -> None:
                 mid = steady_rtf[len(steady_rtf) // 2]
                 print(f"RTF after the first request: min {steady_rtf[0]:.2f}  median {mid:.2f}  max {steady_rtf[-1]:.2f}")
             print(f"first request RTF: {latencies[0]/durations[0]:.2f} (includes the one-time build)")
-            print(f"VRAM: {vram_samples[0]} -> {vram_samples[-1]} MiB, peak {max(vram_samples)} MiB")
+            if vram_samples:
+                print(f"VRAM after requests: {vram_samples[0]} -> {vram_samples[-1]} MiB; max sampled endpoint {max(vram_samples)} MiB")
+            else:
+                print("VRAM: unavailable; memory stability was not validated")
+        if failures or ok != args.requests:
+            raise RuntimeError(f"soak failed: {ok}/{args.requests} requests succeeded")
     finally:
         server.terminate()
         try:
             server.wait(timeout=20)
         except subprocess.TimeoutExpired:
             server.kill()
+            server.wait()
+        if args.server_log:
+            log_handle.close()
         pathlib.Path(config_path).unlink(missing_ok=True)
 
 

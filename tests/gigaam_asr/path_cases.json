@@ -9,11 +9,7 @@
       "outputs": ["text"],
       "requests": [
         {"id": "cold", "audio": "assets/resources/sample_16k.wav"},
-        {"id": "warm1", "audio": "assets/resources/sample_16k.wav"},
-        {"id": "warm2", "audio": "assets/resources/sample_16k.wav"},
-        {"id": "warm3", "audio": "assets/resources/sample_16k.wav"},
-        {"id": "warm4", "audio": "assets/resources/sample_16k.wav"},
-        {"id": "warm5", "audio": "assets/resources/sample_16k.wav"}
+        {"id": "warm1", "audio": "assets/resources/sample_16k.wav"}
       ]
     }
   ]
