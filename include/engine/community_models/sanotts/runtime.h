@@ -26,12 +26,21 @@ enum class SanoTtsCpuDecoder {
     Neon,   // hand-written ARM NEON kernels (AArch64 CPU backend only)
 };
 
+/** Which code runs the host iSTFT after the decoder (selected through
+ *  sanotts.exec_plan, component "istft"). */
+enum class SanoTtsIstft {
+    Auto,   // NEON where available (AArch64 NEON build, n_fft 1024, hop 256), otherwise host
+    Host,   // the framework HostLogMagnitudePhaseISTFT (every platform)
+    Neon,   // SanoTtsNeonIstft; an error where it is not available
+};
+
 class SanoTtsNativeRuntime {
 public:
     SanoTtsNativeRuntime(
         std::shared_ptr<const SanoTtsAssets> assets,
         core::BackendConfig backend_config,
-        SanoTtsCpuDecoder cpu_decoder = SanoTtsCpuDecoder::Auto);
+        SanoTtsCpuDecoder cpu_decoder = SanoTtsCpuDecoder::Auto,
+        SanoTtsIstft istft = SanoTtsIstft::Auto);
     ~SanoTtsNativeRuntime();
 
     /** token_frames_out, when given, receives each token's rounded duration

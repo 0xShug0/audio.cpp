@@ -2,6 +2,7 @@
 
 #include "graph_common.h"
 #include "engine/community_models/sanotts/neon_decoder.h"
+#include "engine/community_models/sanotts/neon_istft.h"
 
 #include "engine/framework/audio/istft_graph.h"
 #include "engine/framework/modules/linear_module.h"
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -470,13 +472,26 @@ struct SanoTtsNativeRuntime::State : BackendState {
     runtime::CacheSlots<int64_t, std::unique_ptr<FrontGraph>> token_graphs{4};
     runtime::CacheSlots<int64_t, std::unique_ptr<DecoderGraph>> decoder_graphs{2};
     std::unique_ptr<SanoTtsNeonDecoder> neon_decoder;
+    std::unique_ptr<SanoTtsNeonIstft> neon_istft;
 };
 
 SanoTtsNativeRuntime::SanoTtsNativeRuntime(
     std::shared_ptr<const SanoTtsAssets> assets,
     core::BackendConfig backend_config,
-    SanoTtsCpuDecoder cpu_decoder)
+    SanoTtsCpuDecoder cpu_decoder,
+    SanoTtsIstft istft)
     : state_(std::make_unique<State>(std::move(assets), backend_config)) {
+    {
+        const auto & cfg = state_->assets->config;
+        const bool neon_istft_ok = SanoTtsNeonIstft::available(cfg.n_fft, cfg.hop_length);
+        if (istft == SanoTtsIstft::Neon && !neon_istft_ok) {
+            throw std::runtime_error(
+                "sanotts.exec_plan.istft: impl neon needs an AArch64 build with NEON, n_fft 1024 and hop 256; select host instead");
+        }
+        if (istft == SanoTtsIstft::Neon || (istft == SanoTtsIstft::Auto && neon_istft_ok)) {
+            state_->neon_istft = std::make_unique<SanoTtsNeonIstft>();
+        }
+    }
     const bool auto_selected = cpu_decoder == SanoTtsCpuDecoder::Auto;
     if (auto_selected) {
         cpu_decoder = state_->backend_type == core::BackendType::Cpu &&
@@ -715,34 +730,40 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- iSTFT + DC block ---------------------------------------------------
     const auto istft_start = std::chrono::steady_clock::now();
-    // Bin 0 and Nyquist stay zeroed: the mag*(cos,sin) parametrisation
-    // phase-collapses at bin 0, which is where the frame-DC artefact came
-    // from. -inf log-magnitude exps to exactly 0.
-    const int64_t bins = config.n_fft / 2 + 1;
-    for (int64_t frame = 0; frame < frames; ++frame) {
-        float * row = spectrum.data() + frame * out_dim;
-        row[0] = -std::numeric_limits<float>::infinity();
-        row[bins - 1] = -std::numeric_limits<float>::infinity();
+    std::vector<float> samples;
+    if (state_->neon_istft != nullptr) {
+        samples = state_->neon_istft->compute(
+            spectrum, frames, periodic_hann_window(config.n_fft), state_->threads);
+    } else {
+        // Bin 0 and Nyquist stay zeroed: the mag*(cos,sin) parametrisation
+        // phase-collapses at bin 0, which is where the frame-DC artefact came
+        // from. -inf log-magnitude exps to exactly 0.
+        const int64_t bins = config.n_fft / 2 + 1;
+        for (int64_t frame = 0; frame < frames; ++frame) {
+            float * row = spectrum.data() + frame * out_dim;
+            row[0] = -std::numeric_limits<float>::infinity();
+            row[bins - 1] = -std::numeric_limits<float>::infinity();
+        }
+        engine::audio::HostLogMagnitudePhaseISTFTConfig istft_config;
+        istft_config.frames = frames;
+        istft_config.n_fft = config.n_fft;
+        istft_config.hop_length = config.hop_length;
+        istft_config.out_dim = out_dim;
+        istft_config.threads = static_cast<size_t>(state_->threads);
+        engine::audio::HostLogMagnitudePhaseISTFT istft(istft_config);
+        auto istft_result = istft.compute(spectrum, periodic_hann_window(config.n_fft));
+        // The framework trims (n_fft - hop)/2 per side; torch.istft(center=True)
+        // trims n_fft/2. Drop the extra hop/2 per side so lengths and content
+        // match the reference exactly: (frames - 1) * hop samples.
+        const auto edge = static_cast<size_t>(config.hop_length / 2);
+        const size_t expected = static_cast<size_t>(frames) * static_cast<size_t>(config.hop_length);
+        if (istft_result.audio.size() != expected || istft_result.audio.size() < 2 * edge) {
+            throw std::runtime_error("sanoTTS iSTFT returned an unexpected sample count");
+        }
+        samples.assign(
+            istft_result.audio.begin() + static_cast<std::ptrdiff_t>(edge),
+            istft_result.audio.end() - static_cast<std::ptrdiff_t>(edge));
     }
-    engine::audio::HostLogMagnitudePhaseISTFTConfig istft_config;
-    istft_config.frames = frames;
-    istft_config.n_fft = config.n_fft;
-    istft_config.hop_length = config.hop_length;
-    istft_config.out_dim = out_dim;
-    istft_config.threads = static_cast<size_t>(state_->threads);
-    engine::audio::HostLogMagnitudePhaseISTFT istft(istft_config);
-    auto istft_result = istft.compute(spectrum, periodic_hann_window(config.n_fft));
-    // The framework trims (n_fft - hop)/2 per side; torch.istft(center=True)
-    // trims n_fft/2. Drop the extra hop/2 per side so lengths and content
-    // match the reference exactly: (frames - 1) * hop samples.
-    const auto edge = static_cast<size_t>(config.hop_length / 2);
-    const size_t expected = static_cast<size_t>(frames) * static_cast<size_t>(config.hop_length);
-    if (istft_result.audio.size() != expected || istft_result.audio.size() < 2 * edge) {
-        throw std::runtime_error("sanoTTS iSTFT returned an unexpected sample count");
-    }
-    std::vector<float> samples(
-        istft_result.audio.begin() + static_cast<std::ptrdiff_t>(edge),
-        istft_result.audio.end() - static_cast<std::ptrdiff_t>(edge));
     dc_block_in_place(samples);
     engine::debug::timing_log_scalar(
         "sanotts.istft_ms",

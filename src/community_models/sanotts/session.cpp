@@ -184,21 +184,32 @@ SanoTtsSession::SanoTtsSession(
         {{"decoder", "default",
           {{"default", {options.backend.type}, {}, {}},
            {"ggml", {options.backend.type}, {}, {}},
-           {"neon", {core::BackendType::Cpu}, {}, {}}}}});
+           {"neon", {core::BackendType::Cpu}, {}, {}}}},
+         {"istft", "default",
+          {{"default", {options.backend.type}, {}, {}},
+           {"host", {options.backend.type}, {}, {}},
+           {"neon", {options.backend.type}, {}, {}}}}});
     const auto & decoder_plan = exec_plan.at("decoder");
     const auto cpu_decoder = decoder_plan.impl == "neon" ? SanoTtsCpuDecoder::Neon
         : decoder_plan.impl == "ggml" ? SanoTtsCpuDecoder::Ggml
         : SanoTtsCpuDecoder::Auto;
+    const auto & istft_plan = exec_plan.at("istft");
+    const auto istft = istft_plan.impl == "neon" ? SanoTtsIstft::Neon
+        : istft_plan.impl == "host" ? SanoTtsIstft::Host
+        : SanoTtsIstft::Auto;
     if (assets_->graph == SanoTtsGraph::Nano) {
         frontend_ = std::make_unique<SanoTtsFrontend>(
             session_path(options, "sanotts.espeak_library_path"),
             session_path(options, "sanotts.espeak_data_path"),
             assets_->config.duration_max_tokens);
         runtime_ = std::make_unique<SanoTtsNativeRuntime>(
-            assets_, options.backend, cpu_decoder);
+            assets_, options.backend, cpu_decoder, istft);
     } else {
         if (decoder_plan.impl == "neon") {
             throw std::runtime_error("sanotts.exec_plan.decoder: NEON requires a Nano-lineage model");
+        }
+        if (istft_plan.impl == "neon") {
+            throw std::runtime_error("sanotts.exec_plan.istft: NEON requires a Nano-lineage model");
         }
         piper_frontend_ = std::make_unique<SanoTtsPiperFrontend>(
             session_path(options, "sanotts.espeak_library_path"),

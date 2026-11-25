@@ -142,7 +142,7 @@ checkpoint or session setting, or leaves the optional value unset as described.
 |---|---|---|---|
 | `sanotts.espeak_library_path` | `path` | Model/session default | Optional explicit path to the eSpeak-ng shared library. |
 | `sanotts.espeak_data_path` | `path` | Model/session default | Optional explicit path to the directory containing espeak-ng-data. |
-| `sanotts.exec_plan` | `string` | `{}` | JSON object of component execution plans. Component: decoder. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/neon; no artifacts or params are used. Default retains automatic NEON selection on supported Nano-lineage AArch64 CPU sessions. GGML supports the session backend; explicit NEON requires a Nano-lineage model, AArch64 NEON, and a CPU session. |
+| `sanotts.exec_plan` | `string` | `{}` | JSON object of component execution plans. Components: decoder, istft. Each plan accepts impl, backend, artifacts, and params. decoder impl is default/ggml/neon; istft impl is default/host/neon; no artifacts or params are used. The istft default uses the NEON iSTFT on AArch64 NEON builds (n_fft 1024, hop 256) and the framework host iSTFT elsewhere; explicit neon requires that build. Default retains automatic NEON selection on supported Nano-lineage AArch64 CPU sessions. GGML supports the session backend; explicit NEON requires a Nano-lineage model, AArch64 NEON, and a CPU session. |
 
 ## Usage Notes
 
@@ -271,6 +271,9 @@ shared NEON library with `-DENGINE_ENABLE_NEON=ON`; this preserves the same
 decoder selection contract.
 
 Select it with `--session-option 'sanotts.exec_plan={"decoder":{"impl":"neon"}}'`.
+The host iSTFT that follows the decoder has its own NEON implementation, selected the same way
+(`{"istft":{"impl":"neon"}}`; `host` keeps the framework iSTFT). It matches the host iSTFT to
+float rounding (about 1 LSB in 16-bit audio), not bit-exactly.
 
 Raspberry Pi 400 (Cortex-A72, 4 GB), CPU backend, `--threads 3` pinned to
 three cores, whole `audiocpp_cli` process, best of 3. Same build for both
