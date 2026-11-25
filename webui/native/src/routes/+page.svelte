@@ -1500,6 +1500,7 @@
 
   async function reloadForSettings() {
     if (loadingModel || running || modelPanelUploading || !selectedId || isConfiguredEntry(selected)) return;
+    loadingModel = true;
     try {
       if (selectedResident) {
         await unloadModel(selectedId);
@@ -1509,6 +1510,8 @@
       settingsReloadRequired = false;
     } catch {
       // doLoad already populates status, errorStatus, and logs.
+    } finally {
+      loadingModel = false;
     }
   }
 
