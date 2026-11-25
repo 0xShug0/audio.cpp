@@ -246,7 +246,7 @@ performance cores.
 
 ## Validation
 
-`tests/community_models/zonos2/make_oracle.sh` runs Zyphra's zonos2.cpp tools
+`tests/zonos2/make_oracle.sh` runs Zyphra's zonos2.cpp tools
 on a reference voice, and compiles `oracle_decode.cpp` against its build tree
 to record its own teacher-forced KV-cache decode. `zonos2_parity` compares each
 component against that output. The tests are registered with CTest when the

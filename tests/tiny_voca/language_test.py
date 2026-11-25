@@ -2,7 +2,7 @@
 """tiny-voca reads English only: the real command-line tool and the real server
 must take English and no language, and turn any other language away.
 
-    python tests/community_models/tiny_voca/language_test.py \
+    python tests/tiny_voca/language_test.py \
         --cli build/bin/audiocpp_cli --server build/bin/audiocpp_server \
         --model models/tiny-voca-GGUF/tiny-voca-orig.gguf --out /tmp/tiny_voca_language
 
@@ -16,7 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "server"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 from server_test_utils import Server  # noqa: E402
 
 TEXT = "Hello! This is a short test."

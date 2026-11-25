@@ -386,7 +386,7 @@ git.
 
 ### Tests
 
-The 13 unit tests (`tests/community_models/lfm3_audio/`) build a tiny synthetic
+The 13 unit tests (`tests/lfm3_audio/`) build a tiny synthetic
 package and need no weights. They build with the unit tests
 (`-DENGINE_BUILD_TESTS=ON`):
 

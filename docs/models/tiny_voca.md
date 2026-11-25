@@ -128,7 +128,7 @@ The whole waveform difference comes from the last digits of the predicted
 pitch: the pulse train adds the pitch up along the sentence, so a difference
 of one part in a million moves the pulses a little by the end.
 
-`tests/community_models/tiny_voca/reference_audio.py` and the
+`tests/tiny_voca/reference_audio.py` and the
 `tiny_voca_synth_probe` target repeat the audio comparison;
 `reference.py` and `tiny_voca_dizione_probe` repeat the phonemizer one.
 `language_test.py` checks with the real command-line tool and server that

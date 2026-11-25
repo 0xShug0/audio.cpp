@@ -4,6 +4,7 @@ Model-output utilities and source-code generators live in this flat directory, w
 
 | Tool | Purpose |
 |---|---|
+| [moss_codec_contexts_check.py](moss_codec_contexts_check.py) | Compare MOSS codec attention contexts with checkpoint configuration. |
 | [moss_voicegen_audio_report.py](moss_voicegen_audio_report.py) | Report duration, silence, levels and estimated pitch. |
 | [soulx_flashhead_video_render.py](soulx_flashhead_video_render.py) | Encode generated RGB video artifacts as MP4. |
 | [tiny_voca_tables_generate.py](tiny_voca_tables_generate.py) | Generate frontend Unicode and pronunciation tables in the C++ source tree. |

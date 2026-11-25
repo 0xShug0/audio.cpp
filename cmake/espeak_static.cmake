@@ -98,8 +98,8 @@ add_custom_target(audiocpp_espeak_stage
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_espeak_package}" "${_espeak_bin}/espeak-ng-data.bin"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_espeak_source}/COPYING"
         "${_espeak_root}/download/espeak-ng-1.52.0.tar.gz"
-        "${PROJECT_SOURCE_DIR}/tools/cmake/espeak_patch.cmake"
-        "${PROJECT_SOURCE_DIR}/tools/cmake/espeak_static.cmake"
+        "${PROJECT_SOURCE_DIR}/cmake/espeak_patch.cmake"
+        "${PROJECT_SOURCE_DIR}/cmake/espeak_static.cmake"
         "${PROJECT_SOURCE_DIR}/docs/espeak_phonemizer.md"
         "${_espeak_bin}/licenses/espeak-ng/"
     DEPENDS audiocpp_espeak_package

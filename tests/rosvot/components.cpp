@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iomanip>
 #include <fstream>
+#include <sstream>
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/audio/conversion.h"
 #ifdef ENGINE_HAS_CUDA_RMVPE

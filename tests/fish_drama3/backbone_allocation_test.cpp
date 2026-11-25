@@ -53,7 +53,7 @@ private:
 AllocationFailures * AllocationFailures::active_ = nullptr;
 }  // namespace
 
-#include "../../../src/community_models/fish_drama3/backbone.cpp"
+#include "../../src/community_models/fish_drama3/backbone.cpp"
 
 int main(int argc, char ** argv) {
     try {

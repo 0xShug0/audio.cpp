@@ -19,7 +19,7 @@ import unittest
 import gguf
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("quantize_nemotron_transcribe",
     ROOT / "tools/gguf/nemotron_transcribe/nemotron_transcribe_quantize.py")
 assert SPEC and SPEC.loader

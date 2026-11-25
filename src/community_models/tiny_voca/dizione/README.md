@@ -57,6 +57,6 @@ again after a change to dizione's tables.
 
 ## Checks
 
-`tests/community_models/tiny_voca/reference.py` writes what Python gives and
+`tests/tiny_voca/reference.py` writes what Python gives and
 `dizione_probe` compares the C++ code with it: string methods, every pattern,
 and phoneme ids for any text file.
