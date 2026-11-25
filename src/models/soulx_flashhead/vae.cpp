@@ -1,7 +1,7 @@
 #include "engine/models/soulx_flashhead/vae.h"
 #include "graph.h"
 #include "wan_vae.h"
-#include "engine/framework/codecs/ltx_video_vae_runtime.h"
+#include "engine/framework/vision/runtimes/ltx_video_vae_runtime.h"
 #include "engine/framework/sampling/torch_random.h"
 #include <tuple>
 

@@ -3,11 +3,12 @@
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 
+#include "engine/models/sam_audio/frontend.h"
+
 #include <map>
 
 namespace engine::models::sam_audio {
 
-struct SourceVideo;
 
 class PECoreVisionEncoderModule {
 public:

@@ -1,20 +1,10 @@
+#include "engine/framework/vision/media/image.h"
 #include "engine/models/sam_audio/frontend.h"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <memory>
-
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#include "../../../external/ggml/examples/stb_image.h"
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 namespace engine::models::sam_audio {
 namespace {
@@ -66,16 +56,12 @@ std::vector<size_t> select_video_frames(const SourceVideo & video, int64_t frame
 }
 
 std::vector<float> load_reference_image(const std::filesystem::path & path) {
-    int width = 0, height = 0, channels = 0;
-    std::unique_ptr<unsigned char, decltype(&stbi_image_free)> image(
-        stbi_load(path.string().c_str(), &width, &height, &channels, 3), stbi_image_free);
-    if (!image) throw std::runtime_error("SAM Audio cannot read reference image: " + path.string());
-    const std::vector<uint8_t> rgb(image.get(), image.get() + static_cast<size_t>(width) * height * 3);
-    return prepare_video_frame(rgb, width, height);
+    const auto image = video::load_rgb_image(path);
+    return prepare_video_frame(image.pixels.data(), static_cast<int>(image.width), static_cast<int>(image.height), image.width * 3);
 }
 
-std::vector<float> prepare_video_frame(const std::vector<uint8_t> & rgb, int width, int height) {
-    if (width <= 0 || height <= 0 || rgb.size() != static_cast<size_t>(width) * height * 3)
+std::vector<float> prepare_video_frame(const uint8_t * rgb, int width, int height, int64_t stride) {
+    if (width <= 0 || height <= 0 || !rgb || stride < static_cast<int64_t>(width) * 3)
         throw std::runtime_error("SAM Audio video frame has an invalid RGB shape");
     constexpr int size = 336;
     const auto horizontal = resize_filter(width, size);
@@ -87,7 +73,7 @@ std::vector<float> prepare_video_frame(const std::vector<uint8_t> & rgb, int wid
             for (int c = 0; c < 3; ++c) {
                 float value = 0;
                 for (size_t i = 0; i < span.weights.size(); ++i)
-                    value += rgb[(static_cast<size_t>(y) * width + span.start + i) * 3 + c] * span.weights[i];
+                    value += rgb[static_cast<size_t>(y) * stride + (span.start + i) * 3 + c] * span.weights[i];
                 rows[(static_cast<size_t>(y) * size + x) * 3 + c] = value;
             }
         }

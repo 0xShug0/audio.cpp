@@ -1,4 +1,4 @@
-#include "engine/framework/conditioners/synchformer_conditioner_runtime.h"
+#include "engine/framework/vision/runtimes/synchformer_conditioner_runtime.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"

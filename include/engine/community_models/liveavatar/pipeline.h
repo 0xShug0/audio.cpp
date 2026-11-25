@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/vision/media/processing.h"
+
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/runtime/session.h"
 #include "engine/community_models/liveavatar/assets.h"
@@ -39,15 +41,9 @@ struct LiveAvatarGenerateRequest {
     bool vae_cache_f16 = true;
 };
 
-struct LiveAvatarVideoResult {
-    int64_t width = 0;
-    int64_t height = 0;
-    int64_t frames = 0;
-    int64_t fps = 16;
-    std::vector<std::byte> rgb24;
-};
 
-using LiveAvatarVideoChunkCallback = std::function<void(LiveAvatarVideoResult)>;
+
+using LiveAvatarVideoChunkCallback = std::function<void(engine::video::RgbVideoBuffer)>;
 
 class LiveAvatarPipelineRuntime final {
 public:
@@ -57,7 +53,7 @@ public:
         bool denoiser_weight_streaming = false);
     ~LiveAvatarPipelineRuntime();
 
-    LiveAvatarVideoResult generate(
+    engine::video::RgbVideoBuffer generate(
         const LiveAvatarGenerateRequest & request,
         const LiveAvatarVideoChunkCallback & chunk_callback = {});
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/vision/media/processing.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -55,19 +57,11 @@ struct MiniMaxH3GenerateRequest {
     float spectrum_ridge_lambda = 0.1F;
 };
 
-struct MiniMaxH3VideoFrames {
-    int width = 0;
-    int height = 0;
-    int frames = 0;
-    int fps = 24;
-    std::vector<std::byte> rgb24;
-};
-
 struct MiniMaxH3GenerateResult {
     int sample_rate = 32000;
     int channels = 1;
     std::vector<float> samples;
-    std::optional<MiniMaxH3VideoFrames> video;
+    std::optional<engine::video::RgbVideoBuffer> video;
 };
 
 }  // namespace engine::models::minimax_h3

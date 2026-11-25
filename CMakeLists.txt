@@ -569,7 +569,17 @@ add_library(engine_core OBJECT
     src/framework/runtime/workspace.cpp
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
-    src/framework/io/video.cpp
+    # Vision/video modules, runtimes and media helpers.
+    src/framework/vision/media/image.cpp
+    src/framework/vision/media/processing.cpp
+    src/framework/vision/media/video.cpp
+    src/framework/vision/modules/face_modules.cpp
+    src/framework/vision/modules/wan_video_vae_modules.cpp
+    src/framework/vision/runtimes/cav_mae_st_conditioner_runtime.cpp
+    src/framework/vision/runtimes/liveportrait_runtime.cpp
+    src/framework/vision/runtimes/ltx_video_vae_runtime.cpp
+    src/framework/vision/runtimes/open_clip_conditioner_runtime.cpp
+    src/framework/vision/runtimes/synchformer_conditioner_runtime.cpp
     src/framework/text/espeak_phonemizer.cpp
     src/framework/text/espeak_data.cpp
     src/framework/io/config.cpp
@@ -601,8 +611,6 @@ add_library(engine_core OBJECT
     src/framework/modules/linear_module.cpp
     src/framework/modules/packed_linear_weights.cpp
     src/framework/modules/convnext_modules.cpp
-    src/framework/modules/vision/liveportrait_runtime.cpp
-    src/framework/modules/vision/face_modules.cpp
     src/framework/modules/vocoders/vocos_vocoder.cpp
     src/framework/modules/primitive_modules.cpp
     src/framework/modules/activation_modules.cpp
@@ -619,8 +627,6 @@ add_library(engine_core OBJECT
     src/framework/modules/speaker_encoders/campplus_encoder.cpp
     src/framework/modules/speech_encoders/s3_tokenizer.cpp
     src/framework/codecs/nemo_nano_codec_runtime.cpp
-    src/framework/codecs/wan_video_vae_runtime.cpp
-    src/framework/codecs/ltx_video_vae_runtime.cpp
     src/framework/modules/pitch_extractors/rmvpe_pitch_extractor.cpp
     src/framework/modules/vocoders/bigvgan_vocoder.cpp
     src/framework/modules/vocoders/hifigan_vocoder.cpp
@@ -720,11 +726,8 @@ add_library(engine_core OBJECT
     src/framework/codecs/ming_audio_vae_runtime.cpp
     src/framework/codecs/s3gen_runtime.cpp
     src/framework/conditioners/clap_audio_conditioner_runtime.cpp
-    src/framework/conditioners/cav_mae_st_conditioner_runtime.cpp
     src/framework/conditioners/musicgen_style_conditioner_runtime.cpp
     src/framework/conditioners/musiccoca_runtime.cpp
-    src/framework/conditioners/open_clip_conditioner_runtime.cpp
-    src/framework/conditioners/synchformer_conditioner_runtime.cpp
     src/models/controlfoley/flow_denoiser.cpp
     src/framework/sampling/greedy_decode.cpp
     src/framework/sampling/diffusion_math.cpp
@@ -776,7 +779,6 @@ audiocpp_add_model(universr
 
 audiocpp_add_model(sam_audio
     SOURCES
-        src/models/sam_audio/video.cpp
         src/models/sam_audio/frontend.cpp
         src/models/sam_audio/vision.cpp
         src/models/sam_audio/codec.cpp
@@ -4780,6 +4782,12 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
 
         add_engine_unittest(encoder_module_test tests/unittests/test_encoder_modules.cpp)
         add_test(NAME encoder_module_test COMMAND encoder_module_test)
+
+        add_engine_unittest(video_processing_test tests/unittests/test_video_processing.cpp)
+        if (ENGINE_ENABLE_OPENMP)
+            target_link_libraries(video_processing_test PRIVATE OpenMP::OpenMP_CXX)
+        endif()
+        add_test(NAME video_processing_test COMMAND video_processing_test --log)
 
         add_engine_unittest(snake_beta_test tests/unittests/test_snake_beta.cpp)
         add_test(NAME snake_beta_test COMMAND snake_beta_test --log)

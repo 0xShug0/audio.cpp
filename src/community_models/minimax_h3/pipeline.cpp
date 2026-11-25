@@ -650,7 +650,7 @@ MiniMaxH3GenerateResult MiniMaxH3PipelineRuntime::generate(const MiniMaxH3Genera
     }
     wav = run_audio_vae_decode_graph(*audio_weights, cfg, audio);
     engine::debug::timing_log_scalar("minimax_h3.audio_decode_ms", engine::debug::elapsed_ms(decode_start, Clock::now()));
-    std::optional<MiniMaxH3VideoFrames> video_frames;
+    std::optional<engine::video::RgbVideoBuffer> video_frames;
     if (request.return_video) {
         const auto video_decode_start = Clock::now();
         std::unique_ptr<VideoVAEWeightStore> scoped_video_weights;

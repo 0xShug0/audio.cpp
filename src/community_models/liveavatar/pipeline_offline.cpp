@@ -13,7 +13,7 @@
 
 namespace engine::community_models::liveavatar {
 
-LiveAvatarVideoResult generate_liveavatar_offline(
+engine::video::RgbVideoBuffer generate_liveavatar_offline(
     LiveAvatarPipelineState & state,
     engine::core::ExecutionContext & execution,
     const std::shared_ptr<const LiveAvatarAssets> & assets,
@@ -212,7 +212,7 @@ LiveAvatarVideoResult generate_liveavatar_offline(
         throw std::runtime_error("LiveAvatar decoded output is empty");
     }
 
-    LiveAvatarVideoResult result;
+    engine::video::RgbVideoBuffer result;
     result.width = decoded_shape.dims[3];
     result.height = decoded_shape.dims[2];
     result.frames = output_frames;

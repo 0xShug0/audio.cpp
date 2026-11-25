@@ -196,7 +196,8 @@ std::vector<float> PECoreVisionEncoder::encode_video(const SourceVideo & video, 
     for (size_t offset = 0; offset < unique.size(); offset += batch) {
         const size_t count = std::min(batch, unique.size() - offset);
         for (size_t i = 0; i < count; ++i) {
-            const auto frame = prepare_video_frame(video.frames[unique[offset + i]].rgb, video.width, video.height);
+            const auto frame = prepare_video_frame(video.frames[unique[offset + i]].rgb.get(), video.width, video.height,
+                                                   video.frames[unique[offset + i]].stride);
             std::copy(frame.begin(), frame.end(), pixels.begin() + i * frame_values);
         }
         // Pad the last batch with a valid frame to retain one graph shape.

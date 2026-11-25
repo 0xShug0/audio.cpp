@@ -127,11 +127,11 @@ class Session final : public runtime::RuntimeSessionBase,
         for (auto & chunk : chunks) {
             event.output_artifacts.push_back(runtime::make_voice_artifact(
                 runtime::ArtifactKind::Custom, "soulx_flashhead_video_" + std::to_string(chunk.index),
-                std::move(chunk.rgb),
+                std::move(chunk.video.rgb24),
                 {{"format", "rgb24"},
-                 {"width", std::to_string(chunk.width)},
-                 {"height", std::to_string(chunk.height)},
-                 {"frames", std::to_string(chunk.frames)},
+                 {"width", std::to_string(chunk.video.width)},
+                 {"height", std::to_string(chunk.video.height)},
+                 {"frames", std::to_string(chunk.video.frames)},
                  {"fps", "25"},
                  {"chunk_index", std::to_string(chunk.index)}}));
         }

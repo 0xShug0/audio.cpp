@@ -55,7 +55,7 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-MiniMaxH3VideoFrames run_video_vae_decode_graph(
+engine::video::RgbVideoBuffer run_video_vae_decode_graph(
     VideoVAEWeightStore & weights,
     const MiniMaxH3Config & cfg,
     const std::vector<float> & video_rows,

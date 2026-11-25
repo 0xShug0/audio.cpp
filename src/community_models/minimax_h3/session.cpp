@@ -135,7 +135,7 @@ runtime::TaskResult MiniMaxH3Session::run(const runtime::TaskRequest & request) 
         artifact.meta.emplace("width", std::to_string(generated.video->width));
         artifact.meta.emplace("height", std::to_string(generated.video->height));
         artifact.meta.emplace("frames", std::to_string(generated.video->frames));
-        artifact.meta.emplace("fps", std::to_string(generated.video->fps));
+        artifact.meta.emplace("fps", std::to_string(static_cast<int64_t>(generated.video->fps)));
         result.output_artifacts.push_back(std::move(artifact));
     }
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, Clock::now()));

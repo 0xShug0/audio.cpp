@@ -57,7 +57,7 @@ the mask. Vision weights load on the first visual request and remain available
 for later requests in the same session.
 
 For a moving visual prompt, use `--request-option reference_video_file=masked.mp4`
-instead. Video decoding uses FFmpeg/libav runtime libraries; no FFmpeg command-line
+instead. Video decoding uses FFmpeg 6+ runtime libraries; no FFmpeg command-line
 process is launched. Audio still comes from `--audio`, and should share the video's
 time origin. Use either the image or video option, not both. Frames are selected by
 nearest timestamp and encoded in bounded batches with a reused graph.

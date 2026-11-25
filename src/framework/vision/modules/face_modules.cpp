@@ -1,4 +1,4 @@
-#include "engine/framework/modules/vision/face_modules.h"
+#include "engine/framework/vision/modules/face_modules.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
