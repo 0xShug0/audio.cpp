@@ -1,106 +1,126 @@
 # GGUF tools
 
-GGUF conversion, package preparation, repacking and requantization scripts live in this flat directory.
+This directory contains GGUF conversion, package preparation, repacking, requantization and their input-preparation/inspection tools.
 
-Names start with the model/family, followed by any variant or component, and end with the stage: `_convert.py`, `_prepare.py`, `_repack.py` or `_quantize.py`. Separate stages remain separate tools.
+Models with multiple scripts or supporting conversion files use `tools/gguf/<model>/`. Preparation scripts, converters, helpers, vocabularies and notices for that pipeline stay together. Single-script model tools remain directly in `tools/gguf/`.
+
+Filenames start with the model/family, followed by any variant or component, and end with the actual stage (`convert`, `prepare`, `repack`, `quantize`, `export`, `extract`, `verify`, or `manifest`). Distinct stages remain separate tools; helper filenames stay descriptive.
 
 Run from the repository root, for example:
 
 ```bash
+python tools/gguf/audio8_tts/audio8_tts_codec_prepare.py --help
+python tools/gguf/audio8_tts/audio8_tts_convert.py --help
 python tools/gguf/m5_tts_convert.py --help
 ```
 
-These are repository tools, not self-contained distributions. Depending on the tool, they use repository specs, retained helpers or notices, an upstream checkout, and the native `build/debug/bin/audiocpp_gguf` converter. See each script's arguments and the corresponding [model documentation](../../docs/models/) for prerequisites and commands. Existing arguments, storage modes and defaults are unchanged by this reorganization.
+These are repository tools, not self-contained distributions. Depending on the tool, they use repository specs, retained notices, an upstream checkout, and the native `build/debug/bin/audiocpp_gguf` converter. See each script's arguments and the corresponding [model documentation](../../docs/models/) for prerequisites and commands. Existing arguments, storage modes and defaults are unchanged by this reorganization.
 
-Tensor dumps, reference generators, verification scripts and source-to-safetensors-only preparation remain outside this directory.
+Reference runners, fixture generators and parity/lifecycle tests belong under `tests/<model>/`. General model-output utilities and source-code generators remain in [tools/models](../models/).
 
-| Script | Stage |
+| File | Purpose |
 |---|---|
-| [apollo_convert.py](apollo_convert.py) | Source/checkpoint or GGUF conversion |
-| [ast_audioset_convert.py](ast_audioset_convert.py) | Source/checkpoint or GGUF conversion |
-| [audio8_asr_convert.py](audio8_asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [audio8_tts_convert.py](audio8_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [auk_convert.py](auk_convert.py) | Source/checkpoint or GGUF conversion |
-| [ced_convert.py](ced_convert.py) | Source/checkpoint or GGUF conversion |
+| [apollo_convert.py](apollo_convert.py) | Model weights to GGUF |
+| [ast_audioset_convert.py](ast_audioset_convert.py) | Model weights to GGUF |
+| [audio8_asr_convert.py](audio8_asr_convert.py) | Model weights to GGUF |
+| [audio8_tts/audio8_tts_codec_prepare.py](audio8_tts/audio8_tts_codec_prepare.py) | Prepare source weights or package assets |
+| [audio8_tts/audio8_tts_convert.py](audio8_tts/audio8_tts_convert.py) | Model weights to GGUF |
+| [auk_convert.py](auk_convert.py) | Model weights to GGUF |
+| [ced_convert.py](ced_convert.py) | Model weights to GGUF |
 | [chatterbox_turbo_repack.py](chatterbox_turbo_repack.py) | GGUF repacking |
-| [confucius4_tts_convert.py](confucius4_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [controlfoley_convert.py](controlfoley_convert.py) | Source/checkpoint or GGUF conversion |
-| [dettato_convert.py](dettato_convert.py) | Source/checkpoint or GGUF conversion |
-| [echo_tts_convert.py](echo_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [f5_tts_convert.py](f5_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [firered_vad_convert.py](firered_vad_convert.py) | Source/checkpoint or GGUF conversion |
-| [fish_drama3_convert.py](fish_drama3_convert.py) | Source/checkpoint or GGUF conversion |
-| [gigaam_asr_convert.py](gigaam_asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [granite5asr_convert.py](granite5asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [haas_asr_convert.py](haas_asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [index_echo_s2tt_convert.py](index_echo_s2tt_convert.py) | Source/checkpoint or GGUF conversion |
-| [index_tts2_5_convert.py](index_tts2_5_convert.py) | Source/checkpoint or GGUF conversion |
-| [irodori_tts_convert.py](irodori_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [irodori_tts_v4_1_anime_convert.py](irodori_tts_v4_1_anime_convert.py) | Source/checkpoint or GGUF conversion |
-| [kitten_tts2_convert.py](kitten_tts2_convert.py) | Source/checkpoint or GGUF conversion |
-| [kokoro_tts_convert.py](kokoro_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [kroko_asr_offline_convert.py](kroko_asr_offline_convert.py) | Source/checkpoint or GGUF conversion |
-| [kugelaudio_convert.py](kugelaudio_convert.py) | Source/checkpoint or GGUF conversion |
-| [liveavatar_components_convert.py](liveavatar_components_convert.py) | Source/checkpoint or GGUF conversion |
-| [liveavatar_denoiser_convert.py](liveavatar_denoiser_convert.py) | Source/checkpoint or GGUF conversion |
-| [m5_tts_convert.py](m5_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [magenta_realtime_2_convert.py](magenta_realtime_2_convert.py) | Source/checkpoint or GGUF conversion |
-| [maya1_convert.py](maya1_convert.py) | Source/checkpoint or GGUF conversion |
-| [micro_wake_word_convert.py](micro_wake_word_convert.py) | Source/checkpoint or GGUF conversion |
-| [ming3_audio_convert.py](ming3_audio_convert.py) | Source/checkpoint or GGUF conversion |
-| [ming3_tts_convert.py](ming3_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [minimax_h3_audio_vae_convert.py](minimax_h3_audio_vae_convert.py) | Source/checkpoint or GGUF conversion |
-| [minimax_h3_dit_convert.py](minimax_h3_dit_convert.py) | Source/checkpoint or GGUF conversion |
-| [minimax_music3_convert.py](minimax_music3_convert.py) | Source/checkpoint or GGUF conversion |
-| [minimax_music3_lm_head_repack.py](minimax_music3_lm_head_repack.py) | GGUF repacking |
-| [moonshine_asr_convert.py](moonshine_asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [moss_soundeffect_convert.py](moss_soundeffect_convert.py) | Source/checkpoint or GGUF conversion |
-| [moss_transcribe_diarize_convert.py](moss_transcribe_diarize_convert.py) | Source/checkpoint or GGUF conversion |
-| [mossformer2_convert.py](mossformer2_convert.py) | Source/checkpoint or GGUF conversion |
-| [mulacover_convert.py](mulacover_convert.py) | Source/checkpoint or GGUF conversion |
-| [muscriptor_convert.py](muscriptor_convert.py) | Source/checkpoint or GGUF conversion |
-| [nemotron_3_diar_convert.py](nemotron_3_diar_convert.py) | Source/checkpoint or GGUF conversion |
-| [nemotron_transcribe_convert.py](nemotron_transcribe_convert.py) | Source/checkpoint or GGUF conversion |
-| [nemotron_transcribe_prepare.py](nemotron_transcribe_prepare.py) | GGUF package preparation |
-| [nemotron_transcribe_quantize.py](nemotron_transcribe_quantize.py) | GGUF requantization |
-| [niagara_asr_convert.py](niagara_asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [open_wake_word_convert.py](open_wake_word_convert.py) | Source/checkpoint or GGUF conversion |
-| [outetts_dac_convert.py](outetts_dac_convert.py) | Source/checkpoint or GGUF conversion |
-| [owsm_convert.py](owsm_convert.py) | Source/checkpoint or GGUF conversion |
-| [owsm_ctc_convert.py](owsm_ctc_convert.py) | Source/checkpoint or GGUF conversion |
-| [parakeet_tdt_orukeet_convert.py](parakeet_tdt_orukeet_convert.py) | Source/checkpoint or GGUF conversion |
-| [phonon2_asr_convert.py](phonon2_asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [plapre_convert.py](plapre_convert.py) | Source/checkpoint or GGUF conversion |
-| [qwen3_asr_rumble2_flash_convert.py](qwen3_asr_rumble2_flash_convert.py) | Source/checkpoint or GGUF conversion |
-| [realtime_reuse_convert.py](realtime_reuse_convert.py) | Source/checkpoint or GGUF conversion |
-| [reuse_convert.py](reuse_convert.py) | Source/checkpoint or GGUF conversion |
-| [rosvot_convert.py](rosvot_convert.py) | Source/checkpoint or GGUF conversion |
-| [sam_audio_convert.py](sam_audio_convert.py) | Source/checkpoint or GGUF conversion |
-| [samsone_convert.py](samsone_convert.py) | Source/checkpoint or GGUF conversion |
-| [sheetsage2_convert.py](sheetsage2_convert.py) | Source/checkpoint or GGUF conversion |
-| [sherpa_kws_convert.py](sherpa_kws_convert.py) | Source/checkpoint or GGUF conversion |
-| [sidon_convert.py](sidon_convert.py) | Source/checkpoint or GGUF conversion |
-| [smart_turn_convert.py](smart_turn_convert.py) | Source/checkpoint or GGUF conversion |
-| [soprano_tts_convert.py](soprano_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [sortformer_diar_v2_convert.py](sortformer_diar_v2_convert.py) | Source/checkpoint or GGUF conversion |
-| [soulx_flashhead_convert.py](soulx_flashhead_convert.py) | Source/checkpoint or GGUF conversion |
-| [soulx_singer_convert.py](soulx_singer_convert.py) | Source/checkpoint or GGUF conversion |
-| [tf_gridnet_convert.py](tf_gridnet_convert.py) | Source/checkpoint or GGUF conversion |
-| [tiny_voca_convert.py](tiny_voca_convert.py) | Source/checkpoint or GGUF conversion |
-| [tone_color_vc_convert.py](tone_color_vc_convert.py) | Source/checkpoint or GGUF conversion |
-| [underdog_bark3_convert.py](underdog_bark3_convert.py) | Source/checkpoint or GGUF conversion |
-| [underdog_bark3_plus_convert.py](underdog_bark3_plus_convert.py) | Source/checkpoint or GGUF conversion |
-| [underdog_bark3_standard_convert.py](underdog_bark3_standard_convert.py) | Source/checkpoint or GGUF conversion |
-| [universr_convert.py](universr_convert.py) | Source/checkpoint or GGUF conversion |
-| [vibeasr_convert.py](vibeasr_convert.py) | Source/checkpoint or GGUF conversion |
-| [vibevoice_asr_streaming_convert.py](vibevoice_asr_streaming_convert.py) | Source/checkpoint or GGUF conversion |
-| [voice_isolator_convert.py](voice_isolator_convert.py) | Source/checkpoint or GGUF conversion |
-| [voxcpm1_convert.py](voxcpm1_convert.py) | Source/checkpoint or GGUF conversion |
-| [voxmel_tts_convert.py](voxmel_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [voxtral_tts_convert.py](voxtral_tts_convert.py) | Source/checkpoint or GGUF conversion |
-| [whistle_asr_convert.py](whistle_asr_convert.py) | Source/checkpoint or GGUF conversion |
-| [xtts_v2_convert.py](xtts_v2_convert.py) | Source/checkpoint or GGUF conversion |
-| [yue2_convert.py](yue2_convert.py) | Source/checkpoint or GGUF conversion |
-| [zipvoice_convert.py](zipvoice_convert.py) | Source/checkpoint or GGUF conversion |
-
-`kitten_tts2_weights.py` is the shared offline weight-packing helper used by `kitten_tts2_convert.py`; it is not a standalone command.
+| [confucius4_tts_convert.py](confucius4_tts_convert.py) | Model weights to GGUF |
+| [controlfoley_convert.py](controlfoley_convert.py) | Model weights to GGUF |
+| [dettato_convert.py](dettato_convert.py) | Model weights to GGUF |
+| [echo_tts/echo_tts_convert.py](echo_tts/echo_tts_convert.py) | Model weights to GGUF |
+| [echo_tts/echo_tts_gguf_verify.py](echo_tts/echo_tts_gguf_verify.py) | Check the converted GGUF |
+| [echo_tts/echo_tts_manifest.py](echo_tts/echo_tts_manifest.py) | Inspect checkpoint tensors |
+| [f5_tts_convert.py](f5_tts_convert.py) | Model weights to GGUF |
+| [firered_vad_convert.py](firered_vad_convert.py) | Model weights to GGUF |
+| [fish_drama3_convert.py](fish_drama3_convert.py) | Model weights to GGUF |
+| [gigaam_asr_convert.py](gigaam_asr_convert.py) | Model weights to GGUF |
+| [glm_tts_weights_prepare.py](glm_tts_weights_prepare.py) | Prepare source weights or package assets |
+| [granite5asr_convert.py](granite5asr_convert.py) | Model weights to GGUF |
+| [haas_asr_convert.py](haas_asr_convert.py) | Model weights to GGUF |
+| [index_echo_s2tt_convert.py](index_echo_s2tt_convert.py) | Model weights to GGUF |
+| [index_tts2_5_convert.py](index_tts2_5_convert.py) | Model weights to GGUF |
+| [inflect_v2_weights_prepare.py](inflect_v2_weights_prepare.py) | Prepare source weights or package assets |
+| [irodori_tts/irodori_tts_convert.py](irodori_tts/irodori_tts_convert.py) | Model weights to GGUF |
+| [irodori_tts/irodori_tts_v4_1_anime_convert.py](irodori_tts/irodori_tts_v4_1_anime_convert.py) | Model weights to GGUF |
+| [kitten_tts2/kitten_tts2_convert.py](kitten_tts2/kitten_tts2_convert.py) | Model weights to GGUF |
+| [kitten_tts2/kitten_tts2_voices_prepare.cpp](kitten_tts2/kitten_tts2_voices_prepare.cpp) | Prepare source weights or package assets |
+| [kitten_tts2/kitten_tts2_weights.py](kitten_tts2/kitten_tts2_weights.py) | Shared weight-packing helper |
+| [kokoro_tts_convert.py](kokoro_tts_convert.py) | Model weights to GGUF |
+| [kroko_asr/kroko_asr_offline_convert.py](kroko_asr/kroko_asr_offline_convert.py) | Model weights to GGUF |
+| [kroko_asr/kroko_asr_onnx_extract.py](kroko_asr/kroko_asr_onnx_extract.py) | Extract conversion inputs |
+| [kugelaudio_convert.py](kugelaudio_convert.py) | Model weights to GGUF |
+| [liveavatar/liveavatar_components_convert.py](liveavatar/liveavatar_components_convert.py) | Model weights to GGUF |
+| [liveavatar/liveavatar_denoiser_convert.py](liveavatar/liveavatar_denoiser_convert.py) | Model weights to GGUF |
+| [m5_tts_convert.py](m5_tts_convert.py) | Model weights to GGUF |
+| [magenta_realtime_2_convert.py](magenta_realtime_2_convert.py) | Model weights to GGUF |
+| [maya1_convert.py](maya1_convert.py) | Model weights to GGUF |
+| [micro_wake_word_convert.py](micro_wake_word_convert.py) | Model weights to GGUF |
+| [ming3_audio_convert.py](ming3_audio_convert.py) | Model weights to GGUF |
+| [ming3_tts_convert.py](ming3_tts_convert.py) | Model weights to GGUF |
+| [minimax_h3/minimax_h3_audio_vae_convert.py](minimax_h3/minimax_h3_audio_vae_convert.py) | Model weights to GGUF |
+| [minimax_h3/minimax_h3_dit_convert.py](minimax_h3/minimax_h3_dit_convert.py) | Model weights to GGUF |
+| [minimax_music3/minimax_music3_convert.py](minimax_music3/minimax_music3_convert.py) | Model weights to GGUF |
+| [minimax_music3/minimax_music3_lm_head_repack.py](minimax_music3/minimax_music3_lm_head_repack.py) | GGUF repacking |
+| [mira_tts_weights_prepare.py](mira_tts_weights_prepare.py) | Prepare source weights or package assets |
+| [moonshine_asr_convert.py](moonshine_asr_convert.py) | Model weights to GGUF |
+| [moss_soundeffect_convert.py](moss_soundeffect_convert.py) | Model weights to GGUF |
+| [moss_transcribe_diarize_convert.py](moss_transcribe_diarize_convert.py) | Model weights to GGUF |
+| [mossformer2_convert.py](mossformer2_convert.py) | Model weights to GGUF |
+| [mulacover/mulacover_chord_vocabulary.txt](mulacover/mulacover_chord_vocabulary.txt) | Conversion vocabulary |
+| [mulacover/mulacover_convert.py](mulacover/mulacover_convert.py) | Model weights to GGUF |
+| [mulacover/mulacover_transcriber_prepare.py](mulacover/mulacover_transcriber_prepare.py) | Prepare source weights or package assets |
+| [muscriptor_convert.py](muscriptor_convert.py) | Model weights to GGUF |
+| [nemotron_3_diar_convert.py](nemotron_3_diar_convert.py) | Model weights to GGUF |
+| [nemotron_transcribe/nemotron_transcribe_bf16_export.py](nemotron_transcribe/nemotron_transcribe_bf16_export.py) | Export weights or package assets |
+| [nemotron_transcribe/nemotron_transcribe_convert.py](nemotron_transcribe/nemotron_transcribe_convert.py) | Model weights to GGUF |
+| [nemotron_transcribe/nemotron_transcribe_prepare.py](nemotron_transcribe/nemotron_transcribe_prepare.py) | Prepare source weights or package assets |
+| [nemotron_transcribe/nemotron_transcribe_quantize.py](nemotron_transcribe/nemotron_transcribe_quantize.py) | GGUF requantization |
+| [niagara_asr_convert.py](niagara_asr_convert.py) | Model weights to GGUF |
+| [open_wake_word/open_wake_word_convert.py](open_wake_word/open_wake_word_convert.py) | Model weights to GGUF |
+| [open_wake_word/open_wake_word_weights.py](open_wake_word/open_wake_word_weights.py) | Shared weight-packing helper |
+| [outetts_dac_convert.py](outetts_dac_convert.py) | Model weights to GGUF |
+| [owsm_convert.py](owsm_convert.py) | Model weights to GGUF |
+| [owsm_ctc_convert.py](owsm_ctc_convert.py) | Model weights to GGUF |
+| [parakeet_tdt_orukeet_convert.py](parakeet_tdt_orukeet_convert.py) | Model weights to GGUF |
+| [phonon2_asr_convert.py](phonon2_asr_convert.py) | Model weights to GGUF |
+| [plapre_convert.py](plapre_convert.py) | Model weights to GGUF |
+| [qwen3_aligner_tokenizers_export.py](qwen3_aligner_tokenizers_export.py) | Export weights or package assets |
+| [qwen3_asr_rumble2_flash_convert.py](qwen3_asr_rumble2_flash_convert.py) | Model weights to GGUF |
+| [realtime_reuse_convert.py](realtime_reuse_convert.py) | Model weights to GGUF |
+| [reuse_convert.py](reuse_convert.py) | Model weights to GGUF |
+| [rosvot_convert.py](rosvot_convert.py) | Model weights to GGUF |
+| [sam_audio_convert.py](sam_audio_convert.py) | Model weights to GGUF |
+| [samsone_convert.py](samsone_convert.py) | Model weights to GGUF |
+| [sheetsage2_convert.py](sheetsage2_convert.py) | Model weights to GGUF |
+| [sherpa_kws_convert.py](sherpa_kws_convert.py) | Model weights to GGUF |
+| [sidon_convert.py](sidon_convert.py) | Model weights to GGUF |
+| [smart_turn_convert.py](smart_turn_convert.py) | Model weights to GGUF |
+| [soprano_tts_convert.py](soprano_tts_convert.py) | Model weights to GGUF |
+| [sortformer_diar_v2/sortformer_diar_v2_NOTICES.md](sortformer_diar_v2/sortformer_diar_v2_NOTICES.md) | Attribution / provenance |
+| [sortformer_diar_v2/sortformer_diar_v2_convert.py](sortformer_diar_v2/sortformer_diar_v2_convert.py) | Model weights to GGUF |
+| [soulx_flashhead_convert.py](soulx_flashhead_convert.py) | Model weights to GGUF |
+| [soulx_singer_convert.py](soulx_singer_convert.py) | Model weights to GGUF |
+| [tf_gridnet_convert.py](tf_gridnet_convert.py) | Model weights to GGUF |
+| [tiny_voca_convert.py](tiny_voca_convert.py) | Model weights to GGUF |
+| [tone_color_vc_convert.py](tone_color_vc_convert.py) | Model weights to GGUF |
+| [underdog_bark3/underdog_bark3_convert.py](underdog_bark3/underdog_bark3_convert.py) | Model weights to GGUF |
+| [underdog_bark3/underdog_bark3_plus_convert.py](underdog_bark3/underdog_bark3_plus_convert.py) | Model weights to GGUF |
+| [underdog_bark3/underdog_bark3_standard_convert.py](underdog_bark3/underdog_bark3_standard_convert.py) | Model weights to GGUF |
+| [universr_convert.py](universr_convert.py) | Model weights to GGUF |
+| [vibeasr_convert.py](vibeasr_convert.py) | Model weights to GGUF |
+| [vibevoice_asr_streaming_convert.py](vibevoice_asr_streaming_convert.py) | Model weights to GGUF |
+| [voice_isolator_convert.py](voice_isolator_convert.py) | Model weights to GGUF |
+| [voxcpm1_convert.py](voxcpm1_convert.py) | Model weights to GGUF |
+| [voxmel_tts_convert.py](voxmel_tts_convert.py) | Model weights to GGUF |
+| [voxtral_tts_convert.py](voxtral_tts_convert.py) | Model weights to GGUF |
+| [whistle_asr/whistle_asr_PROVENANCE.md](whistle_asr/whistle_asr_PROVENANCE.md) | Attribution / provenance |
+| [whistle_asr/whistle_asr_assets_extract.py](whistle_asr/whistle_asr_assets_extract.py) | Extract conversion inputs |
+| [whistle_asr/whistle_asr_convert.py](whistle_asr/whistle_asr_convert.py) | Model weights to GGUF |
+| [xtts_v2_convert.py](xtts_v2_convert.py) | Model weights to GGUF |
+| [yue2_convert.py](yue2_convert.py) | Model weights to GGUF |
+| [zipvoice/zipvoice_convert.py](zipvoice/zipvoice_convert.py) | Model weights to GGUF |
+| [zipvoice/zipvoice_zh_dictionary_export.py](zipvoice/zipvoice_zh_dictionary_export.py) | Export weights or package assets |

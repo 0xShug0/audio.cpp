@@ -1,5 +1,5 @@
 // Unicode data and the string methods that depend on it. The tables are read
-// from Python (see tools/community_models/tiny_voca_tables.py), so every
+// from Python (see tools/models/tiny_voca_tables_generate.py), so every
 // function here answers as the Python build that made them.
 #include "text.h"
 

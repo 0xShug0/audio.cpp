@@ -48,7 +48,7 @@ and chunk index metadata. Streaming consumers can display each chunk as it arriv
 Encode the artifacts as an MP4, optionally muxing the source speech:
 
 ```bash
-python tools/models/soulx_flashhead/render_video.py \
+python tools/models/soulx_flashhead_video_render.py \
   --input outputs/flashhead --audio /path/to/speech.wav \
   --output outputs/flashhead/video.mp4
 ```

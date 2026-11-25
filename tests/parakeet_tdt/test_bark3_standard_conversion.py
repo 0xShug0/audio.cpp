@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "tools/gguf"))
+sys.path.insert(0, str(REPO / "tools/gguf/underdog_bark3"))
 import underdog_bark3_plus_convert as packed
 import underdog_bark3_standard_convert as standard
 

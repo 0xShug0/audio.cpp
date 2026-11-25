@@ -35,7 +35,7 @@ For a local checkpoint, export the tokenizer assets from the reference Python
 environment before converting the model:
 
 ```bash
-python tools/models/export_qwen3_aligner_tokenizers.py \
+python tools/gguf/qwen3_aligner_tokenizers_export.py \
   --output-dir models/Qwen3-ForcedAligner-0.6B \
   --korean-dictionary /path/to/qwen_asr/inference/assets/korean_dict_jieba.dict
 ```

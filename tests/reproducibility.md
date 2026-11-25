@@ -90,18 +90,18 @@ build/debug/bin/moss_tts_local_codec_decode_parity --codec /path/to/v2-codec \
 
 The encoder checks codes against the independent Python capture. The decoder
 probe emits a deterministic waveform; it does not on its own establish waveform
-parity. `tools/community_models/moss_tts_local/moss_tts_local_codec_parity.py`
+parity. `tests/moss_tts_local/moss_tts_local_codec_parity.py`
 can generate the corresponding Python decoding. Its printed metrics are
 observations, not a newly enforced quality gate in this cleanup.
 
 ## Conversion scripts
 
 - `tools/gguf/f5_tts_convert.py` and
-  `tools/gguf/minimax_music3_convert.py` now resolve specs and
+  `tools/gguf/minimax_music3/minimax_music3_convert.py` now resolve specs and
   converter defaults from the actual repository root.
 - `tools/gguf/voxcpm1_convert.py` requires `--source` and `--output`;
   no personal filesystem destinations are assumed.
-- `tools/gguf/liveavatar_components_convert.py` requires `--root`. Omitted
+- `tools/gguf/liveavatar/liveavatar_components_convert.py` requires `--root`. Omitted
   `--support-output` and `--vae-output` are derived from that parsed root;
   explicit output paths retain precedence.
 

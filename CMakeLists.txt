@@ -3841,7 +3841,7 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         # (moved next to the other moss_tts_nano tests)
     endif()
     if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
-        add_executable(audiocpp_kitten_tts2_prepare_voices tools/community_models/prepare_kitten_tts2_voices.cpp)
+        add_executable(audiocpp_kitten_tts2_prepare_voices tools/gguf/kitten_tts2/kitten_tts2_voices_prepare.cpp)
         audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
         target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
         add_executable(kitten_tts2_session_probe tests/kitten_tts2/session_probe.cpp)

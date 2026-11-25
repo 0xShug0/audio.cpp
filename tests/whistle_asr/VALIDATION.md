@@ -36,7 +36,7 @@ python tools/check_loader_catalog_sync.py
 cmake --build build/whistle --target audiocpp_cli audiocpp_gguf whistle_frontend_test whistle_assets_test --parallel 16
 New-Item -ItemType Directory -Force build/whistle/pr-prep/source,build/whistle/pr-prep/model,build/whistle/pr-prep/standalone
 Copy-Item -LiteralPath C:/Users/adityasharma/Projects/ansible-windows/.runtime/whistle/source/whistle.safetensors,C:/Users/adityasharma/Projects/ansible-windows/.runtime/whistle/source/config.json,C:/Users/adityasharma/Projects/ansible-windows/.runtime/whistle/source/LICENSE -Destination build/whistle/pr-prep/source
-python tools/gguf/whistle_asr_convert.py --source build/whistle/pr-prep/source --cact C:/Users/adityasharma/Projects/ansible-windows/.runtime/whistle/reference/whistle.cact --converter build/whistle/bin/audiocpp_gguf.exe --output build/whistle/pr-prep/model/whistle-f32.gguf
+python tools/gguf/whistle_asr/whistle_asr_convert.py --source build/whistle/pr-prep/source --cact C:/Users/adityasharma/Projects/ansible-windows/.runtime/whistle/reference/whistle.cact --converter build/whistle/bin/audiocpp_gguf.exe --output build/whistle/pr-prep/model/whistle-f32.gguf
 build/whistle/bin/audiocpp_gguf.exe --inspect build/whistle/pr-prep/model/whistle-f32.gguf
 cmake -S . -B build/whistle -DAUDIOCPP_WHISTLE_TEST_MODEL=C:/Users/adityasharma/Projects/audio.cpp/build/whistle/pr-prep/model/whistle-f32.gguf
 cmake --build build/whistle --target audiocpp_cli audiocpp_gguf whistle_frontend_test whistle_assets_test --parallel 16
@@ -189,7 +189,7 @@ Original cached inputs remain unchanged under
 
 ## Provenance, licensing, and limitations
 
-See [provenance](../../tools/community_models/whistle_asr/PROVENANCE.md),
+See [provenance](../../tools/gguf/whistle_asr/whistle_asr_PROVENANCE.md),
 [license table](../../docs/model_licenses.md), and
 [model guide](../../docs/models/whistle_asr.md).
 The converter preserves the pinned upstream `LICENSE` inside the GGUF.
@@ -266,7 +266,7 @@ Measured on macOS 27.0.1, Apple M3 Ultra, Apple clang, CMake 4.4.4, Ninja, Relea
 
 ```bash
 scripts/build_metal.sh --build-dir build/whistle --build-type Release --openmp auto --with-tests --deployment-build --model-set custom --models whistle_asr --target audiocpp_cli --target audiocpp_gguf --target whistle_frontend_test --target whistle_tokenizer_test --target whistle_assets_test
-python3 tools/gguf/whistle_asr_convert.py --source build/whistle/pr-prep/source --cact /private/tmp/whistle-src/whistle.cact --converter build/bin/audiocpp_gguf --output build/whistle/pr-prep/model/whistle-f32.gguf
+python3 tools/gguf/whistle_asr/whistle_asr_convert.py --source build/whistle/pr-prep/source --cact /private/tmp/whistle-src/whistle.cact --converter build/bin/audiocpp_gguf --output build/whistle/pr-prep/model/whistle-f32.gguf
 cmake -S . -B build/whistle -DAUDIOCPP_WHISTLE_TEST_MODEL=$PWD/build/whistle/pr-prep/model/whistle-f32.gguf
 ctest --test-dir build/whistle -R whistle_ --output-on-failure
 build/whistle/bin/whistle_frontend_test build/whistle/pr-prep/source/mel_filterbank_80.f32 build/whistle/pr-prep/oracle/sample_16k.f32

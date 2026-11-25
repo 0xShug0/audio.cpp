@@ -16,7 +16,7 @@ import soundfile as sf
 import torch
 from transformers import AutoProcessor
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/gguf"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/gguf/underdog_bark3"))
 from underdog_bark3_plus_convert import BASE_SHA256, PLUS_PROFILE, sha256
 
 LOADER_SHA256 = "e86b7f130bec1a8fa14dd315cfce95785b890dbd30000f6ceb2597fdd4312b02"

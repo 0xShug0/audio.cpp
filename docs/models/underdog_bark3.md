@@ -207,7 +207,7 @@ hf download nvidia/parakeet-tdt-0.6b-v3 \
   --revision 541d1f99c6b0c3cd0b11a95167540bb8edefd82b \
   --include config.json processor_config.json tokenizer.json tokenizer_config.json generation_config.json \
   --local-dir "models/$NAME-source"
-python "tools/gguf/$CONVERTER" \
+python "tools/gguf/underdog_bark3/$CONVERTER" \
   --source "models/$NAME-source" --staging "models/$NAME-prepared" \
   --gguf-tool build/bark3/bin/audiocpp_gguf --type "$TYPE" --output "models/$OUTPUT"
 ```
@@ -226,7 +226,7 @@ hf download ConwayResearch/Underdog-Bark-3.0-Pro \
     tokenizer_config.json generation_config.json NOTICE README.md coreml/LICENSE \
     runtime/transcribe_bark_pro.py runtime/requirements.txt \
   --local-dir models/Underdog-Bark-3.0-Pro-source
-python tools/gguf/underdog_bark3_convert.py \
+python tools/gguf/underdog_bark3/underdog_bark3_convert.py \
   --source models/Underdog-Bark-3.0-Pro-source --staging models/Underdog-Bark-3.0-Pro-prepared \
   --gguf-tool build/bark3/bin/audiocpp_gguf --type q8_0 \
   --output models/underdog-bark-3.0-pro-q8_0.gguf

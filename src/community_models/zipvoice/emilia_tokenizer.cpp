@@ -285,7 +285,7 @@ std::vector<int32_t> EmiliaTokenizer::encode(const std::string & raw_text) const
                     throw std::runtime_error(
                         "zipvoice: jieba dictionaries missing (expected zh_jieba_dict.txt "
                         "and zh_hmm_model.txt in the package or next to it); run "
-                        "tools/community_models/export_zipvoice_zh_dict.py");
+                        "tools/gguf/zipvoice/zipvoice_zh_dictionary_export.py");
                 }
                 segmenter_ = std::make_unique<JiebaSegmenter>(
                     tables_.jieba_dict, tables_.hmm_model);

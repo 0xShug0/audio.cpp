@@ -73,7 +73,7 @@ the final idle value.
 Run the same offline cases through a local, revision-pinned upstream snapshot:
 
 ```powershell
-python tools/community_models/mira_tts_reference_bench.py `
+python tests/mira_tts/mira_tts_reference_bench.py `
   --model-dir <verified-upstream-snapshot> --reference $voice `
   --request-file tests/mira_tts/offline_requests.json `
   --output-dir "$out/python-offline" `
@@ -84,7 +84,7 @@ Compare every matched request. Exact frame count is required for the strongest
 deterministic parity run:
 
 ```powershell
-python tools/community_models/compare_mira_tts_outputs.py `
+python tests/mira_tts/compare_mira_tts_outputs.py `
   --cpp-summary "$out/native-offline.json" `
   --python-summary "$out/python-offline.json" `
   --output "$out/parity.json" --require-exact-frames

@@ -372,12 +372,12 @@ Dumps: `wave16k`, `features`, `downsample`, `encoder`, `projector`,
 
 ### Fixtures
 
-`tools/community_models/lfm3_audio/make_fixtures.py` runs the upstream model in
+`tests/lfm3_audio/make_fixtures.py` runs the upstream model in
 fp32 on CUDA (needs torch, transformers, librosa) and writes the reference
 arrays and `manifest.json`, with the bf16-vs-fp32 noise floor of each stage:
 
 ```bash
-python3 tools/community_models/lfm3_audio/make_fixtures.py --model models/LFM3-Audio-2B \
+python3 tests/lfm3_audio/make_fixtures.py --model models/LFM3-Audio-2B \
   --assets assets/resources --out models/LFM3-Audio-2B/fixtures
 ```
 

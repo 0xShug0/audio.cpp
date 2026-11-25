@@ -108,7 +108,7 @@ The manager infers `Kroko-DE-Community-64-L-Native`; the language packages
 therefore do not overwrite each other. The direct equivalent is:
 
 ```powershell
-.\venv\Scripts\python.exe tools\community_models\convert_kroko_onnx.py `
+.\venv\Scripts\python.exe tools\gguf\kroko_asr\kroko_asr_onnx_extract.py `
   ..\models\Kroko-ASR\Kroko-SV-Community-64-L-Streaming-001.data `
   ..\models\Kroko-ASR\Kroko-SV-Community-64-L-Native --overwrite
 ```

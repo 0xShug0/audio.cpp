@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def load_zipformer_converter():
-    path = REPO / "tools/community_models/convert_kroko_onnx.py"
+    path = REPO / "tools/gguf/kroko_asr/kroko_asr_onnx_extract.py"
     spec = importlib.util.spec_from_file_location("audiocpp_zipformer_converter", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

@@ -50,7 +50,7 @@ text can keep a server busy; Python has no such limit.
 ## Generated files
 
 `unicode_tables.inc` and `tables_data.inc` are written by
-`tools/community_models/tiny_voca_tables.py`. The first holds Unicode data read
+`tools/models/tiny_voca_tables_generate.py`. The first holds Unicode data read
 from the Python that runs the script, so the C++ code answers as that Python
 does; the second holds dizione's `data/*.txt` at one commit. Run the script
 again after a change to dizione's tables.

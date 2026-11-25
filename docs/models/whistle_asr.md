@@ -79,7 +79,7 @@ Whistle model spec in the GGUF:
 
 ```bash
 cmake --build build/release --target audiocpp_gguf audiocpp_cli
-python3 tools/gguf/whistle_asr_convert.py \
+python3 tools/gguf/whistle_asr/whistle_asr_convert.py \
   --source /path/to/whistle-source \
   --cact /path/to/whistle.cact \
   --converter build/release/bin/audiocpp_gguf \
@@ -156,7 +156,7 @@ language selection. Decoding is greedy, with at most 320 text tokens.
 Use the pinned [upstream revision](https://huggingface.co/Cactus-Compute/whistle/tree/b358ddadd89b7a713b5aa131f23032d3cca1b251).
 The converter preserves the upstream `LICENSE` inside the GGUF. The repository
 license does not grant rights to the weights or extracted assets. See the
-[provenance record](../../tools/community_models/whistle_asr/PROVENANCE.md) and
+[provenance record](../../tools/gguf/whistle_asr/whistle_asr_PROVENANCE.md) and
 [model license table](../model_licenses.md) for source-specific terms and
 unresolved questions. No weights or extracted assets are included in this port.
 
