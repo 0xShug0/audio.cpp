@@ -1,4 +1,4 @@
-#include "../../../src/community_models/fish_drama3/reference_cache.cpp"
+#include "../../src/community_models/fish_drama3/reference_cache.cpp"
 
 #include "engine/framework/runtime/errors.h"
 

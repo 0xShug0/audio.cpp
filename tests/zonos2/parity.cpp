@@ -1,4 +1,4 @@
-// ZONOS2 parity against Zyphra/zonos2.cpp's outputs (tests/community_models/zonos2/make_oracle.sh).
+// ZONOS2 parity against Zyphra/zonos2.cpp's outputs (tests/zonos2/make_oracle.sh).
 //   zonos2_parity backbone <zonos2-*.gguf> <oracle_dir> [--disk-experts]
 //   zonos2_parity backbone_speaker <zonos2-*.gguf> <oracle_dir>
 //   zonos2_parity decoder <dac.gguf> <oracle_dir>

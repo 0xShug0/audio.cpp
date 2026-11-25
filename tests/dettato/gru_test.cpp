@@ -4,7 +4,7 @@
 #include "engine/community_models/dettato/gru.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/structural_modules.h"
-#include "../../unittests/test_assert.h"
+#include "../unittests/test_assert.h"
 
 #include <array>
 #include <chrono>

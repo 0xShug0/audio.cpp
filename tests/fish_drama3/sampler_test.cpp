@@ -1,4 +1,4 @@
-#include "../../../src/community_models/fish_drama3/generator.cpp"
+#include "../../src/community_models/fish_drama3/generator.cpp"
 
 #include <ggml-alloc.h>
 #include <iostream>

@@ -561,7 +561,7 @@ content, voice similarity or acting quality.
 ### Port validation
 
 Reproducible codec, tokenizer, quantization and HTTP smoke commands are in the
-[Drama 3 test guide](../../tests/community_models/fish_drama3/README.md).
+[Drama 3 test guide](../../tests/fish_drama3/README.md).
 
 The port was exercised on native Windows with an RTX PRO 6000 Blackwell 96 GB,
 CUDA 12.8 and eight CPU worker threads. English speech, voice references,

@@ -7,7 +7,7 @@
 #include "dizione/dizione.h"
 #include "dizione/normalize.h"
 
-#include "../../unittests/test_assert.h"
+#include "../unittests/test_assert.h"
 
 #include <cmath>
 #include <cstdint>

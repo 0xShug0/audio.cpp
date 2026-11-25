@@ -10,7 +10,7 @@ controls. Each case starts a fresh session; its requests share that session.
 RUN_DIR="build/logs/drama3-regression/$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$RUN_DIR"
 conda run --no-capture-output -n qwen3-tts python tools/audiocpp_cli/run_audiocpp_cli_path_tests.py \
-  --cases tests/community_models/fish_drama3/offload_regression_cases.json \
+  --cases tests/fish_drama3/offload_regression_cases.json \
   --models-root /path/to/models \
   --audiocpp-cli-bin build/debug/bin/audiocpp_cli \
   --backend cuda --threads 8 --measure-resources --resource-sample-ms 25 --log \
@@ -66,7 +66,7 @@ To regenerate expected IDs directly with the official tokenizer, use
 [uv](https://docs.astral.sh/uv/):
 
 ```powershell
-uv run --no-project tests/community_models/fish_drama3/tokenizer_vectors.py --tokenizer models/Drama-3-source/tokenizer.json --output local/drama3-tokenizer-vectors.json
+uv run --no-project tests/fish_drama3/tokenizer_vectors.py --tokenizer models/Drama-3-source/tokenizer.json --output local/drama3-tokenizer-vectors.json
 ```
 
 Without `AUDIOCPP_DRAMA3_TOKENIZER_DIR`, the target can still be built and run
@@ -85,11 +85,11 @@ does not load backbone weights:
 Multiple GGUF paths can be checked in one invocation.
 
 For inference checks, start the server from the
-[model guide](../../../docs/models/fish_drama3.md) with model id
+[model guide](../../docs/models/fish_drama3.md) with model id
 `drama-3`, then run the portable HTTP test from the repository root:
 
 ```powershell
-uv run --no-project tests/community_models/fish_drama3/server_smoke.py --base-url http://127.0.0.1:8035 --output-directory build/drama3-http-smoke
+uv run --no-project tests/fish_drama3/server_smoke.py --base-url http://127.0.0.1:8035 --output-directory build/drama3-http-smoke
 ```
 
 This requires a loaded Drama 3 GGUF. It checks WAV/SSE sample parity, streamed
@@ -109,7 +109,7 @@ storage. Use `--timeout` to adjust it.
 With the same server running, use the standard-library benchmark:
 
 ```powershell
-uv run --no-project --python 3.12 tests/community_models/fish_drama3/benchmark.py --base-url http://127.0.0.1:8035 --output-directory build/drama3-benchmark --count 100
+uv run --no-project --python 3.12 tests/fish_drama3/benchmark.py --base-url http://127.0.0.1:8035 --output-directory build/drama3-benchmark --count 100
 ```
 
 It generates and prepares a reference before timing, checks file-path and Base64

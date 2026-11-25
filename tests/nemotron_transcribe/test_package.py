@@ -12,7 +12,7 @@ from pathlib import Path
 import gguf
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 MODULE = importlib.util.spec_from_file_location("prepare_nemotron_transcribe",
     ROOT / "tools/gguf/nemotron_transcribe/nemotron_transcribe_prepare.py")
 assert MODULE and MODULE.loader

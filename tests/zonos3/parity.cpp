@@ -1,4 +1,4 @@
-// ZONOS3 parity against the native ZONOS3 runtime's outputs (tests/community_models/zonos3/make_oracle.sh).
+// ZONOS3 parity against the native ZONOS3 runtime's outputs (tests/zonos3/make_oracle.sh).
 //   zonos3_parity backbone <backbone.gguf> <oracle_dir> [--disk-experts]
 //   zonos3_parity speaker <spk-encoder.gguf> <voice.wav> <oracle_dir>
 //   zonos3_parity decoder <zac-keep2.gguf> <oracle_dir>
