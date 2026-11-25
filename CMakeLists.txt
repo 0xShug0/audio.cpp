@@ -529,6 +529,7 @@ add_library(engine_core OBJECT
     src/framework/assets/weight_adapter.cpp
     src/framework/assets/weight_adapter_source.cpp
     src/framework/assets/torch_bin.cpp
+    src/framework/assets/bundled_assets.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
     src/framework/core/attention_fallback.cpp
@@ -3997,6 +3998,8 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     if (ENGINE_BUILD_TESTS)
         add_engine_unittest(gated_delta_net_module_test tests/unittests/test_gated_delta_net_module.cpp)
         add_test(NAME gated_delta_net_module_test COMMAND gated_delta_net_module_test cpu --log)
+        add_engine_unittest(bundled_assets_test tests/unittests/test_bundled_assets.cpp)
+        add_test(NAME bundled_assets_test COMMAND bundled_assets_test $<TARGET_FILE_DIR:bundled_assets_test>)
     endif()
 
     if (ENGINE_BUILD_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)

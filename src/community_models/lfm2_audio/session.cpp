@@ -1,5 +1,6 @@
 #include "engine/community_models/lfm2_audio/session.h"
 
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/debug/profiler.h"
@@ -298,7 +299,7 @@ std::vector<runtime::TimeSpan> plan_fixed_chunks(int64_t samples, int64_t chunk_
 }
 
 std::filesystem::path default_vad_model_path() {
-    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+    return engine::assets::resolve_bundled_asset(std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
 }
 
 // Set LFM2_AUDIO_DUMP_DIR to write each stage (features, adapter output,

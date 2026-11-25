@@ -1,6 +1,7 @@
 #include "engine/community_models/sense_asr/session.h"
 #include "engine/community_models/sense_asr/word_timestamps.h"
 
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/debug/profiler.h"
@@ -273,8 +274,8 @@ void shift_words(std::vector<runtime::WordTimestamp> &words, int64_t offset) {
 }
 
 std::filesystem::path default_vad_model_path() {
-  return std::filesystem::path("assets") / "framework" / "models" /
-         "silero_vad";
+  return engine::assets::resolve_bundled_asset(
+      std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
 }
 
 } // namespace

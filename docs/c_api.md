@@ -334,6 +334,13 @@ audiocpp_log_set(NULL, NULL);
 - The facade depends only on framework headers, never on `app/`, so the CLI and
   the C API stay independent of each other. The one consequence is that the
   backend-name mapping is duplicated from `app/cli/args.cpp`.
+- ASR families that chunk long audio with a VAD (`sense_asr`, `parakeet_tdt`,
+  `qwen3_asr`, `vibevoice_asr`, `moonshine_asr`, `lfm2_audio`, `lfm3_audio`)
+  default `<family>.vad_model_path` to `assets/framework/models/silero_vad`. That
+  default is looked up relative to the working directory first, then beside the
+  library and up to three directories above it. To use VAD chunking without
+  setting the option, ship `assets/framework/models/silero_vad/` beside the
+  library (or one level above its `libs/` folder).
 
 ## Test
 

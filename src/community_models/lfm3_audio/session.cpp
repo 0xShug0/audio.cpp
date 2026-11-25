@@ -8,6 +8,7 @@
 #include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/weights.h"
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/chat/reply.h"
 #include "engine/framework/debug/profiler.h"
@@ -545,7 +546,9 @@ Lfm3AsrSession::Lfm3AsrSession(runtime::TaskSpec task, runtime::SessionOptions o
     const auto & session = RuntimeSessionBase::options();
     impl_.reset(new Impl{task, std::move(contract), Model(require_assets(std::move(assets)), session, execution_context(), true, false),
                          runtime::find_option(session.options, {"lfm3_audio.vad_model_path"})
-                             .value_or((std::filesystem::path("assets") / "framework" / "models" / "silero_vad").string()),
+                             .value_or(engine::assets::resolve_bundled_asset(
+                                           std::filesystem::path("assets") / "framework" / "models" / "silero_vad")
+                                           .string()),
                          nullptr, nullptr, false});
 }
 
