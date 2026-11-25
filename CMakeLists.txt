@@ -1231,10 +1231,11 @@ audiocpp_add_model(personaplex
         engine::models::personaplex::make_personaplex_loader
 )
 
-set(AUDIOCPP_SANOTTS_NEON_SOURCES src/community_models/sanotts/neon_decoder.cpp)
+set(AUDIOCPP_SANOTTS_NEON_SOURCES src/community_models/sanotts/neon_decoder.cpp src/community_models/sanotts/neon_istft.cpp)
 if (ENGINE_ENABLE_NEON)
     set(AUDIOCPP_SANOTTS_NEON_SOURCES
         src/community_models/sanotts/neon_library_decoder.cpp
+        src/community_models/sanotts/neon_istft.cpp
         src/community_models/sanotts/neon_weights.cpp)
 endif()
 audiocpp_add_model(sanotts
@@ -4219,6 +4220,10 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_engine_unittest(sanotts_neon_decoder_test tests/unittests/test_sanotts_neon_decoder.cpp)
         target_include_directories(sanotts_neon_decoder_test PRIVATE tests/unittests src/community_models/sanotts)
         add_test(NAME sanotts_neon_decoder_test COMMAND sanotts_neon_decoder_test)
+    endif()
+    if (ENGINE_BUILD_MODEL_TESTS AND sanotts IN_LIST AUDIOCPP_LINKED_MODELS)
+        add_engine_unittest(sanotts_neon_istft_test tests/unittests/test_sanotts_neon_istft.cpp)
+        add_test(NAME sanotts_neon_istft_test COMMAND sanotts_neon_istft_test)
     endif()
     if (ENGINE_BUILD_MODEL_TESTS AND sanotts IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(sanotts_word_timestamps_test tests/unittests/test_sanotts_word_timestamps.cpp)
