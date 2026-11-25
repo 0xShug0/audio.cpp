@@ -78,6 +78,35 @@ bool ends_with_reference_punctuation(const std::string & text) {
     return false;
 }
 
+// The emoji ranges the reference strips; the unicode indexer has no entry for them.
+bool is_reference_emoji(uint32_t codepoint) {
+    return (codepoint >= 0x2600 && codepoint <= 0x27BF) || (codepoint >= 0x1F1E6 && codepoint <= 0x1F1FF) ||
+           (codepoint >= 0x1F300 && codepoint <= 0x1F64F) || (codepoint >= 0x1F680 && codepoint <= 0x1FAFF);
+}
+
+std::string codepoints_to_utf8(const std::vector<uint32_t> & codepoints) {
+    std::string out;
+    out.reserve(codepoints.size());
+    for (const uint32_t codepoint : codepoints) {
+        if (codepoint < 0x80U) {
+            out += static_cast<char>(codepoint);
+        } else if (codepoint < 0x800U) {
+            out += static_cast<char>(0xC0U | (codepoint >> 6U));
+            out += static_cast<char>(0x80U | (codepoint & 0x3FU));
+        } else if (codepoint < 0x10000U) {
+            out += static_cast<char>(0xE0U | (codepoint >> 12U));
+            out += static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3FU));
+            out += static_cast<char>(0x80U | (codepoint & 0x3FU));
+        } else {
+            out += static_cast<char>(0xF0U | (codepoint >> 18U));
+            out += static_cast<char>(0x80U | ((codepoint >> 12U) & 0x3FU));
+            out += static_cast<char>(0x80U | ((codepoint >> 6U) & 0x3FU));
+            out += static_cast<char>(0x80U | (codepoint & 0x3FU));
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 SupertonicTextTokenizer::SupertonicTextTokenizer(std::shared_ptr<const SupertonicAssets> assets)
@@ -85,7 +114,7 @@ SupertonicTextTokenizer::SupertonicTextTokenizer(std::shared_ptr<const Supertoni
 
 SupertonicTextInputs SupertonicTextTokenizer::encode(const std::string & text, const std::string & language) const {
     const auto processed = preprocess(text, language);
-    const auto codepoints = engine::text::normalize_nfkd_codepoints(utf8_to_codepoints(processed));
+    const auto codepoints = utf8_to_codepoints(processed);
     SupertonicTextInputs out;
     out.length = static_cast<int64_t>(codepoints.size());
     out.ids.reserve(codepoints.size());
@@ -104,7 +133,11 @@ std::string SupertonicTextTokenizer::preprocess(const std::string & text, const 
     if (kLanguages.find(language) == kLanguages.end()) {
         throw std::runtime_error("invalid Supertonic language: " + language);
     }
-    std::string result = text;
+    // Like the reference, normalize first: full-width punctuation and spaces are plain ASCII
+    // by the time the replacements and the final period check run. Emoji are dropped next.
+    auto codepoints = engine::text::normalize_nfkd_codepoints(utf8_to_codepoints(text));
+    codepoints.erase(std::remove_if(codepoints.begin(), codepoints.end(), is_reference_emoji), codepoints.end());
+    std::string result = codepoints_to_utf8(codepoints);
     const std::pair<const char *, const char *> replacements[] = {
         {"–", "-"}, {"‑", "-"}, {"—", "-"}, {"_", " "}, {"“", "\""}, {"”", "\""}, {"‘", "'"}, {"’", "'"},
         {"´", "'"}, {"`", "'"}, {"[", " "}, {"]", " "}, {"|", " "}, {"/", " "}, {"#", " "}, {"→", " "},
