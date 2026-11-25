@@ -2,11 +2,10 @@
 # Included only when ENGINE_BUILD_EXTENDED_TESTS is enabled.
 
 # audio_utility_api
-add_engine_unittest(audio_utility_api_test tests/unittests/test_audio_utility_api.cpp)
+add_engine_test(audio_utility_api_test tests/unittests/test_audio_utility_api.cpp)
 target_compile_definitions(audio_utility_api_test PRIVATE
     ENGINE_REPO_ROOT="${CMAKE_CURRENT_SOURCE_DIR}"
 )
-add_test(NAME audio_utility_api_test COMMAND audio_utility_api_test)
 
 # base64
 add_executable(base64_test
@@ -29,19 +28,16 @@ endif()
 add_test(NAME cli_request_options_test COMMAND cli_request_options_test)
 
 # conv2d_modules
-add_engine_unittest(conv2d_modules_test tests/unittests/test_conv2d_modules.cpp)
-add_test(NAME conv2d_modules_test COMMAND conv2d_modules_test)
+add_engine_test(conv2d_modules_test tests/unittests/test_conv2d_modules.cpp)
 
 # conv_lowering_matrix
-add_engine_unittest(conv_lowering_matrix_test tests/unittests/test_conv_lowering_matrix.cpp)
+add_engine_test(conv_lowering_matrix_test tests/unittests/test_conv_lowering_matrix.cpp)
 if (ENGINE_ENABLE_HIP)
     target_compile_definitions(conv_lowering_matrix_test PRIVATE ENGINE_TEST_ENABLE_HIP=1)
 endif()
-add_test(NAME conv_lowering_matrix_test COMMAND conv_lowering_matrix_test)
 
 # conv_transpose_fast_path
-add_engine_unittest(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)
-add_test(NAME conv_transpose_fast_path_test COMMAND conv_transpose_fast_path_test)
+add_engine_test(conv_transpose_fast_path_test tests/unittests/test_conv_transpose_fast_path.cpp)
 
 # cuda
 if (ENGINE_ENABLE_CUDA)
@@ -60,15 +56,14 @@ if (ENGINE_ENABLE_CUDA)
     set_tests_properties(cuda_conv_transpose_1d_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 endif()
 if (ENGINE_ENABLE_CUDA AND GGML_CUDA_CUDNN_CONV3D)
-    add_engine_unittest(cuda_cudnn_conv3d_test tests/unittests/test_cuda_cudnn_conv3d.cpp)
-    add_test(NAME cuda_cudnn_conv3d_test COMMAND cuda_cudnn_conv3d_test
+    add_engine_test(cuda_cudnn_conv3d_test
+        tests/unittests/test_cuda_cudnn_conv3d.cpp
         --log "${CMAKE_CURRENT_BINARY_DIR}/cuda_cudnn_conv3d_test.log")
     set_tests_properties(cuda_cudnn_conv3d_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # depthwise_conv1d_lowering
-add_engine_unittest(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
-add_test(NAME depthwise_conv1d_lowering_test COMMAND depthwise_conv1d_lowering_test)
+add_engine_test(depthwise_conv1d_lowering_test tests/unittests/test_depthwise_conv1d_lowering.cpp)
 
 # devices
 add_test(NAME audiocpp_cli_list_devices COMMAND audiocpp_cli --list-devices)
@@ -80,17 +75,14 @@ set_tests_properties(
 )
 
 # file_sink_json
-add_engine_unittest(file_sink_json_test tests/unittests/test_file_sink_json.cpp)
+add_engine_test(file_sink_json_test tests/unittests/test_file_sink_json.cpp)
 target_sources(file_sink_json_test PRIVATE app/workflow/file_sink.cpp)
-add_test(NAME file_sink_json_test COMMAND file_sink_json_test)
 
 # i2_s_mul_mat
-add_engine_unittest(i2_s_mul_mat_test tests/unittests/test_i2_s_mul_mat.cpp)
-add_test(NAME i2_s_mul_mat_test COMMAND i2_s_mul_mat_test)
+add_engine_test(i2_s_mul_mat_test tests/unittests/test_i2_s_mul_mat.cpp)
 
 # i8_s_fused_ops
-add_engine_unittest(i8_s_fused_ops_test tests/unittests/test_i8_s_fused_ops.cpp)
-add_test(NAME i8_s_fused_ops_test COMMAND i8_s_fused_ops_test)
+add_engine_test(i8_s_fused_ops_test tests/unittests/test_i8_s_fused_ops.cpp)
 
 # metal
 if (ENGINE_ENABLE_METAL)
@@ -157,18 +149,16 @@ endif()
 
 # request_seed_dispatch
 if (AUDIOCPP_BUILD_C_API)
-    add_engine_unittest(request_seed_dispatch_test tests/unittests/test_request_seed_dispatch.cpp)
+    add_engine_test(request_seed_dispatch_test tests/unittests/test_request_seed_dispatch.cpp)
     target_sources(request_seed_dispatch_test PRIVATE
         app/workflow/execution.cpp app/workflow/workflow.cpp app/workflow/file_sink.cpp
         app/recipe/recipe.cpp app/recipe/cli_recipe.cpp
         app/streaming/streaming.cpp app/streaming/pcm_source.cpp
         app/cli/args.cpp app/cli/request.cpp app/common/base64.cpp)
-    add_test(NAME request_seed_dispatch_test COMMAND request_seed_dispatch_test)
 endif()
 
 # scaled_dot_product_attention
-add_engine_unittest(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)
-add_test(NAME scaled_dot_product_attention_test COMMAND scaled_dot_product_attention_test)
+add_engine_test(scaled_dot_product_attention_test tests/unittests/test_scaled_dot_product_attention.cpp)
 
 # server
 add_executable(http_live_body_test

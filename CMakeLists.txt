@@ -3808,9 +3808,18 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
     endif()
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 
-    function(add_engine_unittest target source)
+    # Target-only probes and executables with multiple/conditional CTest entries.
+    function(add_engine_test_target target source)
         add_executable(${target} ${source})
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
+    endfunction()
+
+    # Standard test: create the executable and register its command together.
+    function(add_engine_test target source)
+        add_engine_test_target(${target} ${source})
+        target_include_directories(${target} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests")
+        add_test(NAME ${target} COMMAND ${target} ${ARGN})
     endfunction()
 
     # Shared link support, not a test executable or registration.
