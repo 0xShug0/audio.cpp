@@ -1099,6 +1099,13 @@ if (reuse IN_LIST AUDIOCPP_LINKED_MODELS)
     target_include_directories(test_reuse_scan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
+# reverb
+if (reverb IN_LIST AUDIOCPP_LINKED_MODELS)
+    # Frontend parity against reverb_tts.text/audio; driven by tests/reverb/check_frontend.py.
+    add_engine_test_target(reverb_frontend_probe tests/reverb/frontend_probe.cpp)
+    audiocpp_use_utf8_codepage(reverb_frontend_probe)
+endif()
+
 # rknn_sidecar
 if (ENGINE_ENABLE_RKNN)
     add_executable(rknn_sidecar_test tests/unittests/test_rknn_sidecar.cpp)

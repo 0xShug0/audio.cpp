@@ -49,6 +49,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | PocketTTS | `pocket_tts` | `tts`, `clon` | [PocketTTS](#pockettts) |
 | PocketTTS Small | `pocket_tts_small` | `tts`, `clon` | [PocketTTS Small](models/pocket_tts_small.md) |
 | Qwen3 TTS | `qwen3_tts` | `tts`, `clon`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
+| Reverb-TTS | `reverb` | `tts`, `clon` | [Reverb-TTS](models/reverb.md) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
 | tiny-voca | `tiny_voca` | `tts` | [tiny-voca](models/tiny_voca.md) |

@@ -1,0 +1,327 @@
+{
+  "schema_version": 1,
+  "family": "reverb",
+  "display_name": "Reverb-TTS",
+  "description": "Software Mansion's 297M-parameter zero-shot voice-cloning TTS for seven languages: a pruned and retrained OmniVoice with prefix-cached masked-diffusion sampling. Reuses the OmniVoice text tokenizer and Higgs Audio v2 codec.",
+  "category": "tts",
+  "status": "experimental",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "de",
+    "fr",
+    "es",
+    "it",
+    "pl",
+    "pt"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf",
+      "cpu"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "values": [
+          "de_female_standard",
+          "de_male_standard",
+          "en_female_narrator",
+          "en_female_whisper",
+          "en_male_angry",
+          "en_male_narrator_1",
+          "en_male_narrator_2",
+          "es_male_standard_1",
+          "es_male_standard_2",
+          "fr_female_standard",
+          "fr_male_standard",
+          "it_male_expressive",
+          "it_male_standard",
+          "pl_male_standard",
+          "pt_female_standard",
+          "pt_male_standard"
+        ],
+        "default": "en_female_narrator",
+        "required": false,
+        "description": "Preset voice. A supplied reference clip takes precedence."
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "required": false,
+        "description": "Language of the text: de, en, es, fr, it, pl or pt. Defaults to the voice's language; a voice can speak any of the seven, most naturally its own."
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "required": false,
+        "description": "Exact transcript of the reference audio; required for voice cloning. 3 to 10 seconds of clean speech from one speaker works best."
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "min": 0,
+        "max": 4294967295,
+        "required": false,
+        "description": "Seed of the first take; long texts use consecutive seeds per piece. Omitted draws one."
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "min": 0,
+        "default": 1.0,
+        "required": false,
+        "description": "Factor on the estimated length (higher is faster speech)."
+      },
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "min": 0,
+        "required": false,
+        "description": "Target length in seconds, in place of the estimate. Disables long-form splitting."
+      },
+      {
+        "name": "pace",
+        "type": "enum",
+        "values": [
+          "speech",
+          "recording"
+        ],
+        "default": "speech",
+        "required": false,
+        "description": "Reference length the estimate follows: speech counts only the time the reference spends speaking; recording counts the whole clip."
+      },
+      {
+        "name": "trim",
+        "type": "bool",
+        "default": true,
+        "required": false,
+        "description": "Cut the take's silent edges."
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "min": 1,
+        "max": 64,
+        "default": 8,
+        "required": false,
+        "description": "Main sampler passes, which decide codebooks 0-1 (content and timing)."
+      },
+      {
+        "name": "remasking",
+        "type": "bool",
+        "default": true,
+        "required": false,
+        "description": "Let main passes withdraw earlier commits the model has come to doubt."
+      },
+      {
+        "name": "remask_ratio",
+        "type": "float",
+        "min": 0,
+        "max": 1,
+        "default": 0.25,
+        "required": false,
+        "description": "Commits withdrawn per new commit on every main pass but the last."
+      },
+      {
+        "name": "shift",
+        "type": "float",
+        "min": 0,
+        "max": 1,
+        "default": 0.1,
+        "required": false,
+        "description": "Commit schedule warp: few commits early, most in the last passes."
+      },
+      {
+        "name": "codebook_penalty",
+        "type": "float",
+        "default": 5.0,
+        "required": false,
+        "description": "Per-codebook penalty so codebook 0 tends to be committed before codebook 1."
+      },
+      {
+        "name": "position_temperature",
+        "type": "float",
+        "min": 0,
+        "default": 5.0,
+        "required": false,
+        "description": "Scales confidence and penalty against the Gumbel noise."
+      },
+      {
+        "name": "polish_bias",
+        "type": "float",
+        "default": 1.0,
+        "required": false,
+        "description": "Attention bias towards the reference frames in the two polish passes."
+      },
+      {
+        "name": "polish_guidance",
+        "type": "float",
+        "default": 0.5,
+        "required": false,
+        "description": "Codebooks 4-7: weight of (second polish pass - first polish pass)."
+      }
+    ],
+    "load": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0"
+        ],
+        "default": "native",
+        "required": false,
+        "description": "Generator weight storage. native keeps the GGUF's tensor types."
+      },
+      {
+        "name": "codec_weight_type",
+        "type": "enum",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16"
+        ],
+        "default": "native",
+        "required": false,
+        "description": "Higgs Audio v2 codec weight storage."
+      }
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "JRufer/Reverb-TTS-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "reverb_tts_q8_0",
+      "display_name": "Reverb-TTS Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Reverb-TTS-GGUF",
+      "files": [
+        "reverb-tts-q8_0.gguf"
+      ]
+    },
+    {
+      "id": "reverb_tts_f16",
+      "display_name": "Reverb-TTS F16 GGUF",
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "Reverb-TTS-GGUF",
+      "files": [
+        "reverb-tts-f16.gguf"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "reverb_tts_q8_0",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF"
+    ],
+    "builtin_voices": [
+      "de_female_standard",
+      "de_male_standard",
+      "en_female_narrator",
+      "en_female_whisper",
+      "en_male_angry",
+      "en_male_narrator_1",
+      "en_male_narrator_2",
+      "es_male_standard_1",
+      "es_male_standard_2",
+      "fr_female_standard",
+      "fr_male_standard",
+      "it_male_expressive",
+      "it_male_standard",
+      "pl_male_standard",
+      "pt_female_standard",
+      "pt_male_standard"
+    ],
+    "default_voice": "en_female_narrator",
+    "docs": [
+      "docs/models/reverb.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json",
+        "audio_tokenizer_preprocessor": "model:audio_tokenizer/preprocessor_config.json",
+        "voices": "model:voices.json"
+      },
+      "optional_files": {
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        },
+        "audio_tokenizer_weights": {
+          "source": "weights:",
+          "prefix": "audio_tokenizer_weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "audio_tokenizer_config": "model:audio_tokenizer/config.json",
+        "audio_tokenizer_preprocessor": "model:audio_tokenizer/preprocessor_config.json",
+        "voices": "model:voices.json"
+      },
+      "optional_files": {
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "audio_tokenizer_weights": "model:audio_tokenizer/model.safetensors"
+      }
+    }
+  ]
+}

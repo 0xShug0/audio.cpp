@@ -112,10 +112,14 @@ OmniVoiceConfig parse_config(const assets::ResourceBundle & resources) {
 }  // namespace
 
 std::shared_ptr<const OmniVoiceAssets> load_omnivoice_assets(const std::filesystem::path & model_path) {
+    return load_omnivoice_assets(model_path, engine::model_spec::default_spec_path("omnivoice"));
+}
+
+std::shared_ptr<const OmniVoiceAssets> load_omnivoice_assets(
+    const std::filesystem::path & model_path,
+    const std::filesystem::path & package_spec_path) {
     OmniVoiceAssets assets;
-    assets.resources = engine::model_spec::load_resource_bundle(
-        model_path,
-        engine::model_spec::default_spec_path("omnivoice"));
+    assets.resources = engine::model_spec::load_resource_bundle(model_path, package_spec_path);
     assets.config = parse_config(assets.resources);
     assets.model_weights = assets.resources.open_tensor_source("weights");
     assets.audio_tokenizer_weights = assets.resources.open_tensor_source("audio_tokenizer_weights");

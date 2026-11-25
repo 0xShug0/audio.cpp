@@ -455,7 +455,7 @@ NormalizedReferenceAudio normalize_reference_audio(
     }
     NormalizedReferenceAudio normalized = {};
     normalized.reference_rms = engine::audio::root_mean_square_or_throw(mono);
-    if (normalized.reference_rms > 0.0F && normalized.reference_rms < kTargetReferenceRms) {
+    if (options.normalize_rms && normalized.reference_rms > 0.0F && normalized.reference_rms < kTargetReferenceRms) {
         const float scale = kTargetReferenceRms / normalized.reference_rms;
         for (float & sample : mono) {
             sample *= scale;
