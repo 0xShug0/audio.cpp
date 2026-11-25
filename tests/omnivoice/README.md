@@ -42,13 +42,16 @@ produces unusable audio without being any faster, while
 
 ## Assets
 
-`assets/` holds the shared Bengali fixtures used by every script here:
+General clone and batch tests reuse the shared English LibriSpeech pair:
 
-```text
-ref_audio_01.wav  ref_text_01.txt   longer reference voice
-ref_audio_02.wav  ref_text_02.txt   reference voice used by default
-clone_batch_prompts.txt             10 prompts, one request per line
-```
+- `assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav`
+- its matching `.txt` transcript
+
+The pair has source/license metadata in `assets/asr_validation/`. Prompts are
+English, and `assets/clone_batch_prompts.txt` contains the batch requests.
+Rate variants should be created temporarily from this shared input rather than
+stored as another recording. The removed local Bengali examples were not used
+by a Bengali-specific assertion.
 
 ## Python-to-C++ integration
 
@@ -74,8 +77,8 @@ reports both wall times and per-request parity. Request *i* uses line
 cmake -S . -B build -DENGINE_ENABLE_CUDA=ON -DENGINE_BUILD_WARMBENCH=ON
 cmake --build build --parallel --target omnivoice_batch_test
 ./build/bin/omnivoice_batch_test --model models/OmniVoice \
-  --clone-audio tests/omnivoice/assets/ref_audio_02.wav \
-  --reference-text-file tests/omnivoice/assets/ref_text_02.txt \
+  --clone-audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav \
+  --reference-text-file assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.txt \
   --text-file tests/omnivoice/assets/clone_batch_prompts.txt \
   --num-step 16 --batch-sizes 1,2,4,8 \
   --session-option omnivoice.generator_weight_type=f16

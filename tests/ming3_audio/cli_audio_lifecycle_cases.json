@@ -9,7 +9,7 @@
       "requests": [
         {
           "id": "short_first",
-          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "audio": "assets/resources/sample_16k.wav",
           "options": {"max_tokens": 256}
         },
         {
@@ -22,7 +22,7 @@
         },
         {
           "id": "short_after_music",
-          "audio": "reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav",
+          "audio": "assets/resources/sample_16k.wav",
           "options": {"max_tokens": 256}
         },
         {

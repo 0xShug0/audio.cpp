@@ -96,7 +96,6 @@ if (AUDIOCPP_BUILD_C_API)
             --build-dir "${CMAKE_BINARY_DIR}"
             --models-root "${AUDIOCPP_C_API_MODEL_ROOT}"
             --audio "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
-            --alt-audio "${CMAKE_CURRENT_SOURCE_DIR}/tests/ace_step/assets/complete_source_demucs_8s.wav"
             --threads "${AUDIOCPP_C_API_TEST_THREADS}")
         set_tests_properties(audiocpp_c_api_parity PROPERTIES SKIP_RETURN_CODE 77)
     endif()
@@ -108,7 +107,7 @@ if (AUDIOCPP_BUILD_C_API)
         "${AUDIOCPP_C_API_MODEL_ROOT}"
         "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav"
         "cpu"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/ace_step/assets/complete_source_demucs_8s.wav"
+        ""
         "${AUDIOCPP_C_API_TEST_THREADS}")
     set_tests_properties(audiocpp_c_api_model PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(audiocpp_c_api_path_test tests/capi/path_test.c)
@@ -977,8 +976,8 @@ if (omnivoice IN_LIST AUDIOCPP_LINKED_MODELS)
     if (AUDIOCPP_OMNIVOICE_TEST_MODEL)
         add_test(NAME omnivoice_batch_parity COMMAND omnivoice_batch_parity_test
             --model "${AUDIOCPP_OMNIVOICE_TEST_MODEL}"
-            --clone-audio "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_audio_02.wav"
-            --reference-text-file "${CMAKE_CURRENT_SOURCE_DIR}/tests/omnivoice/assets/ref_text_02.txt")
+            --clone-audio "${CMAKE_CURRENT_SOURCE_DIR}/assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav"
+            --reference-text-file "${CMAKE_CURRENT_SOURCE_DIR}/assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.txt")
     endif()
 endif()
 

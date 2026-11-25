@@ -8,6 +8,10 @@ this file is the evidence behind the summary numbers there.
 Everything here was measured on one machine, so read the hardware section
 first — the CPU results generalize, the CUDA results do not.
 
+The historical input is available from the [pre-cleanup revision](https://github.com/0xShug0/audio.cpp/raw/9b286bc49bf255655968259759f6c525a9060873/tests/parakeet_tdt/assets/2086-149220-0033.wav).
+Set `PARAKEET_HISTORICAL_AUDIO` to its local path for the commands below.
+Current tests use a different shared clip; reported measurements are unchanged.
+
 ## Test hardware
 
 The CPU is an Intel
@@ -76,7 +80,7 @@ section for the actual methodology and numbers.
 
 ```bash
 build/<preset>/bin/parakeet_warm_bench \
-    --model models/parakeet-tdt-0.6b-v3 --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
+    --model models/parakeet-tdt-0.6b-v3 --audio "$PARAKEET_HISTORICAL_AUDIO" \
     --backend cpu --threads 12 \
     --session-option parakeet_tdt.matmul_weight_type=q8_0
 ```

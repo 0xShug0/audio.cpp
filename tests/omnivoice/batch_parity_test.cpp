@@ -23,8 +23,8 @@
 //
 // Usage:
 //   omnivoice_batch_parity_test --model models/OmniVoice \
-//     --clone-audio tests/omnivoice/assets/ref_audio_02.wav \
-//     --reference-text-file tests/omnivoice/assets/ref_text_02.txt \
+//     --clone-audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav \
+//     --reference-text-file assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.txt \
 //     [--backend cuda|vulkan|cpu] [--device 0] [--num-step 8]
 
 #include "engine/framework/audio/wav_reader.h"

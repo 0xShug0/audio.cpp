@@ -18,8 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVER_URL = "http://127.0.0.1:8080/v1/audio/speech"
 
 TEXT = (
-    "আমি একটা টিটিএস মডেল, নাম OmniVoice। "
-    "কিভাবে আপনাকে সাহায্য করতে পারি?"
+    "I am a text to speech model named OmniVoice. "
+    "How can I help you?"
 )
 
 OUTPUT = (
@@ -30,7 +30,7 @@ OUTPUT = (
 payload = {
     "model": "omnivoice",
     "input": TEXT,
-    "language": "Bengali",
+    "language": "English",
     "seed": 42,
     "num_inference_steps": 20,
     "guidance_scale": 2.0,

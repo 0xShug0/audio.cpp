@@ -392,6 +392,17 @@ ctest --test-dir build -R audiocpp_c_api --output-on-failure
 C API drives the same runtime the CLI does, so for identical inputs the two must
 produce identical output.
 
+The model test's alternate input defaults to eight seconds of deterministic,
+nonzero 44.1 kHz stereo samples generated in memory. Parity prepares the same
+PCM16 samples in its temporary directory and passes that WAV to independent C
+API and CLI runs; no committed alternate WAV or ffmpeg is needed. The stereo
+channels carry different signals. `parity.py --alt-audio /path/to/input.wav`
+keeps an explicit fixture override; an unreadable override fails the test.
+The C executable accepts the alternate WAV as its fourth positional argument
+(after model root, primary audio, and backend); omit it or pass `""` to generate
+samples. Use `""` when also supplying threads and `--log` in later positions.
+The primary audio default remains `assets/resources/sample_16k.wav`.
+
 Note that generative families draw noise per run — two unseeded `audiocpp_cli`
 Kokoro runs over the same text produce different audio — so the parity check
 seeds both sides. Without that the comparison would be meaningless.

@@ -1,10 +1,10 @@
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা প্রথম লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা দ্বিতীয় লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা তৃতীয় লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা চতুর্থ লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা পঞ্চম লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা ষষ্ঠ লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা সপ্তম লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা অষ্টম লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা ্নবম লাইন।
-আমি একটা টিটিএস মডেল, নাম OmniVoice। এটা দশম লাইন।
+I am a text to speech model named OmniVoice. This is the first line.
+I am a text to speech model named OmniVoice. This is the second line.
+I am a text to speech model named OmniVoice. This is the third line.
+I am a text to speech model named OmniVoice. This is the fourth line.
+I am a text to speech model named OmniVoice. This is the fifth line.
+I am a text to speech model named OmniVoice. This is the sixth line.
+I am a text to speech model named OmniVoice. This is the seventh line.
+I am a text to speech model named OmniVoice. This is the eighth line.
+I am a text to speech model named OmniVoice. This is the ninth line.
+I am a text to speech model named OmniVoice. This is the tenth line.

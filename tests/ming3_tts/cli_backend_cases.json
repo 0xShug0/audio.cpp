@@ -17,9 +17,9 @@
         {
           "id": "reference",
           "text": "The library opens at nine. Please return the book before Friday.",
-          "voice_ref": "resources/a.wav",
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
           "seed": 1895,
-          "options": {"language": "English"}
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "English"}
         }
       ]
     },

@@ -14,7 +14,7 @@
 A=$1; B=$2; P=${3:-5}; T=${4:-6}
 one() {
   "$1" --model "${PARAKEET_MODEL:-models/parakeet-tdt-0.6b-v3}" \
-    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
+    --audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav \
     --backend cpu --threads "$T" --warmup 1 --iterations 4 \
     --timing-file "${TIMING_LOG:-/tmp/parakeet_ab_timing.log}" 2>/dev/null \
   | python3 -c '

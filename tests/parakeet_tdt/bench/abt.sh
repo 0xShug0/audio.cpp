@@ -3,7 +3,7 @@
 # See ab.sh for why ABBA + mean (and not min) is required on this machine.
 # usage: abt.sh <bin> <threadsA> <threadsB> [passes] [audio]
 BIN=$1; TA=$2; TB=$3; P=${4:-4}
-AUDIO=${5:-tests/parakeet_tdt/assets/2086-149220-0033.wav}
+AUDIO=${5:-assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav}
 one() {
   "$BIN" --model "${PARAKEET_MODEL:-models/parakeet-tdt-0.6b-v3}" --audio "$AUDIO" --warmup-audio "$AUDIO" \
     --backend cpu --threads "$1" --warmup 1 --iterations 4 \

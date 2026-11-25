@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 DEVICE="0"
-LANG="Bengali"
+LANG="English"
 SEED="42"
 
 # Enable or disable the warmup run
@@ -23,10 +23,10 @@ STEPS_LIST=("8" "12" "16" "20" "24" "28" "32" "36" "40" "44" "48" "52" "56" "60"
 WEIGHT_TYPES=("native" "f32" "f16" "bf16" "q8_0")
 AUDIO_TOKENIZER_WEIGHT_TYPES=("native" "f32" "f16" "bf16" "q8_0")
 
-ASSET_DIR="tests/omnivoice/assets"
-BATCH_FILE="${ASSET_DIR}/clone_batch_prompts.txt"
-REF_WAV="${ASSET_DIR}/ref_audio_02.wav"
-REF_TEXT="$(cat "${ASSET_DIR}/ref_text_02.txt")"
+ASSET_DIR="assets/asr_validation/librispeech"
+BATCH_FILE="tests/omnivoice/assets/clone_batch_prompts.txt"
+REF_WAV="${ASSET_DIR}/librispeech_test_clean_6930-75918-0001.wav"
+REF_TEXT="$(cat "${ASSET_DIR}/librispeech_test_clean_6930-75918-0001.txt")"
 
 OUT_DIR="tests/omnivoice/outputs/clone_batch"
 LOG_FILE="tests/omnivoice/outputs/clone_batch.log"

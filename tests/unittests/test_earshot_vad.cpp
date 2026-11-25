@@ -179,7 +179,7 @@ void test_trailing_segment_kept() {
 }
 
 void test_streaming_matches_offline() {
-    const auto audio = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    const auto audio = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
     const auto offline = run_offline({ev::kSampleRate, 1, audio});
     require(offline.size() >= 2, "expected several segments");
     for (const size_t chunk : {size_t{1}, size_t{100}, size_t{256}, size_t{4000}}) {
@@ -233,7 +233,7 @@ void test_silence_and_noise() {
 }
 
 void test_stereo_resampled_input() {
-    const auto audio = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    const auto audio = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
     const auto reference = run_offline({ev::kSampleRate, 1, audio});
     // 48 kHz interleaved stereo via linear upsampling.
     const auto upsampled = engine::audio::convert_interleaved_audio_to_mono_linear_resampled(audio, 16000, 1, 48000);
@@ -272,7 +272,7 @@ void test_options() {
     }
     require(threw, "out-of-range threshold accepted");
     // Extreme settings must still give well-formed, ordered spans.
-    const auto audio = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    const auto audio = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
     const auto w = weights();
     const auto scores = ev::score_earshot_frames(w, audio.data(), static_cast<int64_t>(audio.size()), 1);
     const auto loose = ev::earshot_config_from_options({{"speech_pad_ms", "0"}, {"min_speech_duration_ms", "0"},
@@ -293,7 +293,7 @@ void test_long_input_blocks() {
     // Offline scoring runs in 4096-frame blocks. Two full blocks plus a short
     // tail (scored without threads) must match the frame-by-frame detector,
     // which has no blocks, for every thread count.
-    const auto speech = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    const auto speech = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
     const int64_t frames = 2 * 4096 + 100;
     std::vector<float> audio(static_cast<size_t>(frames * ev::kFrameSize) + 77);
     std::mt19937 rng(3);
@@ -397,7 +397,7 @@ void test_exec_plan_isa() {
             std::filesystem::remove(path, ignored);
         }
     } guard{log_path};
-    const auto speech = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    const auto speech = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
     std::vector<rt::SpeechSegment> reference;
     for (const auto isa : supported_isas()) {
         const std::string name = ev::earshot_isa_name(isa);
@@ -472,7 +472,7 @@ void test_vad_chunk_planner() {
     require(model->metadata().family == "earshot_vad", "registry load of the earshot weight file");
     auto session = model->create_task_session({rt::VoiceTaskKind::Vad, rt::RunMode::Offline}, {});
     auto & offline = dynamic_cast<rt::IOfflineVoiceTaskSession &>(*session);
-    const auto audio = load_wav("tests/parakeet_tdt/assets/2086-149220-0033.wav");
+    const auto audio = load_wav("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav");
     const auto chunks = engine::audio::plan_vad_audio_chunks(
         {ev::kSampleRate, 1, audio}, offline, engine::audio::VadAudioChunkOptions{30 * ev::kSampleRate, 8000, 4000});
     require(!chunks.empty(), "VAD chunk planner produced no chunks");
