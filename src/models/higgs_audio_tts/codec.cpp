@@ -1015,6 +1015,10 @@ quantizer_encode(core::ModuleBuildContext & ctx,
             contiguous(ctx, quantized),
             core::TensorShape::from_dims({1, embeddings_bct.shape.dims[2], kCodecHiddenSize}));
         quantized = transpose_bct_btc(ctx, quantized);
+        // CPU subtraction requires contiguous rows in its first operand.
+        if (ctx.backend_type == core::BackendType::Cpu) {
+            residual = contiguous(ctx, residual);
+        }
         residual = core::wrap_tensor(
             ggml_sub(ctx.ggml, residual.tensor, quantized.tensor), residual.shape, GGML_TYPE_F32);
     }
