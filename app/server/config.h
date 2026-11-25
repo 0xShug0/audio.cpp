@@ -136,6 +136,9 @@ struct ServerConfig {
 engine::core::BackendType parse_server_backend(const std::string & value);
 ServerConfig load_server_config(const std::filesystem::path & path);
 ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs);
+// Startup-only model overrides. No model flags leaves the configuration untouched.
+// A multi-model configuration requires --model-id to select the affected entry.
+void apply_model_cli_options(ServerConfig & config, int argc, char ** argv);
 // Adds the config.default_session_options entries for model.family that the model's
 // own session_options do not set.
 void apply_default_session_options(const ServerConfig & config, ServerModelConfig & model);

@@ -23,6 +23,10 @@ void warn_ignored_args(int argc, char ** argv);
 
 std::vector<std::string> expand_cli_args(int argc, char ** argv);
 
+// Shared flag-to-option mappings for CLI requests and server model defaults.
+const std::unordered_map<std::string, std::string> & request_option_aliases();
+const std::unordered_map<std::string, std::string> & moe_session_option_aliases();
+
 std::optional<std::string> find_arg(int argc, char ** argv, const std::string & name);
 bool has_arg(int argc, char ** argv, const std::string & name);
 std::vector<std::string> collect_args(int argc, char ** argv, const std::string & name);
