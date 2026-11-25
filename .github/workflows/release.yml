@@ -600,9 +600,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
       - name: Bundle VC runtime
         shell: pwsh
         working-directory: build/windows-cpu-release/bin
@@ -757,10 +757,10 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -ConfigureOnly -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -ConfigureOnly -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # The existing baseline preset disables AVX; also remove the remaining
-          # optional x86 extensions for this new portable target only.
+          # Keep the baseline backend portable; individual CPU variants select
+          # their own ISA flags.
           cmake -S . -B build/windows-vulkan-release -DGGML_SSE42=OFF -DGGML_BMI2=OFF
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/windows-vulkan-release --config Release --parallel $env:NUMBER_OF_PROCESSORS --target ($env:BUILD_TARGETS -split ' ')
