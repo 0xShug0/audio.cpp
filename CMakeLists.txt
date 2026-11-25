@@ -4728,6 +4728,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         add_test(NAME unicode_normalization_test COMMAND unicode_normalization_test)
         endif()
 
+        if (chatterbox IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(chatterbox_text_tokenizer_test tests/unittests/test_chatterbox_text_tokenizer.cpp)
+            add_test(NAME chatterbox_text_tokenizer_test COMMAND chatterbox_text_tokenizer_test)
+        endif()
+
         add_engine_unittest(text_normalization_test tests/unittests/test_text_normalization.cpp)
         add_test(NAME text_normalization_test COMMAND text_normalization_test)
 

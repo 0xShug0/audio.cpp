@@ -192,9 +192,17 @@ std::string lower_ascii(std::string text) {
 }
 
 std::string lower_and_normalize_nfkd(const std::string & text) {
-    auto codepoints = unicode_cpts_from_utf8(text);
-    for (uint32_t & codepoint : codepoints) {
-        codepoint = unicode_tolower(codepoint);
+    std::vector<uint32_t> codepoints;
+    for (const uint32_t codepoint : unicode_cpts_from_utf8(text)) {
+        // The reference lowercases with Python's str.lower(), which maps U+0130 (the
+        // Turkish capital dotted I) to two codepoints: i and a combining dot above.
+        // unicode_tolower() maps one codepoint to one, so it gives a plain i.
+        if (codepoint == 0x130) {
+            codepoints.push_back(0x69);
+            codepoints.push_back(0x307);
+            continue;
+        }
+        codepoints.push_back(unicode_tolower(codepoint));
     }
     codepoints = engine::text::normalize_nfkd_codepoints(codepoints);
     std::string out;
