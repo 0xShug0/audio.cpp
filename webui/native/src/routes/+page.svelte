@@ -1,7 +1,7 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { onDestroy, onMount } from 'svelte';
-  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
+  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, RefreshCw, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
     base64AudioUrl,
@@ -36,6 +36,7 @@
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
   import { StreamPlayback } from '$lib/media/stream_playback';
   import { base64Bytes } from '$lib/media/pcm_wav';
+  import { sessionOptionsMatch } from '$lib/session_drift';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import LoraControls from '$lib/LoraControls.svelte';
   import VoicePicker from '$lib/VoicePicker.svelte';
@@ -343,10 +344,6 @@
       delete importedSessionOptions[spec.session_option || `${selected.family}.lora`];
       if (spec.group === 'lora') delete importedSessionOptions[`${selected.family}.lora_scale`];
     }
-    if ((spec.group === 'lora' || ['auk', 'yue2', 'liveavatar', 'fish_drama3', 'ace_step'].includes(selected?.family || '')) && spec.scope === 'session') {
-      isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
-        modelMatchesSelectedPackage(model, selected));
-    }
     if (selected?.family === 'minimax_h3' && spec.name === 'num_frames') {
       const frames = Number(value);
       if (Number.isFinite(frames) && frames > 0) duration = frames / 24;
@@ -558,8 +555,24 @@
   $: workflowModels = activeCatalog
     .filter((entry) => workflowForEntry(entry) === activeWorkflow)
     .sort((left, right) => compareModelNames(left.display_name, right.display_name));
-  $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
-    modelMatchesSelectedPackage(model, selected));
+  $: selectedResident = selectedId
+    ? loadedModels.find((model) => model.id === selectedId && model.loaded)
+    : undefined;
+  $: selectedSessionDrift = (() => {
+    void advancedValues;
+    void editedPackageOptions;
+    void importedSessionOptions;
+    void paramSpecs;
+    void packageSizes;
+    void selectedPackageIds;
+    void modelPath;
+    void directModelPath;
+    if (!selectedResident || !selected) return false;
+    if (settingsReloadRequired) return true;
+    return !modelMatchesSelectedPackage(selectedResident, selected);
+  })();
+  $: isLoaded = Boolean(selectedResident &&
+    (isConfiguredEntry(selected) || !selectedSessionDrift));
   $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family, selected?.task);
   $: modelStudioPanel = modelStudioPanelConfig?.component;
   $: loraParamSpecs = paramSpecs.filter((spec) => spec.group === 'lora');
@@ -697,19 +710,17 @@
       ...(entry.id === selectedId ? importedSessionOptions : {}), ...sessionParams };
   }
 
-  function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
-    choice = withPackageLoadTarget(choice, packageSizes[choice.id]);
-    const expected = mergedSessionOptions(entry, choice);
-    const keys = Array.from(new Set((entry.id === selectedId && directModelPath ? [] : entry.install_packages || [])
-      .flatMap((candidate) => Object.keys(packageSizes[candidate.id]?.load_target?.session_options || {}))));
-    if (entry.id === selectedId) {
-      for (const spec of paramSpecs.filter((candidate) => candidate.scope === 'session')) {
-        keys.push(spec.session_option || spec.name);
-      }
-    }
-    if (!keys.length) return true;
-    const actual = model.session_options || {};
-    return keys.every((key) => actual[key] === expected[key]);
+  function packageSessionOptionsMatch(
+    entry: CatalogEntry,
+    choice: InstallPackageChoice | undefined,
+    model: LoadedModel
+  ) {
+    const resolvedChoice = choice ? withPackageLoadTarget(choice, packageSizes[choice.id]) : undefined;
+    const expected = mergedSessionOptions(entry, resolvedChoice);
+    const packageKeys = (entry.id === selectedId && directModelPath ? [] : entry.install_packages || [])
+      .flatMap((candidate) => Object.keys(packageSizes[candidate.id]?.load_target?.session_options || {}));
+    const specs = entry.id === selectedId ? paramSpecs : [];
+    return sessionOptionsMatch(model.session_options, expected, specs, packageKeys);
   }
 
   function modelMatchesPackage(entry: CatalogEntry, model: LoadedModel, choice: InstallPackageChoice) {
@@ -721,7 +732,6 @@
   function modelMatchesSelectedPackage(model: LoadedModel, entry: CatalogEntry | undefined) {
     if (!entry) return catalogPathMatches(modelPath, model.path);
     const choice = selectedPackageChoice(entry);
-    if (!choice) return catalogPathMatches(modelPath, model.path);
     return catalogPathMatches(modelPath, model.path) &&
       packageSessionOptionsMatch(entry, choice, model);
   }
@@ -1239,9 +1249,17 @@
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     syncPackageSessionControls();
     const sessionOptions = loadedModels.find((model) => model.id === selectedId)?.session_options || {};
-    for (const spec of paramSpecs.filter((spec) => spec.group === 'lora')) {
+    for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
       const value = sessionOptions[spec.session_option || spec.name];
-      if (value !== undefined) advancedValues[spec.name] = value;
+      if (value === undefined) continue;
+      if (spec.type === 'bool') {
+        if (value === 'true' || value === 'false') advancedValues[spec.name] = value === 'true';
+      } else if (['number', 'slider'].includes(spec.type)) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) advancedValues[spec.name] = parsed;
+      } else {
+        advancedValues[spec.name] = value;
+      }
     }
     if (selected?.family === 'ace_step' && isConfiguredEntry(selected)) {
       const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
@@ -1468,6 +1486,20 @@
       status = error instanceof Error ? error.message : String(error);
     } finally {
       loadingModel = false;
+    }
+  }
+
+  async function reloadForSettings() {
+    if (loadingModel || running || modelPanelUploading || !selectedId || isConfiguredEntry(selected)) return;
+    try {
+      if (selectedResident) {
+        await unloadModel(selectedId);
+        await refresh();
+      }
+      await doLoad();
+      settingsReloadRequired = false;
+    } catch {
+      // doLoad already populates status, errorStatus, and logs.
     }
   }
 
@@ -3324,6 +3356,21 @@
           </div>
           {#if running && liveText}<pre aria-live="polite" aria-label={tr('result.streamingText')}>{liveText}</pre>{/if}
           {#if playbackWarning}<p role="status">{playbackWarning}</p>{/if}
+        {/if}
+        {#if selectedId && selectedResident && selectedSessionDrift}
+          <div class="reload-prompt" role="status">
+            <div>
+              <strong>{tr('studio.reloadNeededTitle')}</strong>
+              <small>{tr(isConfiguredEntry(selected) ? 'studio.reloadConfiguredHint' : 'studio.reloadNeededHint')}</small>
+            </div>
+            {#if server?.ui_management && !isConfiguredEntry(selected)}
+              <button type="button" class="primary"
+                disabled={loadingModel || running || modelPanelUploading || installed === false || !packageLoadReady}
+                on:click={reloadForSettings}>
+                <RefreshCw size={14} />{loadingModel ? tr('studio.working') : tr('studio.reloadNow')}
+              </button>
+            {/if}
+          </div>
         {/if}
         <div class="runbar">
           <button class="run" disabled={!selectedId || running || loadingModel || rewritingCaption || restoringHistory || modelPanelUploading ||

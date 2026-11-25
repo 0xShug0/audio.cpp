@@ -317,6 +317,12 @@ button.danger { color: #ffd8df; border-color: rgba(255,119,139,.45); background:
 .live-card strong, .live-card small { display: block; }
 .live-card strong { font-size: 12px; }
 .live-card small { max-width: 380px; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.reload-prompt { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--active-border); border-radius: 8px; background: var(--active-bg); }
+.reload-prompt > div { min-width: 0; flex: 1 1 220px; }
+.reload-prompt strong, .reload-prompt small { display: block; }
+.reload-prompt strong { font-size: 12px; color: var(--text-strong); }
+.reload-prompt small { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.reload-prompt button { flex: 0 0 auto; white-space: nowrap; }
 details { margin-top: 11px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 summary { cursor: pointer; padding: 8px 10px; color: var(--text-label); font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--code-bg) 55%, transparent); }
 summary span { float: right; color: var(--muted); font-weight: 500; }
