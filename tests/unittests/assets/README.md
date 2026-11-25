@@ -5,6 +5,8 @@ example recordings. General audio inputs live in `assets/resources/` and the
 licensed audio/transcript corpus in `assets/asr_validation/`.
 
 - `tokenizers/tokenizer-1.model`: SentencePiece model for tokenizer unit checks.
+  It is the tokenizer of the English PocketTTS model, which the PocketTTS text
+  chunking test also uses.
 - `index_tts_tn_corpus.tsv`: text-normalization input/expected-output cases.
 - `earshot_vad/upstream_reference.json`: per-frame scores and segment boundaries
   from the pinned Rust reference in `tests/earshot_vad/reference_rs`. Each entry
