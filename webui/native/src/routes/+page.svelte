@@ -1037,6 +1037,10 @@
     if (entry.id === selectedId) {
       directModelPath = false;
       modelPath = selectedModelPath(entry);
+      if (entry.family === 'yue2') {
+        importedSessionOptions = { ...(selectedPackageChoice(entry)?.session_options || {}) };
+        editedPackageOptions = new Set();
+      }
       syncPackageSessionControls();
     }
   }
@@ -1235,8 +1239,14 @@
     advancedValues = next;
   }
 
-  function resetParams() {
-    importedSessionOptions = {};
+  function resetParams(packageChoice?: InstallPackageChoice) {
+    const sessionOptions = selected?.family === 'yue2'
+      ? (packageChoice
+          ? withPackageLoadTarget(packageChoice, packageSizes[packageChoice.id]).session_options
+          : loadedModels.find(model => model.loaded && model.id === selectedId &&
+              catalogPathMatches(model.path, modelPath))?.session_options) || {}
+      : loadedModels.find(model => model.id === selectedId)?.session_options || {};
+    importedSessionOptions = selected?.family === 'yue2' ? { ...sessionOptions } : {};
     importedLoadOptions = {};
     editedPackageOptions = new Set();
     settingsReloadRequired = false;
@@ -1248,7 +1258,6 @@
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     syncPackageSessionControls();
-    const sessionOptions = loadedModels.find((model) => model.id === selectedId)?.session_options || {};
     for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
       const value = sessionOptions[spec.session_option || spec.name];
       if (value === undefined) continue;
@@ -1364,7 +1373,7 @@
     }
   }
 
-  function chooseModel(id: string) {
+  function chooseModel(id: string, packageChoice?: InstallPackageChoice) {
     historyError = '';
     if (!id) {
       clearModelSelection();
@@ -1383,7 +1392,7 @@
     modelPath = selectedModelPath(next);
     chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', id);
-    resetParams();
+    resetParams(packageChoice);
     status = tr('status.ready');
     inspectPath();
     refreshConfiguredVoices();
@@ -3482,7 +3491,7 @@
       workflows={workflowTabs.map((w) => ({ id: w.id, label: workflowLabel(w.id, w.filterLabel, tr) }))}
       openModel={(entry, choice) => {
         if (choice) rememberPackageChoice(entry, choice);
-        chooseModel(entry.id);
+        chooseModel(entry.id, choice);
         tab = 'studio';
       }}
     />
