@@ -12,7 +12,7 @@ Nano decoder, whose contexts were each twice what they should have been.
 
 Needs the checkpoints' config.json files, so it is a tool rather than a test:
 
-    python3 tools/check_moss_codec_contexts.py --nano-config /path/to/config.json
+    python3 tools/models/moss_codec_contexts_check.py --nano-config /path/to/config.json
 """
 import argparse
 import json
@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--v1-config", type=Path)
     parser.add_argument("--v2-config", type=Path)
     parser.add_argument("--nano-config", type=Path)
-    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1] /
+    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[2] /
                         "src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp")
     args = parser.parse_args()
     if not any((args.v1_config, args.v2_config, args.nano_config)):

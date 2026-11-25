@@ -30,8 +30,8 @@ This is not a waveform-generation or performance benchmark.
 ## MOSS context configuration
 
 ```sh
-python tools/check_moss_codec_contexts.py --v1-config /path/to/v1/config.json
-python tools/check_moss_codec_contexts.py --v2-config /path/to/v2/config.json \
+python tools/models/moss_codec_contexts_check.py --v1-config /path/to/v1/config.json
+python tools/models/moss_codec_contexts_check.py --v2-config /path/to/v2/config.json \
   --nano-config /path/to/nano/config.json
 ```
 
