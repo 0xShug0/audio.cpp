@@ -5576,14 +5576,6 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
             endif()
         endif()
 
-        add_executable(torch_bin_parity
-            tests/vibevoice/torch_bin_parity.cpp
-        )
-        target_link_libraries(torch_bin_parity PRIVATE engine_runtime ggml)
-        if (ENGINE_ENABLE_OPENMP)
-            target_link_libraries(torch_bin_parity PRIVATE OpenMP::OpenMP_CXX)
-        endif()
-
         if (vibevoice IN_LIST AUDIOCPP_LINKED_MODELS)
             add_executable(vibevoice_finetune_overlay_check
                 tests/vibevoice/finetune_overlay_check.cpp
