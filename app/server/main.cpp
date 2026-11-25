@@ -93,6 +93,9 @@ void print_help() {
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory|embedded>] [--voice-dir <directory>]\n"
         << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
+        << "                [--model <path> --family <family>] [--model-id <id>] [--task <task>] [--mode offline|streaming]\n"
+        << "                [--load-option key=value] [--session-option key=value] [--request-option key=value]\n"
+        << "                [--voice-ref <wav>] [--reference-text <text>] [--voice-id <id>]\n"
         << "                [--log] [--log-file <path>] [--load-progress 0|1]\n"
         << "                [--cors-origins <origins>] [--resample-kernel-cache-mb <mb>]\n"
         << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
@@ -102,6 +105,12 @@ void print_help() {
         << "  --ui-management                  allow WebUI model management and downloads; requires\n"
         << "                                   AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON at build time\n"
         << "  --models-root <directory>         default WebUI models folder; overrides config models_root\n"
+        << "  --model <path> --family <family>  configure a model without a config file, or override its entry\n"
+        << "  --model-id <id>                  model id; required to override a multi-model config\n"
+        << "  --load-option/--session-option   merge model options by key; CLI values override config values\n"
+        << "  --request-option key=value      default request option; explicit HTTP request values override it\n"
+        << "                                   common CLI flags such as --seed and --temperature also set defaults\n"
+        << "  --voice-ref/--voice-id           default reference audio or voice; HTTP requests may override it\n"
         << "  --host <ip|unix:path>            IPv4 address or POSIX Unix socket; default 127.0.0.1\n"
         << "  --port <port>                    TCP listening port; ignored for unix:; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu|sycl  default cuda (rocm is an alias for hip)\n"
@@ -195,8 +204,8 @@ int main(int argc, char ** argv) {
         if (parallel_jobs) { engine::io::json::enable_serialized_json_parsing(); }
         const auto config_path = arg_value(argc, argv, "--config");
         const bool ui_requested = has_arg(argc, argv, "--ui");
-        if (!config_path.has_value() && !ui_requested) {
-            throw std::runtime_error("missing required --config argument (or use --ui for the native WebUI)");
+        if (!config_path.has_value() && !ui_requested && !has_arg(argc, argv, "--model")) {
+            throw std::runtime_error("provide --config, --model with --family, or --ui for the native WebUI");
         }
         const auto log_file = arg_value(argc, argv, "--log-file");
         engine::debug::configure_logging(engine::debug::LoggingConfig{
@@ -226,7 +235,7 @@ int main(int argc, char ** argv) {
         auto config = config_path.has_value()
             ? minitts::server::load_server_config(*config_path, parallel_jobs)
             : minitts::server::ServerConfig{};
-        if (!config_path.has_value()) {
+        if (!config_path.has_value() && !has_arg(argc, argv, "--model")) {
             config.lazy_load = true;
         }
         if (ui_requested) {
@@ -304,6 +313,7 @@ int main(int argc, char ** argv) {
             auto [key, value] = parse_key_value_arg(option, "--frontend-option");
             config.frontend_options[std::move(key)] = std::move(value);
         }
+        minitts::server::apply_model_cli_options(config, argc, argv);
         if (config.frontend_listener.empty() && !config.frontend_options.empty()) {
             throw std::runtime_error("--frontend-option requires --frontend-listener");
         }

@@ -35,6 +35,49 @@ For optimization PRs, include before/after measurements. For behavior changes, e
 
 **Please keep no more than 3 PRs open at the same time, including draft PRs.**
 
+## Tests and Script Placement
+
+Choose the category by what the check executes, not by its filename or the model that owns the code.
+
+| Category | What belongs here | Source location | CMake registration and gate |
+|---|---|---|---|
+| Unit/component | Bounded checks with synthetic inputs or small checked-in fixtures: tensor math, tokenization, preprocessing, parsing, cache state and lifecycle contracts. Existing self-contained server, manager and C API contract checks can stay here. No pretrained checkpoints or full-model inference. | Shared checks in `tests/unittests/`; model-owned component checks in `tests/<family>/`. | `cmake/tests/unit.cmake`; `ENGINE_BUILD_TESTS` |
+| Extended non-model | Optional backend probes and integration checks involving application processes, transports, installation or other non-model workflows. | The relevant subsystem directory under `tests/`, keeping related checks together. | `cmake/tests/extended.cmake`; `ENGINE_BUILD_EXTENDED_TESTS` |
+| Model | Pretrained-checkpoint loading, full inference, end-to-end Python/model-reference parity, quality, long-form generation, model performance and real model-session reuse. | `tests/<family>/`. | `cmake/tests/models.cmake`; `ENGINE_BUILD_MODEL_TESTS` |
+
+Use `tests/<family>/` for both core and community models. Do not create a separate `tests/community_models/` hierarchy.
+
+A model-family heading in `unit.cmake` identifies ownership of a component check; it is not a place for general model tests. Describe the actual component in the section comment. A unit test must not gain an optional checkpoint argument that turns it into a model-inference test; put that check in the model category instead.
+
+Keep every checkpoint-dependent target, including manual parity probes that are not registered with CTest, exclusively behind `ENGINE_BUILD_MODEL_TESTS`. Do not also enable it through the unit or extended option. Family/backend availability conditions can remain inside the category file. An unavailable required checkpoint is a documented skip or setup error, not evidence that inference or parity passed.
+
+For a normal C++ test, use the build-and-register helper in the appropriate category file:
+
+```cmake
+add_engine_test(audio_chunking_test
+    tests/unittests/test_audio_chunking.cpp)
+```
+
+Arguments after the source file are passed to the executable at test time, for example `--log`. Keep special libraries, compile definitions, skip codes and timeouts explicit with normal CMake commands. Use `add_engine_test_target()` for a manual probe or an executable with multiple or conditional CTest registrations; it does not register a test automatically. Do not add another test-registration block to the root CMake file or a model build block.
+
+### Scripts: `tests/` versus `tools/`
+
+For a new model, normally the only new script under `tools/` should be a GGUF conversion script, and only when the existing conversion path needs it. Extend existing runners and conversion utilities before adding another script.
+
+- **GGUF conversion and required preparation:** use `tools/gguf/<family>_convert.py`. Put multiple related scripts and their required support files together under `tools/gguf/<family>/`, with model-first names describing their actual stage, such as `whistle_asr_assets_extract.py` and `whistle_asr_convert.py`.
+- **Validation scripts:** Python reference runners, tensor/reference dumpers, fixture generators, parity comparisons, lifecycle checks and model benchmarks belong with the relevant tests under `tests/`, even when they are run manually. They do not belong in `tools/gguf/` merely because they read a GGUF.
+- **User-facing utilities:** use an existing `tools/` subsystem when the script provides a reusable workflow rather than validation. Propose a new utility or tools directory separately; a model port should not bring an unrelated collection of one-off tools.
+
+Scripts must accept explicit model/input/output paths, document dependencies and pin the relevant upstream/checkpoint revisions. Do not hard-code a contributor's home directory, private weights or machine-specific build paths.
+
+### Fixtures and Validation Evidence
+
+Prefer synthetic inputs and the existing minimal assets under `assets/resources/` and `tests/fixtures/`. Keep numerical references independent of the implementation under test. Add a small checked-in fixture only when the existing assets or generated inputs cannot exercise the behavior, and explain why it is needed.
+
+Do not commit checkpoints, generated tensor dumps, WAV/video outputs, build directories or raw benchmark logs as test fixtures. Write generated artifacts to an explicit ignored output directory. Keep concise reports with reproducible commands and links to externally hosted artifacts; the repository should not become a store of one-off validation outputs.
+
+End-to-end cases should cover distinct execution paths. Different settings are worth additional cases when they trigger different paths or a specific boundary condition. For regression measurements, identify the exact baseline commit, package, precision, backend and request settings; do not silently change the baseline between comparisons.
+
 ## Before Adding a Model
 
 Please check the supported model table in [README.md](README.md), the community model docs, and open PRs/issues before starting a new model port. Many requests are better handled by extending an existing family with a new variant, route, GGUF package, backend fix, or UI surface.

@@ -9,6 +9,7 @@ require the experimental parallel runtime.
 
 - [Quick start: full WebUI](#full-webui-no-config-file)
 - [Quick start: first API request](#configured-api-first-request)
+- [Start a model from command-line arguments](#model-startup-without-a-config-file)
 - [Build and choose a server mode](#build)
 - [Configure models](#config)
 - [Map CLI options to server config](#cli-options-to-server-configuration)
@@ -407,10 +408,44 @@ model coverage differ on other backends. `--backend` overrides the config for
 the process, not for an individual HTTP request. Use separate server processes
 on different ports if clients need different backends simultaneously.
 
+### Model startup without a config file
+
+Configure one model directly, with or without the WebUI:
+
+```bash
+build/debug/bin/audiocpp_server --ui --backend cpu --threads 8 \
+  --task tts --family pocket_tts --model /path/pocket-tts-english-bf16.gguf \
+  --voice-ref assets/resources/sample.wav --seed 42 --log
+```
+
+The default model id is the family name (`pocket_tts` here); use `--model-id`
+to choose another. Send text through the UI or an HTTP request's `input` field.
+`--text` is not a server startup option and does not generate speech at startup.
+
+CLI values override config values only for the selected model, merging option
+maps by key rather than replacing them. A single configured model is selected
+automatically; a multi-model config requires `--model-id`:
+
+```bash
+build/debug/bin/audiocpp_server --config server.json --model-id pocket \
+  --session-option pocket_tts.voice_state_cache_slots=2 --seed 42 --log
+```
+
+`--load-option`, `--session-option` and `--request-option` may be repeated.
+Common request flags such as `--language`, `--temperature` and `--max-tokens`
+set default request options. `--voice-ref`, `--reference-text` and `--voice-id`
+set the default voice. Choosing a new voice source replaces the previous default
+voice preset, including its voice-specific options; supply its matching
+`--reference-text` when needed. Named presets remain available unchanged.
+Explicit HTTP request settings override these defaults.
+Relative CLI model/reference paths resolve against the working directory;
+relative paths in the config retain their config-directory resolution.
+Config-only and UI-only startup retain their existing behavior.
+
 ### CLI options to server configuration
 
-Inference CLI flags are not arbitrary server-config fields. Put each model
-option in its documented scope; request options go in `options` on the speech
+The supported startup flags below populate existing model-config fields. Put each model
+option in its documented scope; per-request options go in `options` on the speech
 endpoint, or `request.options` on generic task endpoints.
 
 | Inference CLI | Server config | Per-request override |
@@ -610,8 +645,8 @@ build/debug/bin/audiocpp_server --config server.json --voice-dir /absolute/path/
 
 Use `--no-ui` for API-only operation. Full model-management UI requires the
 [native-manager build](#choose-a-server-mode) and `--ui --ui-management`.
-Run `audiocpp_server --help` for server flags; inference controls belong in the
-model option maps, not as arbitrary server command-line flags.
+Run `audiocpp_server --help` for startup flags. Model-specific controls use
+`--load-option`, `--session-option` or `--request-option` in their documented scope.
 
 Keep `host` at `127.0.0.1` for local access. `0.0.0.0` binds all interfaces;
 clients connect using the server's actual address, not `0.0.0.0`. Do not expose

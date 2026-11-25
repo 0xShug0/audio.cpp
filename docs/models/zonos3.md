@@ -256,7 +256,7 @@ instead of 23.4 s because the voice cache skipped the encoder.
 
 ## Validation
 
-`tests/community_models/zonos3/make_oracle.sh` runs the ZONOS3 native tools on
+`tests/zonos3/make_oracle.sh` runs the ZONOS3 native tools on
 a reference voice. `zonos3_parity` compares each component against that output.
 The tests are registered with CTest when the build is configured with
 `-DAUDIOCPP_ZONOS3_MODEL_DIR=<gguf dir> -DAUDIOCPP_ZONOS3_PARITY_DIR=<oracle dir>`:

@@ -443,8 +443,7 @@ checkpoint does not override them.
 
 The parity probes compare the port against tensors dumped from the Python
 reference without adding reference-only inputs to the request surface. Build
-them with `-DENGINE_BUILD_TESTS=ON` (or `-DENGINE_BUILD_EXTENDED_TESTS=ON` /
-`-DENGINE_BUILD_MODEL_TESTS=ON`).
+them with `-DENGINE_BUILD_MODEL_TESTS=ON`.
 
 | Probe | Reference dump | Compares |
 |---|---|---|

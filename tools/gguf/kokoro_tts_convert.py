@@ -7,6 +7,7 @@ Python is not used for inference.
 import argparse
 import importlib.metadata
 import json
+import re
 import struct
 from pathlib import Path
 import numpy as np
@@ -38,10 +39,10 @@ def flatten_torch_state(prefix, value, out):
     out[prefix] = value.detach().cpu().contiguous()
 
 
-def load_official_weights(source):
-    checkpoint = source / 'kokoro-v1_0.pth'
+def load_official_weights(source, checkpoint_name='kokoro-v1_0.pth'):
+    checkpoint = source / checkpoint_name
     if not checkpoint.is_file():
-        raise RuntimeError('official Kokoro source must contain kokoro-v1_0.pth')
+        raise RuntimeError(f'Kokoro source must contain {checkpoint_name}')
     import torch
     state = torch.load(checkpoint, map_location='cpu')
     flat = {}
@@ -67,14 +68,28 @@ def add_tree(files, root, prefix):
             files[prefix + '/' + path.relative_to(root).as_posix()] = path.read_bytes()
 
 
+def voice_files_and_ids(source):
+    """voices/*.pt named <lang><gender>_<name>, or a voices.json list of {file, kokoro_id} (Kokoro fine-tunes such as
+    kale-tts-1-base); kokoro_id follows the same <lang><gender>_<name> form, which selects the language"""
+    listing = source / 'voices.json'
+    if listing.is_file():
+        entries = json.loads(listing.read_text())
+        if isinstance(entries, list) and entries and all('file' in e for e in entries):
+            missing = [e.get('name', e['file']) for e in entries if not re.fullmatch(r'[a-z][fm]_\w+', e.get('kokoro_id', ''))]
+            if missing:
+                raise RuntimeError('voices.json needs a "kokoro_id" such as "af_name" for every voice: ' + ', '.join(missing))
+            return [(source / e['file'], e['kokoro_id']) for e in entries]
+    return [(path, path.stem) for path in sorted((source / 'voices').glob('*.pt'))]
+
+
 def load_official_voices(source):
-    voice_files = sorted((source / 'voices').glob('*.pt'))
+    voice_files = voice_files_and_ids(source)
     if not voice_files:
         raise RuntimeError('official Kokoro source must contain voices/*.pt')
     import torch
     voices = {}
     files = {}
-    for path in voice_files:
+    for path, voice_id in voice_files:
         tensor = torch.load(path, map_location='cpu')
         if not torch.is_tensor(tensor):
             raise RuntimeError(f'Kokoro voice file is not a tensor: {path}')
@@ -84,9 +99,9 @@ def load_official_voices(source):
         if array.ndim != 2:
             raise RuntimeError(f'Kokoro voice tensor must be rank 2 or [rows,1,cols]: {path}')
         array = np.ascontiguousarray(array, dtype=np.float32)
-        out_name = path.stem + '.bin'
+        out_name = voice_id + '.bin'
         files['voices/' + out_name] = array.tobytes()
-        voices[path.stem] = {'rows': int(array.shape[0]), 'cols': int(array.shape[1]), 'path': out_name}
+        voices[voice_id] = {'rows': int(array.shape[0]), 'cols': int(array.shape[1]), 'path': out_name}
     return voices, files
 
 
@@ -153,7 +168,7 @@ def load_multilingual_resources():
     return files
 
 
-def load_official_source(source, embed_multilingual_resources):
+def load_official_source(source, embed_multilingual_resources, checkpoint='kokoro-v1_0.pth'):
     config_path = source / 'config.json'
     if not config_path.is_file():
         raise RuntimeError('official Kokoro source must contain config.json')
@@ -169,12 +184,13 @@ def load_official_source(source, embed_multilingual_resources):
     files.update(load_g2p_tables())
     if embed_multilingual_resources:
         files.update(load_multilingual_resources())
-    return config, voices, files, load_official_weights(source)
+    return config, voices, files, load_official_weights(source, checkpoint)
 
 
-def convert(source, output, precision, overwrite=False, model_spec=None, embed_multilingual_resources=False):
+def convert(source, output, precision, overwrite=False, model_spec=None, embed_multilingual_resources=False,
+            checkpoint='kokoro-v1_0.pth'):
     if output.exists() and not overwrite: raise FileExistsError(output)
-    _, voices, files, weights = load_official_source(source, embed_multilingual_resources)
+    _, voices, files, weights = load_official_source(source, embed_multilingual_resources, checkpoint)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix('.gguf.partial')
     writer = ResourceWriter(str(temporary), 'kokoro_tts')
@@ -243,7 +259,9 @@ if __name__ == '__main__':
     p.add_argument('--embed-multilingual-resources', action='store_true')
     p.add_argument('--overwrite', action='store_true')
     p.add_argument('--type', choices=['q8_0', 'bf16', 'both'], default='both')
+    p.add_argument('--checkpoint', default='kokoro-v1_0.pth', help='checkpoint file in --source (a Kokoro fine-tune may name it differently)')
+    p.add_argument('--name', default='kokoro-82m', help='output file stem: <name>-<type>.gguf')
     args = p.parse_args()
     for precision in (['q8_0', 'bf16'] if args.type == 'both' else [args.type]):
-        convert(args.source, args.output_dir / ('kokoro-82m-' + precision + '.gguf'),
-                precision, args.overwrite, args.model_spec, args.embed_multilingual_resources)
+        convert(args.source, args.output_dir / (args.name + '-' + precision + '.gguf'),
+                precision, args.overwrite, args.model_spec, args.embed_multilingual_resources, args.checkpoint)
