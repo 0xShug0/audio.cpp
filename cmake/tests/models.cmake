@@ -183,11 +183,9 @@ endif()
 
 # espeak
 if (sanotts IN_LIST AUDIOCPP_LINKED_MODELS AND inflect_v2 IN_LIST AUDIOCPP_LINKED_MODELS)
-    if (AUDIOCPP_STATIC_ESPEAK)
-        audiocpp_stage_espeak(espeak_frontend_probe)
-    endif()
     add_engine_test_target(espeak_frontend_probe tests/unittests/espeak_frontend_probe.cpp)
     if (AUDIOCPP_STATIC_ESPEAK)
+        audiocpp_stage_espeak(espeak_frontend_probe)
         add_test(NAME espeak_static_frontend_test COMMAND espeak_frontend_probe - - concurrent)
     endif()
     if (MSVC)
@@ -568,11 +566,11 @@ endif()
 
 # kokoro_tts
 if (kokoro_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
+    add_engine_test_target(kokoro_g2p_probe tests/kokoro_tts/kokoro_g2p_probe.cpp)
     if (AUDIOCPP_STATIC_ESPEAK)
         audiocpp_stage_espeak(kokoro_g2p_probe)
     endif()
-    add_engine_test(kokoro_cpu_kernel_test tests/kokoro_tts/kokoro_cpu_kernel_test.cpp)
-    add_engine_test_target(kokoro_g2p_probe tests/kokoro_tts/kokoro_g2p_probe.cpp)
 endif()
 
 # kugelaudio
