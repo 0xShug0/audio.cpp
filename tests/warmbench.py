@@ -71,7 +71,31 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/kokoro_tts_warm_bench",
         "python_script": "tests/kokoro_tts/kokoro_tts_python_warm_bench.py",
         "model": "models/kokoro-82m-v1_0-ggml",
-        "case_catalog": "tests/kokoro_tts/kokoro_tts_warm_bench_cases.txt",
+        "text_case_catalog": [
+            "# Kokoro warm bench multi-request case catalog",
+            "# Format:",
+            "# [case_name]",
+            "# one text per line",
+            "",
+            "[cuda_grow_current_useful]",
+            "Cobalt ferries slip beneath the signal tower while amber flyers cling to the shoreline.",
+            "Quiet coaches wait near the arch.",
+            "Glass trams circle the winter garden as coral notices scatter across the marble arcade.",
+            "Glass trams circle the winter garden as coral notices scatter across the marble arcade.",
+            "Silver carts wait by the pier.",
+            "",
+            "[cuda_grow_same_token_frame_pair]",
+            "Mellow buses gather near the market.",
+            "Quiet wagons gather by the station.",
+            "",
+            "[long_then_shorts]",
+            "At the museum dinner, the last plates were cleared away before a noisy game of Scrabble began, and our final play was Bon, a Japanese Buddhist festival rather than the candy I claimed it was. The modest word still helped our team lose by only 53 points, which everyone agreed was a strangely satisfying improvement.",
+            "Silver carts wait by the pier.",
+            "Quiet wagons gather by the station.",
+            "Morning barges drifted past the bridge as the clerk reread the notice and tucked the blue envelope in her coat.",
+            "Rain taps softly on the glass roof.",
+            "Small lamps glow along the arcade.",
+        ],
         "voice_id": "af_heart",
         "speaking_rate": 1.0,
         "max_input_tokens": 512,
@@ -83,7 +107,27 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "cpp_bin": "build/debug/bin/pocket_tts_warm_bench",
         "python_script": "tests/pocket_tts/pocket_tts_python_warm_bench.py",
         "model": "models/pocket-tts/languages/english",
-        "case_catalog": "tests/pocket_tts/pocket_tts_warm_bench_cases.txt",
+        "text_case_catalog": [
+            "[short]",
+            "Hello world, this is Pocket TTS.",
+            "Soft lanterns flickered near the rails.",
+            "Rain traced silver lines across the window.",
+            "",
+            "[medium]",
+            "Lantern vendors folded their maps beside the station while rain tapped softly on the glass roof above the crowd.",
+            "Morning barges drifted past the bridge as the clerk reread the notice and tucked the blue envelope in her coat.",
+            "",
+            "[long]",
+            "The museum guide paused at the bronze clock so the children could hear its careful chime echo through the hall, while the last visitors moved slowly past the painted ceiling and toward the river doors.",
+            "",
+            "[long_then_shorts]",
+            "A week ago a friend invited a couple of other couples over for dinner. Eventually, the food, but not the wine, was cleared off the table for what turned out to be some fierce Scrabbling. Heeding the strategy of going for the shorter, more valuable word over the longer cheaper word, our final play was Bon, which, as luck would have it, happens to be a Japanese Buddhist festival, and not, as I had originally asserted while laying the tiles on the board, one half of a chocolate-covered cherry treat. Anyway, the strategy worked. My team only lost by 53 points instead of 58. Just the day before, our host had written of the challenges of writing short. In journalism, my friend's chosen trade, and mostly my own too, Mark Twain's observation undoubtedly applies: I didn't have time to write a short letter, so I wrote a long one instead. The principle holds across genres, in letters, reporting, and other writing. It is harder to be concise than to blather. Good writing is boiled down, not baked full of air like a souffle. No matter how yummy souffles may be.",
+            "Silver carts wait by the pier.",
+            "Quiet wagons gather by the station.",
+            "Morning barges drifted past the bridge as the clerk reread the notice and tucked the blue envelope in her coat.",
+            "Rain taps softly on the glass roof.",
+            "Small lamps glow along the arcade.",
+        ],
         "voice_id": "alba",
         "language": "english",
         "min_text_length": 65,
@@ -96,7 +140,17 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "model": "models/Qwen3-TTS-12Hz-0.6B-Base",
         "clone_audio": "resources/sample.wav",
         "reference_text": "Some call me nature. Others call me Mother Nature. I've been here for over 4.5 billion years. 22,500 times longer than you.",
-        "case_catalog": "tests/qwen3_tts/qwen3_tts_warm_bench_cases.txt",
+        "text_case_catalog": [
+            "[default]",
+            "The first request is intentionally short, so the session can show whether tiny text reuses the existing talker and decoder graphs cleanly.",
+            "The second request is longer and contains numbers like 12, 48, and 2026 so ASR parity can catch dropped words, reordered phrases, and digit handling issues in a multi-request run.",
+            "After a longer request, this shorter sentence checks that graph capacity reuse does not turn into a memory staircase or stale-buffer behavior.",
+            "This request changes rhythm and punctuation: yes, it has commas, pauses, and a final question, because rebuild and reuse bugs often hide in only one sentence shape.",
+            "For a heavier case, the speaker describes a careful benchmark session where warmup comes first, then a longer generation, then a compact request that should remain stable.",
+            "",
+            "[one_request]",
+            "Hi there, how are you doing?",
+        ],
         "case_overrides": {
             "one_request": {
                 "model": "models/Qwen3-TTS-12Hz-1.7B-Base",
@@ -121,7 +175,10 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "task": "voice_design",
         "language": "Chinese",
         "voice_design_instruct": "体现撒娇稚嫩的萝莉女声，音调偏高且起伏明显，营造出黏人、做作又刻意卖萌的听觉效果。",
-        "case_catalog": "tests/qwen3_tts/qwen3_tts_voice_design_warm_bench_cases.txt",
+        "text_case_catalog": [
+            "哥哥，你回来啦，人家等了你好久好久了，要抱抱！",
+            "这份设计声音应该听起来稚嫩黏人，但每个字仍然要清楚自然。",
+        ],
         "max_new_tokens": 2048,
         "min_text_length": 18,
         "whisper_model": "small",
@@ -138,7 +195,12 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "language": "English",
         "speaker": "Ryan",
         "custom_voice_instruct": "Very happy.",
-        "case_catalog": "tests/qwen3_tts/qwen3_tts_custom_voice_warm_bench_cases.txt",
+        "text_case_catalog": [
+            "The custom voice request should sound cheerful and clear while keeping the words easy to recognize.",
+            "She said she would be here by noon, and the whole room seemed brighter when she arrived.",
+            "This second request checks that a long lived session can reuse the same custom speaker cleanly.",
+            "When the benchmark changes requests, the speaker identity should stay stable and the audio should remain intelligible.",
+        ],
         "max_new_tokens": 2048,
         "min_text_length": 65,
         "whisper_model": "tiny.en",
@@ -150,7 +212,27 @@ FAMILY_CONFIG: dict[str, dict[str, Any]] = {
         "python_script": "tests/chatterbox/chatterbox_python_warm_bench.py",
         "model": "models/chatterbox",
         "clone_audio": "resources/sample.wav",
-        "case_catalog": "tests/chatterbox/chatterbox_warm_bench_cases.txt",
+        "text_case_catalog": [
+            "[long_voice_clone]",
+            "The lighthouse keeper had learned to recognize storms long before the clouds arrived. On quiet mornings, he walked the iron stairs with a cup of coffee in one hand and a notebook in the other, recording the rhythm of the waves, the repairs still waiting, and the names of ships that crossed the silver horizon. Today he speaks slowly and clearly, because this warmbench request should be long enough to exercise voice cloning, text normalization, token generation, and waveform synthesis in one session.",
+            "",
+            "[long_lived_short_warmup_4req_warmup]",
+            "The warmup voice says one short sentence clearly.",
+            "",
+            "[long_lived_short_warmup_4req]",
+            "The lighthouse keeper had learned to recognize storms long before the clouds arrived. On quiet mornings, he walked the iron stairs with a cup of coffee in one hand and a notebook in the other, recording the rhythm of the waves, the repairs still waiting, and the names of ships that crossed the silver horizon. Today he speaks slowly and clearly, because this warmbench request should be long enough to exercise voice cloning, text normalization, token generation, and waveform synthesis in one session.",
+            "The keeper closes the notebook and speaks a shorter reminder about the tide.",
+            "Later that evening, the same keeper returns to the lantern room and describes the coast in greater detail. He talks about gulls circling above the rocks, cold salt collecting on the windows, and the distant bell that marks every passing hour. The sentence stays steady and natural while the session reuses what it can and grows only where the request truly needs more room.",
+            "At dawn, after the storm has moved beyond the headland, the keeper reads one final longer passage into the radio. He explains how the beam swept across the water all night, how the harbor lights flickered and returned, and how each ship answered with a small signal before disappearing into the morning haze. This last request is intentionally long enough to check whether the session remains stable after several changes in request size.",
+            "",
+            "[long_lived_short_warmup_3req_alt_warmup]",
+            "The speaker warms up with one calm line.",
+            "",
+            "[long_lived_short_warmup_3req_alt]",
+            "The archivist unlocks the reading room and says the morning light makes every old map easier to follow.",
+            "She places three brittle journals on the table, then explains how each entry records a different expedition, a different weather pattern, and a different promise made before the travelers left the harbor.",
+            "By the end of the afternoon, the archivist is still speaking in the same measured voice, describing the ink stains, the folded charts, the repaired bindings, and the quiet satisfaction of finding a missing page exactly where it should have been. This much longer request checks that the session handles a steady increase in size after a short warmup without changing the text set between runs.",
+        ],
         "default_warmup": 0,
         "max_new_tokens": 1000,
         "min_text_length": 70,
@@ -936,11 +1018,11 @@ def resolve_tts_texts(
             request_manifest["options"] = dict(options)
         return selected, request_manifest
 
-    case_catalog_path = REPO_ROOT / config["case_catalog"]
+    catalog_lines = config["text_case_catalog"]
     used_case_names: list[str] = []
     if args.case_names:
         used_case_names = list(args.case_names)
-        texts = load_named_case_texts(case_catalog_path, used_case_names, args.requests_per_session)
+        texts = load_named_case_texts(catalog_lines, used_case_names, args.requests_per_session)
     elif args.texts:
         if len(args.texts) < args.requests_per_session:
             raise RuntimeError(
@@ -949,7 +1031,7 @@ def resolve_tts_texts(
         texts = args.texts[: args.requests_per_session]
     else:
         texts = choose_diverse_texts(
-            load_case_texts(case_catalog_path),
+            load_case_texts(catalog_lines),
             args.requests_per_session,
             scenario_seed(args.seed, family, mode),
             int(config.get("min_text_length", 12)),
@@ -957,7 +1039,7 @@ def resolve_tts_texts(
 
     warmup_text = args.warmup_text
     if not warmup_text and family == "chatterbox" and used_case_names:
-        warmup_text = load_named_case_warmup_text(case_catalog_path, used_case_names)
+        warmup_text = load_named_case_warmup_text(catalog_lines, used_case_names)
     request_manifest: dict[str, Any] = {"texts": texts, "warmup_text": warmup_text}
     if used_case_names:
         request_manifest["case_names"] = used_case_names
@@ -1490,9 +1572,9 @@ def compare_whisper_outputs(
     }
 
 
-def load_case_texts(path: Path) -> list[str]:
+def load_case_texts(catalog_lines: list[str]) -> list[str]:
     texts: list[str] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for raw in catalog_lines:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -1501,14 +1583,14 @@ def load_case_texts(path: Path) -> list[str]:
         texts.append(line)
     deduped = list(dict.fromkeys(texts))
     if not deduped:
-        raise RuntimeError(f"no texts found in case catalog: {path}")
+        raise RuntimeError("no texts found in text case catalog")
     return deduped
 
 
-def load_text_case_catalog(path: Path) -> dict[str, list[str]]:
+def load_text_case_catalog(catalog_lines: list[str]) -> dict[str, list[str]]:
     cases: dict[str, list[str]] = {}
     current_case = ""
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for raw in catalog_lines:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -1517,28 +1599,28 @@ def load_text_case_catalog(path: Path) -> dict[str, list[str]]:
             cases.setdefault(current_case, [])
             continue
         if not current_case:
-            raise RuntimeError(f"case catalog entry is missing a [case] header: {path}")
+            raise RuntimeError("text case catalog entry is missing a [case] header")
         cases[current_case].append(line)
     return cases
 
 
-def load_named_case_texts(path: Path, case_names: list[str], count: int) -> list[str]:
-    catalog = load_text_case_catalog(path)
+def load_named_case_texts(catalog_lines: list[str], case_names: list[str], count: int) -> list[str]:
+    catalog = load_text_case_catalog(catalog_lines)
     texts: list[str] = []
     for case_name in case_names:
         if case_name not in catalog:
             available = ", ".join(sorted(catalog))
-            raise RuntimeError(f"unknown case name {case_name!r} in {path}; available: {available}")
+            raise RuntimeError(f"unknown case name {case_name!r} in text case catalog; available: {available}")
         texts.extend(catalog[case_name])
     if len(texts) < count:
         raise RuntimeError(f"need {count} texts from selected cases, only found {len(texts)}")
     return texts[:count]
 
 
-def load_named_case_warmup_text(path: Path, case_names: list[str]) -> str:
+def load_named_case_warmup_text(catalog_lines: list[str], case_names: list[str]) -> str:
     if not case_names:
         return ""
-    catalog = load_text_case_catalog(path)
+    catalog = load_text_case_catalog(catalog_lines)
     warmup_case = f"{case_names[0]}_warmup"
     warmup_texts = catalog.get(warmup_case, [])
     return warmup_texts[0] if warmup_texts else ""

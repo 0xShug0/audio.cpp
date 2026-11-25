@@ -87,8 +87,7 @@ std::vector<SopranoBenchRequest> parse_requests(const std::string & request_sequ
     return requests;
 }
 
-// Parses the shared ``[section]`` case catalog (same file the Python reference
-// warmbench consumes: tests/soprano_tts/soprano_warm_bench_cases.txt).
+// Parses an explicitly supplied ``[section]`` case catalog.
 std::vector<SopranoBenchRequest> parse_cases(
     const std::filesystem::path & cases_path,
     const std::vector<std::string> & sections) {
@@ -209,10 +208,6 @@ engine::io::json::Value step_json(
 
 int main(int argc, char ** argv) {
     try {
-#ifndef ENGINE_REPO_ROOT
-#error "soprano_warm_bench requires the ENGINE_REPO_ROOT compile definition (provided by its CMake target)"
-#endif
-        const std::filesystem::path repo_root = ENGINE_REPO_ROOT;
         const std::filesystem::path model_path = engine::tools::arg_value(argc, argv, "--model", "models/soprano_pkg");
         const std::string backend_name = engine::tools::arg_value(argc, argv, "--backend", "cpu");
         const int device = engine::tools::int_arg(argc, argv, "--device", 0);
@@ -226,8 +221,11 @@ int main(int argc, char ** argv) {
             parse_warmup_request(engine::tools::arg_value(argc, argv, "--warmup-request-json", ""));
         const auto request_sequence_json = engine::tools::arg_value(argc, argv, "--request-sequence-json", "");
         const std::filesystem::path cases_path = engine::tools::arg_value(
-            argc, argv, "--cases", (repo_root / "tests/soprano_tts/soprano_warm_bench_cases.txt").string());
+            argc, argv, "--cases", "");
         const auto sections = engine::tools::split_csv(engine::tools::arg_value(argc, argv, "--sections", ""));
+        if (request_sequence_json.empty() && cases_path.empty()) {
+            throw std::runtime_error("Soprano warmbench requires --request-sequence-json or explicit --cases PATH");
+        }
 
         if (!timing_path.parent_path().empty()) {
             std::filesystem::create_directories(timing_path.parent_path());

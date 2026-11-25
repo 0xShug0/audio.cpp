@@ -17,7 +17,6 @@ REFERENCE_POCKET_TTS_ROOT = REPO_ROOT / "reference" / "pocket-tts"
 if str(REFERENCE_POCKET_TTS_ROOT) not in sys.path:
     sys.path.insert(0, str(REFERENCE_POCKET_TTS_ROOT))
 kDefaultWarmupText = "At sunrise the studio monitors clicked on, and the first calibration phrase rolled across the room with steady timing."
-kCaseCatalogPath = REPO_ROOT / "tools" / "pocket_tts" / "pocket_tts_warm_bench_cases.txt"
 kDefaultSharedNoiseSteps = 16384
 kDefaultSharedNoisePath = REPO_ROOT / "build" / "logs" / "parity" / "pocket_tts" / "pocket_tts_noise.bin"
 
@@ -114,9 +113,11 @@ def resolve_noise_path(path: Path | None) -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Warm repeated Python benchmark for the Pocket TTS reference package.")
     parser.add_argument("--mode", choices=("parity", "performance"), default="parity")
+    parser.add_argument("--cases", type=Path, help="Explicit [case] text catalog for --case-name.")
     parser.add_argument("--model", type=Path, default=Path("models/pocket-tts"))
     parser.add_argument("--text", action="append", dest="texts", default=[])
-    parser.add_argument("--case-name", action="append", dest="case_names", default=[])
+    parser.add_argument("--case-name", action="append", dest="case_names", default=[],
+                        help="Append one named text case from --cases PATH.")
     parser.add_argument("--language", default="english")
     parser.add_argument("--voice-id", default="")
     parser.add_argument("--clone-audio", type=Path)
@@ -249,7 +250,9 @@ def main() -> int:
     args = parse_args()
     texts = list(args.texts)
     if args.case_names:
-        case_catalog = load_case_catalog(kCaseCatalogPath)
+        if args.cases is None:
+            raise RuntimeError("--case-name requires --cases PATH")
+        case_catalog = load_case_catalog(args.cases)
         for case_name in args.case_names:
             if case_name not in case_catalog:
                 raise RuntimeError(f"unknown Pocket TTS warm bench case: {case_name}")

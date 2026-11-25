@@ -2,7 +2,7 @@
 """Soprano TTS Python warm bench — runs the official Python reference and collects timing.
 
 Usage:
-    python3 tests/soprano_tts/soprano_python_warm_bench.py --model models/Soprano-1.1-80M --out-dir build/logs/warmbench/soprano_tts_py
+    python3 tests/soprano_tts/soprano_python_warm_bench.py --model models/Soprano-1.1-80M --cases /path/to/cases.txt --out-dir build/logs/warmbench/soprano_tts_py
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def load_cases(path: str) -> dict[str, list[str]]:
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--model", default="models/Soprano-1.1-80M")
-    ap.add_argument("--cases", default="tests/soprano_tts/soprano_warm_bench_cases.txt")
+    ap.add_argument("--cases", required=True, help="explicit [section] text case catalog")
     ap.add_argument("--out-dir", default="build/logs/warmbench/soprano_tts_py")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()

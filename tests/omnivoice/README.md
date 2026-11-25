@@ -26,7 +26,7 @@ every combination of `--num-inference-steps` (8 to 64),
 
 ```bash
 ./tests/omnivoice/run_clone_benchmark.sh
-./tests/omnivoice/run_clone_batch_benchmark.sh
+BATCH_FILE=/path/to/prompts.txt ./tests/omnivoice/run_clone_batch_benchmark.sh
 ```
 
 Each script runs 375 combinations, so a full sweep takes hours. Edit
@@ -48,7 +48,9 @@ General clone and batch tests reuse the shared English LibriSpeech pair:
 - its matching `.txt` transcript
 
 The pair has source/license metadata in `assets/asr_validation/`. Prompts are
-English, and `assets/clone_batch_prompts.txt` contains the batch requests.
+English; supply your own batch requests with `BATCH_FILE=/path/to/prompts.txt`
+for the sweep script or `--text-file /path/to/prompts.txt` for the native test.
+The prompt file contains one request per non-empty line.
 Rate variants should be created temporarily from this shared input rather than
 stored as another recording. The removed local Bengali examples were not used
 by a Bengali-specific assertion.
@@ -79,7 +81,7 @@ cmake --build build --parallel --target omnivoice_batch_test
 ./build/bin/omnivoice_batch_test --model models/OmniVoice \
   --clone-audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav \
   --reference-text-file assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.txt \
-  --text-file tests/omnivoice/assets/clone_batch_prompts.txt \
+  --text-file /path/to/prompts.txt \
   --num-step 16 --batch-sizes 1,2,4,8 \
   --session-option omnivoice.generator_weight_type=f16
 ```

@@ -18,7 +18,7 @@
 //   build/bin/omnivoice_batch_test --model models/OmniVoice \
 //     --clone-audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav \
 //     --reference-text-file assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.txt \
-//     --text-file tests/omnivoice/assets/clone_batch_prompts.txt \
+//     --text-file /path/to/prompts.txt \
 //     --batch-sizes 1,2,4,8 --out-dir tests/omnivoice/outputs/batch_test
 //
 // --timing-log <file> writes the engine [TIMING] lines (generator compute,

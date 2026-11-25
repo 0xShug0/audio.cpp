@@ -1,4 +1,0 @@
-The custom voice request should sound cheerful and clear while keeping the words easy to recognize.
-She said she would be here by noon, and the whole room seemed brighter when she arrived.
-This second request checks that a long lived session can reuse the same custom speaker cleanly.
-When the benchmark changes requests, the speaker identity should stay stable and the audio should remain intelligible.

@@ -27,7 +27,6 @@ namespace {
 
 constexpr const char * kDefaultWarmupText =
     "At sunrise the studio monitors clicked on, and the first calibration phrase rolled across the room with steady timing.";
-constexpr const char * kCaseCatalogPath = "tests/pocket_tts/pocket_tts_warm_bench_cases.txt";
 std::string arg_value(int argc, char ** argv, const std::string & name, const std::string & fallback) {
     for (int i = 1; i + 1 < argc; ++i) {
         if (argv[i] == name) {
@@ -390,7 +389,10 @@ int main(int argc, char ** argv) {
         std::vector<std::string> texts = arg_values(argc, argv, "--text");
         const std::vector<std::string> case_names = arg_values(argc, argv, "--case-name");
         if (!case_names.empty()) {
-            const auto case_catalog = load_case_catalog(kCaseCatalogPath);
+            // Standalone named cases require a caller-supplied [case] text catalog.
+            const auto cases_path = arg_value(argc, argv, "--cases", "");
+            if (cases_path.empty()) throw std::runtime_error("--case-name requires --cases PATH");
+            const auto case_catalog = load_case_catalog(cases_path);
             for (const std::string & case_name : case_names) {
                 const auto it = case_catalog.find(case_name);
                 if (it == case_catalog.end()) {

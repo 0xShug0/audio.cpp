@@ -17,7 +17,6 @@ if str(REFERENCE_KOKORO_ROOT) not in sys.path:
     sys.path.insert(0, str(REFERENCE_KOKORO_ROOT))
 
 kFixedWarmupText = "This is a fixed warmup request for the speech session benchmark."
-kCaseCatalogPath = REPO_ROOT / "tools" / "kokoro_tts" / "kokoro_tts_warm_bench_cases.txt"
 
 
 def timestamp_seconds_local() -> str:
@@ -53,6 +52,7 @@ def write_pcm16_wav(path: Path, audio: np.ndarray, sample_rate: int) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Warm repeated Python benchmark for the Kokoro TTS reference model.")
+    parser.add_argument("--cases", type=Path, help="Explicit [case] text catalog for --case-name.")
     parser.add_argument("--model", type=Path, default=Path("models/kokoro-82m-v1_0-ggml"))
     parser.add_argument(
         "--text",
@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         action="append",
         dest="case_names",
         default=[],
-        help="Append one named text case from the shared warm bench catalog.",
+        help="Append one named text case from --cases PATH.",
     )
     parser.add_argument("--voice-id", default="af_heart")
     parser.add_argument("--style-language", default="")
@@ -236,7 +236,9 @@ def main() -> int:
     args = parse_args()
     texts = list(args.texts)
     if args.case_names:
-        case_catalog = load_case_catalog(kCaseCatalogPath)
+        if args.cases is None:
+            raise RuntimeError("--case-name requires --cases PATH")
+        case_catalog = load_case_catalog(args.cases)
         for case_name in args.case_names:
             if case_name not in case_catalog:
                 raise RuntimeError(f"unknown Kokoro warm bench case: {case_name}")

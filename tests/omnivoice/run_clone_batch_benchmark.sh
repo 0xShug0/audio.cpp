@@ -24,7 +24,7 @@ WEIGHT_TYPES=("native" "f32" "f16" "bf16" "q8_0")
 AUDIO_TOKENIZER_WEIGHT_TYPES=("native" "f32" "f16" "bf16" "q8_0")
 
 ASSET_DIR="assets/asr_validation/librispeech"
-BATCH_FILE="tests/omnivoice/assets/clone_batch_prompts.txt"
+: "${BATCH_FILE:?Set BATCH_FILE=/path/to/prompts.txt}"
 REF_WAV="${ASSET_DIR}/librispeech_test_clean_6930-75918-0001.wav"
 REF_TEXT="$(cat "${ASSET_DIR}/librispeech_test_clean_6930-75918-0001.txt")"
 
