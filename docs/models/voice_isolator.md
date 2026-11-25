@@ -138,10 +138,10 @@ Offline memory does not grow with the recording beyond its samples: each window 
 
 ## GGUF
 
-The hosted GGUFs are made with `tests/voice_isolator/convert_gguf.py`, which packages either checkpoint as a self-contained F32 GGUF with the model spec and the checkpoint's architecture embedded:
+The hosted GGUFs are made with `tools/gguf/voice_isolator_convert.py`, which packages either checkpoint as a self-contained F32 GGUF with the model spec and the checkpoint's architecture embedded:
 
 ```bash
-python tests/voice_isolator/convert_gguf.py \
+python tools/gguf/voice_isolator_convert.py \
   --source models/voice-isolator/denoiser_realtime.safetensors \
   --output models/voice-isolator-gguf/voice-isolator-realtime-f32.gguf
 ```

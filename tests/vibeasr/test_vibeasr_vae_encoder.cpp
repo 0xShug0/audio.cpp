@@ -181,7 +181,7 @@ int main(int argc, char ** argv) {
         std::fprintf(
             stderr,
             "SKIP: test_vibeasr_vae_encoder needs --model <vibeasr-vae-encoder-i8_s.gguf> and --audio <wav>.\n"
-            "      Convert a VibeASR.cpp checkpoint with tools/community_models/convert_vibeasr_gguf.py first.\n");
+            "      Convert a VibeASR.cpp checkpoint with tools/gguf/vibeasr_convert.py first.\n");
         return kExitSkip;
     }
 

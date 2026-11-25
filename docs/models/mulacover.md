@@ -14,7 +14,7 @@ symbolic cross attention, a Qwen3 style encoder and HeartCodec.
 ## Install
 
 Convert the official checkpoints with
-[convert_mulacover.py](../../tools/models/convert_mulacover.py), or use
+[mulacover_convert.py](../../tools/gguf/mulacover_convert.py), or use
 a complete [MuLaCover GGUF package](https://huggingface.co/audio-cpp/audio.cpp-gguf/tree/main/MuLaCover-GGUF).
 Runtime loading is GGUF-only; source checkpoints are used only for conversion.
 FP16 and Q8 packages contain the generator,
@@ -43,7 +43,7 @@ python tools/models/mulacover/convert_transcriber.py \
 Then write either package (`--type f16` or `--type q8_0`):
 
 ```bash
-python tools/models/convert_mulacover.py \
+python tools/gguf/mulacover_convert.py \
   --model-dir models/MuLaCover-source --type q8_0 \
   --output models/MuLaCover-GGUF/mulacover-q8_0.gguf \
   --log-file convert-mulacover-q8.log

@@ -24,7 +24,7 @@ GGUF weights are packaged in [Nemotron-3-Diarization-GGUF](https://huggingface.c
 Build `audiocpp_gguf`, then convert the original `.nemo` archive:
 
 ```bash
-python tests/nemotron_3_diar/convert_gguf.py \
+python tools/gguf/nemotron_3_diar_convert.py \
   --checkpoint /path/to/Nemotron-3-Diarization.nemo \
   --output-dir /path/to/staging \
   --converter /path/to/audiocpp_gguf \

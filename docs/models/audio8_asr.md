@@ -12,7 +12,7 @@ converted weights only; the converted GGUF must not be redistributed.
 ```bash
 # Convert locally (requires the audiocpp_gguf tool and a self-downloaded
 # checkpoint from the Audio8/Audio8-ASR-0.1B HF repository):
-python tools/community_models/audio8_asr/convert_audio8_asr.py \
+python tools/gguf/audio8_asr_convert.py \
     --checkpoint models/Audio8-ASR-0.1B-hf \
     --converter build/debug/bin/audiocpp_gguf \
     --type q8_0 \

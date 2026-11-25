@@ -7,9 +7,9 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "tools/community_models"))
-import convert_underdog_bark3_plus as packed
-import convert_underdog_bark3_standard as standard
+sys.path.insert(0, str(REPO / "tools/gguf"))
+import underdog_bark3_plus_convert as packed
+import underdog_bark3_standard_convert as standard
 
 
 class BarkStandardConversionTest(unittest.TestCase):

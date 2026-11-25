@@ -105,7 +105,7 @@ Convert the directory containing `encoder.onnx`, `decoder.onnx`, `joiner.onnx`
 and `tokens.txt` to a standalone GGUF:
 
 ```bash
-python tools/community_models/convert_kroko_offline_gguf.py \
+python tools/gguf/kroko_asr_offline_convert.py \
   /path/to/Kroko-ASR-XL-EN-Offline \
   /path/to/kroko-asr-xl-en-offline-f16.gguf --type f16
 

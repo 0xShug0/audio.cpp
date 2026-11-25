@@ -21,12 +21,12 @@ Preserve the `VAD/` and `Stream-VAD/` directories under `<source-dir>`.
 The converter needs `torch`, `numpy`, `safetensors` and `kaldiio`.
 
 ```bash
-python tests/firered_vad/convert_gguf.py \
+python tools/gguf/firered_vad_convert.py \
   --source <source-dir>/VAD --type f32 \
   --converter build/firered-vad/bin/audiocpp_gguf \
   --output models/FireRedVAD-GGUF/firered-vad-f32.gguf
 
-python tests/firered_vad/convert_gguf.py \
+python tools/gguf/firered_vad_convert.py \
   --source <source-dir>/Stream-VAD --type f32 \
   --converter build/firered-vad/bin/audiocpp_gguf \
   --output models/FireRedVAD-GGUF/firered-stream-vad-f32.gguf

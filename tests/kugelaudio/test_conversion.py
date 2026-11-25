@@ -64,7 +64,7 @@ def main():
 
         for include_encoder in (False, True):
             output = root / ("clone" if include_encoder else "preset")
-            command = [sys.executable, str(repo / "tests/kugelaudio/convert_gguf.py"),
+            command = [sys.executable, str(repo / "tools/gguf/kugelaudio_convert.py"),
                        "--model-dir", str(source), "--tokenizer-dir", str(tokenizer),
                        "--output-dir", str(output), "--type", "q8_0", "--converter", str(args.converter.resolve())]
             if include_encoder:

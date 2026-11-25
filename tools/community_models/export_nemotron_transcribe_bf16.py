@@ -3,7 +3,7 @@
 
 Uses the pinned, unmodified NVIDIA/llama.cpp converter. Large source tensors are
 hardlinked into an isolated staging directory, never copied or requantized.
-Keep the completed BF16 decoder for quantize_nemotron_transcribe.py.
+Keep the completed BF16 decoder for nemotron_transcribe_quantize.py.
 """
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from convert_nemotron_transcribe import REFERENCE_REVISION, LLAMA_REVISION
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools/gguf"))
+from nemotron_transcribe_convert import REFERENCE_REVISION, LLAMA_REVISION
 
 
 def publish(temporary: Path, output: Path) -> None:

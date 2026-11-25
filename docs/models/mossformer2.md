@@ -89,7 +89,7 @@ and use the matching `MossFormer2_SS_16K.yaml` from
 [ClearerVoice-Studio](https://github.com/modelscope/ClearerVoice-Studio).
 
 ```bash
-python tests/mossformer2/convert_gguf.py \
+python tools/gguf/mossformer2_convert.py \
   --checkpoint /path/to/last_best_checkpoint.pt \
   --config /path/to/MossFormer2_SS_16K.yaml \
   --output /path/to/MossFormer2-GGUF/mossformer2-ss-16k-f32.gguf \
@@ -105,7 +105,7 @@ converter verifies the remaining tensors against the F16-rounded source.
 SE uses `--variant se`, the [original checkpoint](https://huggingface.co/alibabasglab/MossFormer2_SE_48K), and `MossFormer2_SE_48K.yaml`:
 
 ```bash
-python tests/mossformer2/convert_gguf.py --variant se \
+python tools/gguf/mossformer2_convert.py --variant se \
   --checkpoint MossFormer2_SE_48K/last_best_checkpoint.pt \
   --config ClearerVoice-Studio/clearvoice/clearvoice/config/inference/MossFormer2_SE_48K.yaml \
   --output MossFormer2-GGUF/mossformer2-se-48k-f32.gguf --log conversion-se.log
@@ -115,7 +115,7 @@ SR packs its [feature network and vocoder](https://huggingface.co/alibabasglab/M
 folded during conversion using PyTorch's weight-normalization operation:
 
 ```bash
-python tests/mossformer2/convert_gguf.py --variant sr \
+python tools/gguf/mossformer2_convert.py --variant sr \
   --checkpoint MossFormer2_SR_48K/last_best_checkpoint_m.pt \
   --vocoder-checkpoint MossFormer2_SR_48K/last_best_checkpoint_g.pt \
   --config ClearerVoice-Studio/clearvoice/clearvoice/config/inference/MossFormer2_SR_48K.yaml \

@@ -11,7 +11,7 @@ declares Apache-2.0. The pinned
 [LICENSE](https://huggingface.co/Cactus-Compute/whistle/blob/b358ddadd89b7a713b5aa131f23032d3cca1b251/LICENSE)
 contains the Apache License, Version 2.0.
 Its measured length is 11,358 bytes and SHA-256 is
-`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`, matching `convert.py`.
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`, matching `tools/gguf/whistle_asr_convert.py`.
 
 Measured converter inspection identifies these inputs:
 
@@ -20,7 +20,7 @@ Measured converter inspection identifies these inputs:
 - `whistle.cact` supplies the tokenizer blob, 257-by-80 mel filterbank, and two 512-element Hadamard permutations.
 - `LICENSE` supplies the upstream license text, not audio.cpp's license.
 
-`convert.py` verifies each source file's length and SHA-256 before conversion.
+`tools/gguf/whistle_asr_convert.py` verifies each source file's length and SHA-256 before conversion.
 `extract_assets.py` verifies the four extracted assets' shapes, lengths, and SHA-256 hashes.
 The `.cact` file itself has pinned SHA-256
 `b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb`.

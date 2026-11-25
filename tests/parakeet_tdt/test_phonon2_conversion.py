@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-MODULE = Path(__file__).resolve().parents[2] / "tools/community_models/convert_phonon2.py"
+MODULE = Path(__file__).resolve().parents[2] / "tools/gguf/phonon2_asr_convert.py"
 spec = importlib.util.spec_from_file_location("convert_phonon2", MODULE)
 converter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(converter)

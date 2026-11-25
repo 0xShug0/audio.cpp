@@ -249,14 +249,14 @@ not need symbolic-link privileges.
 
 ```sh
 uv run --no-project --python .venv-nemotron python \
-  tools/community_models/convert_nemotron_transcribe.py \
+  tools/gguf/nemotron_transcribe_convert.py \
   --source models/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B \
   --reference reference/NeMo-Speech.cpp \
   --quantizer build/nemotron-quantizer/bin/llama-quantize \
   --output models/native/nemotron-transcribe-iq4_nl.gguf --threads 16
 
 uv run --no-project --python .venv-nemotron python \
-  tools/community_models/prepare_nemotron_transcribe.py \
+  tools/gguf/nemotron_transcribe_prepare.py \
   --source models/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B \
   --decoder models/native/nemotron-transcribe-iq4_nl.gguf \
   --encoder models/native/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf \
@@ -310,7 +310,7 @@ trained frontend window while streaming one shared padded cache:
 
 ```sh
 uv run --no-project --python .venv-nemotron python \
-  tools/community_models/quantize_nemotron_transcribe.py \
+  tools/gguf/nemotron_transcribe_quantize.py \
   --source-bf16-gguf models/native/nemotron-transcribe-source-BF16.gguf \
   --quantizer build/nemotron-quantizer/bin/llama-quantize \
   --profile q4_k --threads 16 \

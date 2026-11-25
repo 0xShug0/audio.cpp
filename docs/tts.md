@@ -180,7 +180,7 @@ own S3Gen/HiFT-vocoder loader code for the flow decoder and vocoder half.
 The package is one self-contained, audio.cpp-native GGUF produced by repacking Resemble AI's
 weights (via the third-party `cstr/chatterbox-turbo-GGUF` conversion published for the CrispASR
 project, MIT-relicensed) with
-[`tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py`](../tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py)
+[`tools/gguf/chatterbox_turbo_repack.py`](../tools/gguf/chatterbox_turbo_repack.py)
 — see that model's community doc for details.
 
 **Current limitations:** only the built-in default voice baked into the package is supported.

@@ -57,7 +57,7 @@ Convert the original Maya1 and SNAC checkpoints into a self-contained GGUF:
 
 ```bash
 conda run --no-capture-output -n qwen3-tts \
-  python tests/maya1/convert_gguf.py \
+  python tools/gguf/maya1_convert.py \
   --model-dir /path/to/maya1 \
   --codec-dir /path/to/snac_24khz \
   --output-dir /path/to/Maya1-GGUF

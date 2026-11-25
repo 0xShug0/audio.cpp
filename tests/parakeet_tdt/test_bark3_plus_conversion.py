@@ -10,8 +10,8 @@ import constriction
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO / "tools/community_models"))
-import convert_underdog_bark3_plus as plus
+sys.path.insert(0, str(REPO / "tools/gguf"))
+import underdog_bark3_plus_convert as plus
 
 
 class BarkPlusConversionTest(unittest.TestCase):

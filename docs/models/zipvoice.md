@@ -43,7 +43,7 @@ python3 tools/community_models/export_zipvoice_zh_dict.py \
     --output-dir /models/ZipVoice/zipvoice_distill
 
 # 2. flatten + package (torch checkpoint -> safetensors -> GGUF with model.* and vocos.*)
-python3 tools/community_models/convert_zipvoice.py \
+python3 tools/gguf/zipvoice_convert.py \
     --model-dir /models/ZipVoice/zipvoice_distill \
     --vocos /models/vocos-mel-24khz/vocos.safetensors \
     --converter build/bin/audiocpp_gguf

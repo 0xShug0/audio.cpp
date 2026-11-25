@@ -2,7 +2,7 @@
 
 ## handy-computer/transcribe.cpp mapping
 
-The tensor mapping used by `convert_sortformer_v2_1.py` is adapted from
+The tensor mapping used by `sortformer_diar_v2_convert.py` is adapted from
 `handy-computer/transcribe.cpp`, commit
 `e2f82cb6702315a1194f3bf1a6fee67cd2678447`, under the MIT License.
 

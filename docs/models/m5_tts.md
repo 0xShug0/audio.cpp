@@ -107,7 +107,7 @@ Download the appropriate official checkpoint and
 into local directories. Build `audiocpp_gguf`, then convert:
 
 ```bash
-python tests/m5_tts/convert_gguf.py \
+python tools/gguf/m5_tts_convert.py \
   --source /path/to/M5-TTS-50M-VoiceClone \
   --codec /path/to/M5-TTS-Audio-Tokenizer \
   --variant voice_clone --type f16 \

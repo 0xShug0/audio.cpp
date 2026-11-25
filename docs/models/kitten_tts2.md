@@ -391,13 +391,13 @@ audio.cpp uses GGUF type ID 44: the other fork's ID 43 is already used by
 audio.cpp's I2_S format, so its ternary GGUFs are not interchangeable.
 
 ```sh
-python tools/community_models/prepare_kitten_tts2_gguf.py \
+python tools/gguf/kitten_tts2_convert.py \
   --model /path/to/updated-kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
   --type bf16 --output kitten-tts2-bf16-multilingual.gguf
-python tools/community_models/prepare_kitten_tts2_gguf.py \
+python tools/gguf/kitten_tts2_convert.py \
   --model /path/to/updated-kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
   --type q8_0 --output kitten-tts2-q8-v2-multilingual.gguf
-python tools/community_models/prepare_kitten_tts2_gguf.py \
+python tools/gguf/kitten_tts2_convert.py \
   --model /path/to/updated-kitten-tts-2 --converter build-kitten2/bin/audiocpp_gguf \
   --type q4_0 --output kitten-tts2-q4-multilingual.gguf
 ```

@@ -79,7 +79,7 @@ The response uses `transcript.text.delta` followed by `transcript.text.done`.
 ## Conversion
 
 ```bash
-python tests/owsm_ctc/convert_gguf.py /path/to/owsm_ctc_v4_1B \
+python tools/gguf/owsm_ctc_convert.py /path/to/owsm_ctc_v4_1B \
   /path/to/OWSM-CTC-GGUF/owsm-ctc-v4-1b-f32.gguf \
   --staging-dir /path/to/staging --type orig
 ```

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "community_models" / "minimax_music3" / "repack_lm_head_gguf.py"
+SCRIPT = Path(__file__).resolve().parents[2] / 'tools/gguf/minimax_music3_lm_head_repack.py'
 
 
 def load_module():

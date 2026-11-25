@@ -96,12 +96,12 @@ observations, not a newly enforced quality gate in this cleanup.
 
 ## Conversion scripts
 
-- `tools/community_models/convert_f5_tts.py` and
-  `tools/community_models/minimax_music3/convert_gguf.py` now resolve specs and
+- `tools/gguf/f5_tts_convert.py` and
+  `tools/gguf/minimax_music3_convert.py` now resolve specs and
   converter defaults from the actual repository root.
-- `tools/community_models/convert_voxcpm1.py` requires `--source` and `--output`;
+- `tools/gguf/voxcpm1_convert.py` requires `--source` and `--output`;
   no personal filesystem destinations are assumed.
-- `tests/liveavatar/convert_component_ggufs.py` requires `--root`. Omitted
+- `tools/gguf/liveavatar_components_convert.py` requires `--root`. Omitted
   `--support-output` and `--vae-output` are derived from that parsed root;
   explicit output paths retain precedence.
 

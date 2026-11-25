@@ -91,7 +91,7 @@ audiocpp_cli --task asr --mode streaming \
 The helper converts the upstream safetensors checkpoints into standalone GGUFs:
 
 ```bash
-python3 tools/community_models/convert_moonshine_asr.py \
+python3 tools/gguf/moonshine_asr_convert.py \
   --checkpoint models/moonshine-streaming-tiny \
   --converter build/debug/bin/audiocpp_gguf \
   --output models/Moonshine-Streaming-GGUF/moonshine-streaming-tiny-q8_0.gguf \

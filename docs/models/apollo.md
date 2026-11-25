@@ -60,7 +60,7 @@ For long recordings, add these options to limit per-chunk memory use:
 From the repository root, convert the official Apollo `pytorch_model.bin`:
 
 ```bash
-python tests/apollo/convert_apollo_gguf.py \
+python tools/gguf/apollo_convert.py \
   --checkpoint /path/to/pytorch_model.bin \
   --output models/Apollo-GGUF/apollo-orig.gguf \
   --log apollo-conversion.log

@@ -201,7 +201,7 @@ weight variant, not a new model family.
 
 Orukeet publishes a `.nemo` checkpoint rather than a Transformers-compatible
 safetensors package, so conversion goes through
-`tools/community_models/convert_orukeet.py`, which maps the 651 NeMo tensors
+`tools/gguf/parakeet_tdt_orukeet_convert.py`, which maps the 651 NeMo tensors
 to the audio.cpp layout, reuses the stock sidecars (verified against the
 `.nemo` config; the r3 export audit certifies the tokenizer is unchanged),
 and packs a standalone GGUF via `audiocpp_gguf`. The script never downloads
@@ -210,7 +210,7 @@ anything; point it at a local copy of the pinned r3 file:
 ```bash
 uv run --python 3.12 --with torch --with pyyaml --with safetensors \
     --with sentencepiece --with numpy \
-  tools/community_models/convert_orukeet.py \
+  tools/gguf/parakeet_tdt_orukeet_convert.py \
     --checkpoint path/to/orukeet-v0.1.0.nemo \
     --converter build/<preset>/bin/audiocpp_gguf \
     --gguf-output models/Orukeet-GGUF/orukeet-q8_0.gguf \

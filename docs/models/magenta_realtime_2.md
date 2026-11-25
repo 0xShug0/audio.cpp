@@ -90,10 +90,10 @@ Download the original [Google checkpoint and resources](https://huggingface.co/g
 then run the converter with NumPy, safetensors, and `ai-edge-litert` installed:
 
 ```bash
-python tools/models/convert_magenta_realtime_2_gguf.py \
+python tools/gguf/magenta_realtime_2_convert.py \
   --source Magenta-RealTime-2 --output Magenta-RealTime-2-GGUF \
   --component small --type f16
-python tools/models/convert_magenta_realtime_2_gguf.py \
+python tools/gguf/magenta_realtime_2_convert.py \
   --source Magenta-RealTime-2 --output Magenta-RealTime-2-GGUF \
   --component base --type f16
 ```

@@ -201,12 +201,12 @@ python3 tools/community_models/convert_audio8_tts_codec.py \
 
 ```bash
 # 16-bit reference package (AR BF16, codec F32 -> BF16)
-python3 tools/community_models/convert_audio8_tts.py \
+python3 tools/gguf/audio8_tts_convert.py \
     --model-dir /path/to/Audio8-TTS-Preview-0.6b \
     --converter build/bin/audiocpp_gguf --type bf16
 
 # default Q8_0 package, like fish_audio ships
-python3 tools/community_models/convert_audio8_tts.py \
+python3 tools/gguf/audio8_tts_convert.py \
     --model-dir /path/to/Audio8-TTS-Preview-0.6b \
     --converter build/bin/audiocpp_gguf --type q8_0
 ```

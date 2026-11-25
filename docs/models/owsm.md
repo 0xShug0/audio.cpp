@@ -101,7 +101,7 @@ Download the selected variant's `config.yaml`, `valid.total_count.ave_5best.pth`
 `bpe.model`, and `feats_stats.npz`, preserving the upstream directory structure.
 
 ```bash
-python tests/owsm/convert_gguf.py /path/to/official-snapshot \
+python tools/gguf/owsm_convert.py /path/to/official-snapshot \
   /path/to/OWSM-GGUF/owsm-v4-base-102m-f32.gguf \
   --staging-dir /path/to/conversion-staging
 ```

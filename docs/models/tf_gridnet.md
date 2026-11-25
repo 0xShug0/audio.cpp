@@ -64,7 +64,7 @@ Download and extract the checkpoint archive linked in the
 Use its matching `config.yaml` and `98epoch.pth`:
 
 ```bash
-python tests/tf_gridnet/convert_gguf.py \
+python tools/gguf/tf_gridnet_convert.py \
   --checkpoint /path/to/98epoch.pth \
   --config /path/to/config.yaml \
   --output /path/to/TF-GridNet-GGUF/tf-gridnet-wsj0-2mix-f32.gguf \

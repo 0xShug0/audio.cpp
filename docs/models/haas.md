@@ -89,7 +89,7 @@ To convert the official checkpoint, download `Haas-ja-v1.0.nemo` from the
 upstream repository, then run:
 
 ```bash
-python tools/community_models/convert_haas.py \
+python tools/gguf/haas_asr_convert.py \
   --source Haas-ja-v1.0.nemo --staging haas-converted \
   --converter build/debug/bin/audiocpp_gguf --type q8_0 \
   --output haas-ja-v1.0-q8_0.gguf

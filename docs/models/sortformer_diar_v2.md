@@ -45,7 +45,7 @@ $staging = "models\Sortformer-Diar-v2.1-local"
 
 uv run --python 3.12 `
   --with torch --with numpy --with pyyaml --with safetensors `
-  python tools\community_models\convert_sortformer_v2_1.py `
+  python tools\gguf\sortformer_diar_v2_convert.py `
   --checkpoint $checkpoint `
   --output-dir $staging `
   --converter $converter `

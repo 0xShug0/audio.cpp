@@ -79,7 +79,7 @@ Whistle model spec in the GGUF:
 
 ```bash
 cmake --build build/release --target audiocpp_gguf audiocpp_cli
-python3 tools/community_models/whistle_asr/convert.py \
+python3 tools/gguf/whistle_asr_convert.py \
   --source /path/to/whistle-source \
   --cact /path/to/whistle.cact \
   --converter build/release/bin/audiocpp_gguf \

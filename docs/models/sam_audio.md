@@ -92,7 +92,7 @@ with the current checkout, add these flags to the command above:
 With the official checkpoint and configuration in a local directory:
 
 ```bash
-python tests/sam_audio/convert_gguf.py \
+python tools/gguf/sam_audio_convert.py \
   --model /path/to/sam-audio-small \
   --output /path/to/prepared-sam-audio \
   --gguf-output /path/to/SAM-Audio-GGUF/sam-audio-small-f32.gguf
