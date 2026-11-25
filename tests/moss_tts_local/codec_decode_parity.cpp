@@ -74,10 +74,8 @@ void write_pcm16_wav(
 
 int main(int argc, char ** argv) {
     try {
-        const std::string default_codec =
-            "C:/Users/justi/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Audio-Tokenizer-v2/"
-            "snapshots/f6e20e543b33d2c252a7ef71bdf8aa71e5ff9169";
-        const std::filesystem::path codec_dir = arg_value(argc, argv, "--codec", default_codec);
+        const std::filesystem::path codec_dir = arg_value(argc, argv, "--codec", "");
+        if (codec_dir.empty()) throw std::runtime_error("--codec is required");
         const int frames = int_arg(argc, argv, "--frames", 12);
         const int threads = int_arg(argc, argv, "--threads", 16);
         const int num_quantizers = int_arg(argc, argv, "--quantizers", 12);

@@ -2,10 +2,20 @@
 # moss_voicegen backbone_parity harness already reads.
 import sys, json, torch
 from transformers import AutoModel, AutoProcessor
-MODEL="/mnt/data/models/MOSS-TTS-v1.5"; CODEC="/mnt/data/models/MOSS-Audio-Tokenizer"
-OUT="/home/chris/Programming/audio.cpp-fork/tests/moss_tts_v15/reference"
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--model", type=Path, required=True)
+parser.add_argument("--codec", type=Path, required=True)
+parser.add_argument("--output", type=Path, required=True)
+parser.add_argument("--device", default="cpu")
+args = parser.parse_args()
+MODEL, CODEC, OUT = str(args.model), str(args.codec), str(args.output)
+args.output.mkdir(parents=True, exist_ok=True)
+
 import os; os.makedirs(OUT, exist_ok=True)
-dev="cuda"
+dev=args.device
 proc=AutoProcessor.from_pretrained(MODEL, trust_remote_code=True, codec_path=CODEC)
 model=AutoModel.from_pretrained(MODEL, trust_remote_code=True, dtype=torch.bfloat16).eval().to(dev)
 pm=sys.modules[type(proc).__module__]

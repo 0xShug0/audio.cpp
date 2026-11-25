@@ -220,13 +220,11 @@ void test_causal_conv(core::ExecutionContext & execution) {
                 g.ctx().backend_type = core::BackendType::Cuda;
             }
             auto padded_in = g.input(GGML_TYPE_F32, TensorShape::from_dims({1, steps + k - 1, d}));
-            auto kernel_in = g.input(GGML_TYPE_F32, TensorShape::from_dims({k, d}));
             auto native_kernel = g.input(GGML_TYPE_F32, TensorShape::from_dims({d, 1, k}));
             auto out = engine::modules::DepthwiseConv1dModule({d, k, 1, 0, 1, false})
-                .build_time_major(g.ctx(), padded_in, {native_kernel, std::nullopt}, kernel_in);
+                .build_time_major(g.ctx(), padded_in, {native_kernel, std::nullopt});
             g.allocate(out);
             core::write_tensor_f32(padded_in, padded);
-            core::write_tensor_f32(kernel_in, kernel);
             std::vector<float> native_values(kernel.size());
             for (int64_t tap = 0; tap < k; ++tap) {
                 for (int64_t c = 0; c < d; ++c) native_values[static_cast<size_t>(c * k + tap)] = kernel[static_cast<size_t>(tap * d + c)];
@@ -323,6 +321,8 @@ int main(int argc, char ** argv) {
         const auto start = std::chrono::steady_clock::now();
         test_causal_conv(*execution);
         test_gated_attention(*execution);
+        engine::debug::timing_log_scalar("session.wall_ms",
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
         std::printf("PASS: lfm3_audio blocks (%.1f s)\n",
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
     } catch (const std::exception & error) {

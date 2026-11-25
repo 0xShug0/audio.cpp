@@ -1,5 +1,6 @@
 // Parity check for the MOSS-Audio-Tokenizer-v2 encoder (voice-clone front end).
-// Loads the prepared reference waveform captured by scratchpad/moss_encode_ref.py
+// Loads the prepared reference waveform captured by
+// tests/moss_voicegen/reference/moss_v1_encode_ref.py --variant v2
 // (enc_prepared.f32, [2, samples] channel-major @ 48 kHz), runs the C++ encoder,
 // and compares the resulting [num_quantizers, frames] codes against the Python
 // reference (enc_codes.csv, first `num_quantizers` rows). Exact code match is the
@@ -83,10 +84,8 @@ std::vector<std::vector<int32_t>> read_codes_csv(const std::string & path) {
 
 int main(int argc, char ** argv) {
     try {
-        const std::string codec_dir = arg_value(
-            argc, argv, "--codec",
-            "C:/Users/justi/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Audio-Tokenizer-v2/"
-            "snapshots/f6e20e543b33d2c252a7ef71bdf8aa71e5ff9169");
+        const std::string codec_dir = arg_value(argc, argv, "--codec", "");
+        if (codec_dir.empty()) throw std::runtime_error("--codec is required");
         const std::string prepared = arg_value(argc, argv, "--prepared", "enc_prepared.f32");
         const std::string ref_codes_path = arg_value(argc, argv, "--ref-codes", "enc_codes.csv");
         const int channels = int_arg(argc, argv, "--channels", 2);

@@ -31,13 +31,13 @@ def parse_args():
     parser.add_argument(
         "--source",
         type=Path,
-        default=Path("/media/leo/Share/audio.cpp/models/VoxCPM-0.5b"),
+        required=True,
         help="Directory containing OpenBMB config/tokenizer files, pytorch_model.bin, and audiovae.pth.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/media/leo/Share/models/audio.cpp-gguf/VoxCPM1-GGUF/voxcpm-0.5b-q8_0-audiovae-f16.gguf"),
+        required=True,
         help="Output GGUF path.",
     )
     parser.add_argument(

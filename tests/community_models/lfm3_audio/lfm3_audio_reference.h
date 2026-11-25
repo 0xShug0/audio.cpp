@@ -9,6 +9,7 @@
 // and codec tests, with the tolerances, weight modes, report and backend
 // options they have in common.
 
+#include "engine/framework/debug/trace.h"
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
@@ -349,6 +350,10 @@ inline std::unique_ptr<engine::core::ExecutionContext> open_backend(int argc, ch
     engine::core::BackendConfig config{BackendType::Cpu, 0, 4};
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg == "--log") {
+            engine::debug::configure_logging({true, std::nullopt});
+            continue;
+        }
         const std::string value = i + 1 < argc ? argv[++i] : "";
         if (arg == "--backend" && (value == "cpu" || value == "cuda" || value == "metal" || value == "best")) {
             config.type = value == "cuda" ? BackendType::Cuda : value == "metal" ? BackendType::Metal
@@ -356,7 +361,7 @@ inline std::unique_ptr<engine::core::ExecutionContext> open_backend(int argc, ch
         } else if (arg == "--threads" && !value.empty()) {
             config.threads = std::stoi(value);
         } else {
-            std::cerr << "usage: " << argv[0] << " [--backend cpu|cuda|metal|best] [--threads N]\n";
+            std::cerr << "usage: " << argv[0] << " [--backend cpu|cuda|metal|best] [--threads N] [--log]\n";
             status = 2;
             return nullptr;
         }

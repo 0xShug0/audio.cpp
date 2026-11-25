@@ -241,7 +241,7 @@ int main(int argc, char ** argv) {
     try {
         engine::debug::configure_logging({true, std::nullopt});
         const auto start = std::chrono::steady_clock::now();
-        core::BackendConfig config; config.threads = 8;
+        core::BackendConfig config; config.type = core::BackendType::Cpu; config.threads = 8;
         if (argc > 1 && std::string(argv[1]) == "cuda") config.type = core::BackendType::Cuda;
         if (argc > 1 && std::string(argv[1]) == "vulkan") config.type = core::BackendType::Vulkan;
         core::ExecutionContext execution(config);

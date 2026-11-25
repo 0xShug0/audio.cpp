@@ -3994,12 +3994,22 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         target_include_directories(shared_mel_migration_probe PRIVATE src/models/chatterbox)
     endif()
 
+    if (ENGINE_BUILD_EXTENDED_TESTS)
+        add_executable(stft_parity_dump tests/audio/stft_parity_dump.cpp)
+        target_link_libraries(stft_parity_dump PRIVATE engine_runtime ggml)
+    endif()
+
     set(ENGINE_UNITTEST_ASSET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/tests/unittests/assets")
 
     function(add_engine_unittest target source)
         add_executable(${target} ${source})
         target_link_libraries(${target} PRIVATE engine_runtime ggml)
     endfunction()
+
+    if (ENGINE_BUILD_TESTS)
+        add_engine_unittest(gated_delta_net_module_test tests/unittests/test_gated_delta_net_module.cpp)
+        add_test(NAME gated_delta_net_module_test COMMAND gated_delta_net_module_test cpu --log)
+    endif()
 
     if (ENGINE_BUILD_TESTS AND index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
         add_engine_unittest(index_tts2_request_test tests/index_tts2/request_test.cpp)
@@ -5594,6 +5604,11 @@ if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TEST
         if (ENGINE_ENABLE_OPENMP)
             target_link_libraries(moss_tts_local_smoke PRIVATE OpenMP::OpenMP_CXX)
         endif()
+        endif()
+
+        if (moss IN_LIST AUDIOCPP_LINKED_MODELS)
+            add_engine_unittest(moss_tts_local_codec_encode_parity tests/moss_tts_local/codec_encode_parity.cpp)
+            add_engine_unittest(moss_tts_local_codec_decode_parity tests/moss_tts_local/codec_decode_parity.cpp)
         endif()
 
         if (moss_voicegen IN_LIST AUDIOCPP_LINKED_MODELS)

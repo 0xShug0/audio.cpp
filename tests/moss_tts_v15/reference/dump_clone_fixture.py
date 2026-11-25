@@ -2,9 +2,19 @@
 import sys, json, os
 import numpy as np, soundfile as sf, torch
 from transformers import AutoModel, AutoProcessor
-MODEL="/mnt/data/models/MOSS-TTS-v1.5"; CODEC="/mnt/data/models/MOSS-Audio-Tokenizer"
-OUT="/home/chris/Programming/audio.cpp-fork/tests/moss_tts_v15/reference"
-REF="/home/chris/Programming/audio.cpp-fork/tests/omnivoice/assets/ref_audio_01.wav"
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--model", type=Path, required=True)
+parser.add_argument("--codec", type=Path, required=True)
+parser.add_argument("--output", type=Path, required=True)
+parser.add_argument("--reference-audio", type=Path, required=True)
+args = parser.parse_args()
+MODEL, CODEC, OUT = str(args.model), str(args.codec), str(args.output)
+args.output.mkdir(parents=True, exist_ok=True)
+REF = str(args.reference_audio)
+
 os.makedirs(OUT, exist_ok=True)
 proc=AutoProcessor.from_pretrained(MODEL, trust_remote_code=True, codec_path=CODEC)
 pm=sys.modules[type(proc).__module__]

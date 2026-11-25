@@ -31,9 +31,6 @@ from convert_denoiser_gguf import (
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ROOT = Path("/home/leo/Desktop/Wan2.2-S2V")
-DEFAULT_SUPPORT_OUTPUT = DEFAULT_ROOT / "Wan2.2-S2V-Support-Q4_K_S-F16.gguf"
-DEFAULT_VAE_OUTPUT = DEFAULT_ROOT / "Wan2.2-S2V-VAE-F16.gguf"
 GGML_MAX_NAME = 64
 
 
@@ -45,13 +42,13 @@ def require_file(path: Path, label: str) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--text-encoder", type=Path)
     parser.add_argument("--audio-encoder", type=Path)
     parser.add_argument("--vae", type=Path)
     parser.add_argument("--tokenizer", type=Path)
-    parser.add_argument("--support-output", type=Path, default=DEFAULT_SUPPORT_OUTPUT)
-    parser.add_argument("--vae-output", type=Path, default=DEFAULT_VAE_OUTPUT)
+    parser.add_argument("--support-output", type=Path)
+    parser.add_argument("--vae-output", type=Path)
     parser.add_argument("--support-type", default="orig")
     parser.add_argument("--vae-type", default="orig")
     parser.add_argument("--quant-module-dir", type=Path, default=REPO_ROOT / "build/debug/bin")
@@ -59,7 +56,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-support", action="store_true")
     parser.add_argument("--skip-vae", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.support_output is None:
+        args.support_output = args.root / "Wan2.2-S2V-Support-Q4_K_S-F16.gguf"
+    if args.vae_output is None:
+        args.vae_output = args.root / "Wan2.2-S2V-VAE-F16.gguf"
+    return args
 
 
 def encode_tensor(values: torch.Tensor, qtype: gguf.GGMLQuantizationType, quant_module) -> np.ndarray:

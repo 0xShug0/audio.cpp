@@ -1,5 +1,7 @@
 // E2E: Habibi Arabic synthesis via f5_synthesize + vocos, writes WAV.
 #include "engine/community_models/f5_tts/synthesize.h"
+#include "engine/framework/debug/trace.h"
+#include <chrono>
 
 #include <cmath>
 #include <cstdio>
@@ -81,11 +83,16 @@ void write_wav(const std::string & path, const std::vector<float> & mono, int sr
 }  // namespace
 
 int main(int argc, char ** argv) {
-    std::fprintf(stderr, "start\n"); fflush(stderr);
-    const std::string model = argc > 1 ? argv[1] : "/mnt/ai/models/Habibi-TTS/Unified/model_200000.safetensors";
-    const std::string vocos = argc > 2 ? argv[2] : "/mnt/ai/models/vocos-mel-24khz/vocos.safetensors";
-    const std::string ref = argc > 3 ? argv[3] : "/tmp/f5ref/pkg/habibi/habibi_tts/assets/IRQ.wav";
-    const std::string out_path = argc > 4 ? argv[4] : "/tmp/habibi_e2e.wav";
+    engine::debug::configure_logging({true, std::nullopt});
+    const auto started = std::chrono::steady_clock::now();
+    if (argc < 6) {
+        std::fprintf(stderr, "usage: %s <checkpoint> <vocos> <reference.wav> <output.wav> <reference-text> [device]\n", argv[0]);
+        return 2;
+    }
+    const std::string model = argv[1];
+    const std::string vocos = argv[2];
+    const std::string ref = argv[3];
+    const std::string out_path = argv[4];
 
     Wav ref_wav;
     if (!read_wav(ref, ref_wav)) {
@@ -96,18 +103,12 @@ int main(int argc, char ** argv) {
                 static_cast<double>(ref_wav.samples.size()) / ref_wav.sample_rate);
 
     engine::models::f5_tts::F5SynthesisRequest req;
-    // Same sentence as the Python reference (/tmp/python_ref.py). Keep the
-    // UTF-8 literal (NOT byte escapes): the previous escaped version had
-    // "habibi" misspelled with ه instead of ح and invalid "\D8"/"\D9"
-    // sequences that compiled to literal "D8"/"D9" garbage inside تجربة and
-    // جي بي يو — the source of the mispronounced letters.
     req.text = std::getenv("F5_TEXT") ? std::getenv("F5_TEXT")
         : "أهلا، هذه تجربة للنطق باللغة العربية، من نموذج حبيبي، داخل أوديو سي بي بي، على مجموعة جي بي يو بالبشرة.";
     req.dialect = std::getenv("F5_DIALECT") ? std::getenv("F5_DIALECT") : "UNK";
     req.ref_audio = ref_wav.samples;
     req.ref_sample_rate = ref_wav.sample_rate;
-    req.ref_text = std::getenv("F5_REF_TEXT") ? std::getenv("F5_REF_TEXT")
-        : "يعني ااا ما نقدر ناخذ وقت أكثر، ااا لأنه شروط كلش يحتاجلها وقت.";
+    req.ref_text = argv[5];
     if (std::getenv("F5_LONG") != nullptr) {
         // long-text test: ~4x the cap; exercises chunking + chaining
         req.text = req.text + " " + req.text + " " + req.text + " " + req.text;
@@ -117,7 +118,7 @@ int main(int argc, char ** argv) {
     req.seed = 42;
     req.fixed_seed = std::getenv("F5_RANDSEED") == nullptr;  // F5_RANDSEED=1: random per run
     req.use_cuda = std::getenv("F5_CUDA") != nullptr;
-    req.cuda_device = 1;
+    req.cuda_device = argc > 6 && std::string(argv[6]) != "--log" ? std::stoi(argv[6]) : 0;
 
     std::printf("synthesizing...\n");
     fflush(stdout);
@@ -131,5 +132,7 @@ int main(int argc, char ** argv) {
                 result.generation_seconds / (static_cast<double>(result.audio.size()) / result.sample_rate));
     write_wav(out_path, result.audio, result.sample_rate);
     std::printf("written %s\n", out_path.c_str());
+    engine::debug::timing_log_scalar("session.wall_ms",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
     return 0;
 }

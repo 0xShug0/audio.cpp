@@ -12,9 +12,13 @@ Nano decoder, whose contexts were each twice what they should have been.
 
 Needs the checkpoints' config.json files, so it is a tool rather than a test:
 
-    python3 tools/check_moss_codec_contexts.py
+    python3 tools/check_moss_codec_contexts.py --nano-config /path/to/config.json
 """
-import json, re, sys
+import argparse
+import json
+from pathlib import Path
+import re
+import sys
 
 def derive(cfg_path):
     c = json.load(open(cfg_path))
@@ -49,19 +53,36 @@ def hardcoded(src, fn):
                                    re.findall(r"\{([^}]*)\}", block)]
     return out
 
-src = open("src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp").read()
-for label, cfg, fn in [
-    ("v1",   "/mnt/data/models/MOSS-Audio-Tokenizer/config.json",        "moss_audio_tokenizer_v1_config"),
-    ("v2",   "/mnt/data/models/MOSS-Audio-Tokenizer-v2-cfg/config.json", "moss_audio_tokenizer_v2_config"),
-    ("nano", "/mnt/data/models/MOSS-Audio-Tokenizer-Nano/config.json",   "moss_audio_tokenizer_nano_config"),
-]:
-    d = derive(cfg); h = hardcoded(src, fn)
-    print(f"=== {label}")
-    for side in ("encoder", "decoder"):
-        want, final, expect = d[side]
-        got = h[side]
-        ok = want == got
-        print(f"   {side:8s} want {want}")
-        print(f"   {'':8s} got  {got}   {'OK' if ok else '<-- MISMATCH'}")
-        if abs(final - expect) > 1:
-            print(f"   {'':8s} frame-rate chain does not close: {final} vs {expect}")
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--v1-config", type=Path)
+    parser.add_argument("--v2-config", type=Path)
+    parser.add_argument("--nano-config", type=Path)
+    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1] /
+                        "src/framework/codecs/moss_audio_tokenizer_codec_runtime.cpp")
+    args = parser.parse_args()
+    if not any((args.v1_config, args.v2_config, args.nano_config)):
+        parser.error("supply at least one of --v1-config, --v2-config or --nano-config")
+    src = args.source.read_text()
+    failed = False
+    for label, cfg in (("v1", args.v1_config), ("v2", args.v2_config), ("nano", args.nano_config)):
+        if cfg is None:
+            continue
+        derived = derive(cfg)
+        actual = hardcoded(src, f"moss_audio_tokenizer_{label}_config")
+        print(f"=== {label}")
+        for side in ("encoder", "decoder"):
+            want, final, expect = derived[side]
+            got = actual[side]
+            ok = want == got
+            print(f"   {side:8s} want {want}")
+            print(f"   {'':8s} got  {got}   {'OK' if ok else '<-- MISMATCH'}")
+            failed |= not ok
+            if abs(final - expect) > 1:
+                print(f"   {'':8s} frame-rate chain does not close: {final} vs {expect}")
+                failed = True
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

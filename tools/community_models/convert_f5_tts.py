@@ -33,7 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SPEC = REPO_ROOT / "model_specs" / "f5_tts.json"
 
 
