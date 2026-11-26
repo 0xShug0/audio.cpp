@@ -85,7 +85,7 @@ The same behavior applies to cloned voices.
 Build `audiocpp_gguf` first, then run:
 
 ```bash
-python tools/gguf/kugelaudio_convert.py \
+python tools/gguf/kugelaudio/kugelaudio_convert.py \
   --model-dir /path/to/original-checkpoint \
   --tokenizer-dir /path/to/Qwen2.5-tokenizer \
   --output-dir /path/to/KugelAudio-0-Open-GGUF
@@ -104,7 +104,7 @@ capability contract.
 To augment an existing preset GGUF without changing its quantized tensors:
 
 ```bash
-python tests/kugelaudio/add_reference_encoder.py \
+python tools/gguf/kugelaudio/kugelaudio_reference_encoder_repack.py \
   --model /path/to/kugelaudio-0-open-q8_0.gguf \
   --encoder /path/to/acoustic_encoder.safetensors \
   --converter /path/to/audiocpp_gguf \

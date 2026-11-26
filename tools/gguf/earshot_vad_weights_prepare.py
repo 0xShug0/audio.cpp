@@ -7,7 +7,7 @@ literal tables in ``src/filters.rs``. This script copies both into one
 safetensors file so the C++ port uses the exact upstream values.
 
 Usage:
-    python tests/earshot_vad/convert_earshot.py \
+    python tools/gguf/earshot_vad_weights_prepare.py \
         --output assets/framework/models/earshot_vad/earshot_vad.safetensors
 
 By default the sources are downloaded from the pinned upstream tag. Pass

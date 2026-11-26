@@ -49,8 +49,8 @@ def main():
     del vae
 
     for script, checkpoint, directory, config_name in [
-        ("prepare_scrfd_weights.py", "det_10g.onnx", "detector", "detector_config.json"),
-        ("prepare_landmark_weights.py", "2d106det.onnx", "landmarks", "landmark_config.json"),
+        ("latentsync_scrfd_weights_prepare.py", "det_10g.onnx", "detector", "detector_config.json"),
+        ("latentsync_landmark_weights_prepare.py", "2d106det.onnx", "landmarks", "landmark_config.json"),
     ]:
         destination = args.output_dir / directory
         subprocess.run([sys.executable, str(Path(__file__).with_name(script)),

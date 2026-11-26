@@ -110,7 +110,7 @@ The conversion helper preserves the checkpoint's fused QKV weights, explicit
 `freqs_per_bands` layout, global final RMSNorm, and mask-estimator depth:
 
 ```bash
-python tests/bs_roformer/convert_reference_ckpt.py \
+python tools/gguf/bs_roformer_weights_prepare.py \
   --ckpt model_bs_roformer.ckpt \
   --config-path model_bs_roformer.yaml \
   --output-dir models/BS-RoFormer
@@ -264,7 +264,7 @@ curl -fL \
   https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th \
   -o models/htdemucs_6stems_source/5c90dfd2-34c22ccb.th
 
-python tests/demucs/convert_reference_ckpt.py \
+python tools/gguf/demucs_weights_prepare.py \
   --name htdemucs_6s \
   --repo models/htdemucs_6stems_source \
   --output-dir models/htdemucs_6stems_source

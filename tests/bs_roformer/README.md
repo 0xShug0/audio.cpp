@@ -7,7 +7,7 @@ audio-separator.
 ## Convert the reference checkpoint
 
 ```powershell
-python tests\bs_roformer\convert_reference_ckpt.py `
+python tools\gguf\bs_roformer_weights_prepare.py `
   --ckpt model_bs_roformer_ep_368_sdr_12.9628.ckpt `
   --config-path model_bs_roformer_ep_368_sdr_12.9628.yaml `
   --output-dir models\BS-RoFormer-ep368

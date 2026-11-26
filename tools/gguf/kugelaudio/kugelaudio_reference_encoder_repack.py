@@ -12,7 +12,7 @@ import subprocess
 
 
 def main():
-    repo = Path(__file__).resolve().parents[2]
+    repo = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--encoder", required=True, type=Path)
