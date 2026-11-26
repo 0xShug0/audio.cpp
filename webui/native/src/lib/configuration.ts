@@ -39,8 +39,11 @@ function validate(configuration: UiConfiguration) {
 export function loadUiConfiguration() {
   const saved = localStorage.getItem(storageKey);
   if (saved === null) return;
-  const parsed = JSON.parse(saved) as Partial<UiConfiguration>;
-  const configuration = normalize(parsed);
+  const parsed = JSON.parse(saved) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Stored UI configuration is invalid.');
+  }
+  const configuration = normalize(parsed as Partial<UiConfiguration>);
   validate(configuration);
   uiConfiguration.set(configuration);
 }

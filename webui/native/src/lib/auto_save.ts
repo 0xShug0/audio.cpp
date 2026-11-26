@@ -6,9 +6,11 @@ export interface AutoSaveFile {
 }
 
 export interface AutoSaveResult {
-  method: 'directory' | 'download';
+  method: 'directory' | 'download' | 'partial';
   folderName?: string;
   savedFiles: string[];
+  directoryFiles: string[];
+  downloadedFiles: string[];
   warning?: string;
 }
 
@@ -329,12 +331,18 @@ async function triggerBrowserDownloads(files: AutoSaveFile[]): Promise<string[]>
 
 export async function autoSaveFiles(files: AutoSaveFile[]): Promise<AutoSaveResult> {
   if (!files.length) {
-    return { method: activeDirectoryHandle ? 'directory' : 'download', savedFiles: [] };
+    return {
+      method: activeDirectoryHandle ? 'directory' : 'download',
+      savedFiles: [],
+      directoryFiles: [],
+      downloadedFiles: []
+    };
   }
 
   let warning: string | undefined;
   let remainingFiles = files;
   const writtenToDirectory: string[] = [];
+  const folderName = activeDirectoryHandle?.name || undefined;
   if (activeDirectoryHandle) {
     const permission = await queryHandlePermission(activeDirectoryHandle);
     setDirectoryState(activeDirectoryHandle, permission);
@@ -343,8 +351,10 @@ export async function autoSaveFiles(files: AutoSaveFile[]): Promise<AutoSaveResu
         await writeFilesToDirectory(activeDirectoryHandle, files, writtenToDirectory);
         return {
           method: 'directory',
-          folderName: activeDirectoryHandle.name || undefined,
-          savedFiles: writtenToDirectory
+          folderName,
+          savedFiles: writtenToDirectory,
+          directoryFiles: writtenToDirectory,
+          downloadedFiles: []
         };
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -358,8 +368,11 @@ export async function autoSaveFiles(files: AutoSaveFile[]): Promise<AutoSaveResu
 
   const downloadedFiles = await triggerBrowserDownloads(remainingFiles);
   return {
-    method: 'download',
+    method: writtenToDirectory.length > 0 && downloadedFiles.length > 0 ? 'partial' : 'download',
+    folderName,
     savedFiles: [...writtenToDirectory, ...downloadedFiles],
+    directoryFiles: writtenToDirectory,
+    downloadedFiles,
     warning
   };
 }

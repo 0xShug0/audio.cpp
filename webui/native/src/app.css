@@ -347,6 +347,9 @@ kbd { font: 9px ui-monospace, monospace; padding: 2px 4px; border: 1px solid rgb
 .status.busy { color: var(--cyan); }
 .status.warning { color: #ff9aaa; font-weight: 600; }
 .status.error { color: var(--danger); font-weight: 600; }
+.auto-save-notice, .auto-save-warning { margin: 0 0 10px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.auto-save-notice { color: var(--muted); }
+.auto-save-warning { color: var(--danger); font-weight: 600; }
 .empty-output { min-height: 120px; display: grid; place-content: center; text-align: center; color: var(--muted); }
 .empty-output .wave { font-size: 62px; line-height: .7; color: var(--line); }
 .audio-list { display: grid; gap: 12px; }

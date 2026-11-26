@@ -1690,6 +1690,8 @@
     outputSettings = null;
     selectedGenerationId = null;
     outputModelId = '';
+    autoSaveNotice = '';
+    autoSaveWarning = '';
   }
 
   function releaseGeneration(entry: GenerationHistoryEntry) {
@@ -2224,10 +2226,14 @@
         log(`Auto-save warning: ${saved.warning}`);
       }
       if (saved.savedFiles.length) {
-        const count = `${saved.savedFiles.length} ${saved.savedFiles.length === 1 ? 'file' : 'files'}`;
-        autoSaveNotice = saved.method === 'directory' && saved.folderName
-          ? `Auto-saved ${count} to ${saved.folderName}`
-          : `Auto-saved ${count} to Downloads`;
+        const formatCount = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
+        if (saved.method === 'partial' && saved.folderName) {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.directoryFiles.length)} to ${saved.folderName} and ${formatCount(saved.downloadedFiles.length)} to Downloads`;
+        } else if (saved.method === 'directory' && saved.folderName) {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.savedFiles.length)} to ${saved.folderName}`;
+        } else {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.savedFiles.length)} to Downloads`;
+        }
         log(`${autoSaveNotice}: ${saved.savedFiles.join(', ')}`);
       }
     } catch (error) {
@@ -2319,13 +2325,13 @@
     autoSaveNotice = '';
     autoSaveWarning = '';
     playback.stop();
-    if ($uiConfiguration.autoSave && $autoSaveDirectory.permission === 'prompt') {
-      await ensureAutoSavePermissionOnUserGesture();
-    }
     // Resume synchronously from the Generate gesture, before uploads/loading.
     if (autoPlayOutput) {
       try { void playback.begin().catch(error => { playbackWarning = String(error); }); }
       catch (error) { playbackWarning = String(error); }
+    }
+    if (!usesPanelRequest && $uiConfiguration.autoSave && $autoSaveDirectory.permission === 'prompt') {
+      await ensureAutoSavePermissionOnUserGesture();
     }
     running = true;
     aborter = new AbortController();
@@ -3557,26 +3563,26 @@
           </details>
         {/if}
 
-        {#if !usesPanelRequest}
+        {#if !usesPanelRequest || selected.task !== 'asr'}
           <div class="studio-request-actions studio-playback-controls">
-            {#if canStreamOutput}
+            {#if !usesPanelRequest && canStreamOutput}
               <label class="toggle"><input type="checkbox" bind:checked={streamOutput} disabled={running} /><span></span>{tr('run.streamingMode')}</label>
             {/if}
             {#if selected.task !== 'asr'}
-              <label class="toggle"><input type="checkbox" bind:checked={autoplay} disabled={running} /><span></span>{tr('run.autoPlay')}</label>
+              {#if !usesPanelRequest}
+                <label class="toggle"><input type="checkbox" bind:checked={autoplay} disabled={running} /><span></span>{tr('run.autoPlay')}</label>
+              {/if}
               <label class="toggle"><input type="checkbox" checked={$uiConfiguration.autoSave} on:change={(event) => setAutoSaveEnabled(event.currentTarget.checked)} disabled={running} /><span></span>{tr('run.autoSave')}</label>
               {#if $uiConfiguration.autoSave && $autoSaveDirectory.folderName && $autoSaveDirectory.permission !== 'granted'}
                 <button type="button" disabled={running} on:click={() => void requestAutoSaveDirectoryPermission()}>{tr('configuration.grantAccess')}</button>
               {/if}
             {/if}
-            {#if running && liveAudioReady && !livePlaybackStart}<button on:click={playLiveAudio}>{tr('run.playLive')}</button>{/if}
-            {#if playbackActive}<button on:click={() => playback.stop()}>{tr('run.stopPlayback')}</button>{/if}
+            {#if !usesPanelRequest && running && liveAudioReady && !livePlaybackStart}<button on:click={playLiveAudio}>{tr('run.playLive')}</button>{/if}
+            {#if !usesPanelRequest && playbackActive}<button on:click={() => playback.stop()}>{tr('run.stopPlayback')}</button>{/if}
           </div>
-          {#if running && liveText}<pre aria-live="polite" aria-label={tr('result.streamingText')}>{liveText}</pre>{/if}
-          {#if playbackWarning}<p role="status">{playbackWarning}</p>{/if}
+          {#if !usesPanelRequest && running && liveText}<pre aria-live="polite" aria-label={tr('result.streamingText')}>{liveText}</pre>{/if}
+          {#if !usesPanelRequest && playbackWarning}<p role="status">{playbackWarning}</p>{/if}
         {/if}
-        {#if autoSaveWarning}<p class="auto-save-warning" role="status">{autoSaveWarning}</p>{/if}
-        {#if autoSaveNotice}<p class="auto-save-notice" role="status">{autoSaveNotice}</p>{/if}
         {#if selectedId && selectedResident && selectedSessionDrift}
           <div class="reload-prompt" role="status">
             <div>
@@ -3623,6 +3629,8 @@
           {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>{tr('settings.save')}</a>{/if}
           {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
+        {#if autoSaveWarning}<p class="auto-save-warning" role="status">{autoSaveWarning}</p>{/if}
+        {#if autoSaveNotice}<p class="auto-save-notice" role="status">{autoSaveNotice}</p>{/if}
         {#if outputAudio.length}
           <div class="audio-list">
             {#each outputAudio as output}
