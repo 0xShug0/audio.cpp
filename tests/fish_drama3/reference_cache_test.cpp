@@ -1,4 +1,5 @@
 #include "../../src/community_models/fish_drama3/reference_cache.cpp"
+#include "../../src/community_models/fish_drama3/disk_cache.cpp"
 
 #include "engine/framework/runtime/errors.h"
 
@@ -126,6 +127,95 @@ void test_long_clip() {
     expect(cache.size() == 2, "the cache holds two entries");
 }
 
+class TemporaryDirectory {
+public:
+    TemporaryDirectory() {
+        const auto base = std::filesystem::temp_directory_path();
+        const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            path = base / ("audiocpp-drama3-cache-" + std::to_string(stamp) + "-" + std::to_string(attempt));
+            if (std::filesystem::create_directory(path)) return;
+        }
+        throw std::runtime_error("Unable to create a temporary test directory");
+    }
+    ~TemporaryDirectory() {
+        std::error_code ignored;
+        std::filesystem::remove_all(path, ignored);
+    }
+
+    std::filesystem::path path;
+};
+
+void test_disk_cache() {
+    TemporaryDirectory directory;
+    const auto audio = voice(1.0F);
+    const engine::codecs::FishDacCodes expected{std::vector<int32_t>(20, 42), 10, 2};
+    int calls = 0;
+    const auto encode = [&](const AudioBuffer &) {
+        ++calls;
+        return expected;
+    };
+    const auto cache_for = [&](std::string identity) {
+        d3::Drama3ReferenceCache cache(1);
+        cache.set_disk_cache(directory.path, std::move(identity), 128);
+        return cache;
+    };
+    auto original = cache_for("encoder-a");
+    Outcome outcome{};
+    expect(original.lookup_or_encode(audio, encode, &outcome).codes == expected.codes &&
+        outcome == Outcome::Miss && calls == 1, "cold cache encodes");
+
+    const auto path = std::filesystem::directory_iterator(directory.path)->path();
+    auto warm = cache_for("encoder-a");
+    expect(warm.lookup_or_encode(audio, encode, &outcome).codes == expected.codes &&
+        outcome == Outcome::DiskHit && calls == 1, "fresh cache reads the same codes from disk");
+    {
+        std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+        file.seekp(12);
+        file.put('x');
+        expect(static_cast<bool>(file), "corrupt a payload byte without changing the file size");
+    }
+    warm.lookup_or_encode(audio, encode, &outcome);
+    expect(outcome == Outcome::Hit && calls == 1, "disk hit was promoted to the in-memory LRU");
+
+    auto repaired = cache_for("encoder-a");
+    expect(repaired.lookup_or_encode(audio, encode, &outcome).codes == expected.codes &&
+        outcome == Outcome::Miss && calls == 2, "corrupt payload is recomputed");
+    auto reread = cache_for("encoder-a");
+    reread.lookup_or_encode(audio, encode, &outcome);
+    expect(outcome == Outcome::DiskHit && calls == 2, "valid content replaces a corrupt file");
+    auto changed = cache_for("encoder-b");
+    changed.lookup_or_encode(audio, encode, &outcome);
+    expect(outcome == Outcome::Miss && calls == 3, "new encoder identity misses");
+}
+
+void test_cache_file() {
+    TemporaryDirectory directory;
+    d3::Sha256 hash;
+    hash.update("a");
+    hash.update("bc");
+    expect(hash.hex() == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "SHA-256 known answer");
+    const auto first = directory.path / (std::string(64, 'a') + ".prefill");
+    const auto second = directory.path / (std::string(64, 'b') + ".prefill");
+    const auto unrelated = directory.path / "notes.prefill";
+    std::ofstream(unrelated).put('x');
+    d3::write_cache_file(first, {"state", "row"}, 1);
+    std::array<char, 5> state{};
+    std::array<char, 3> row{};
+    expect(d3::read_cache_file(first, {{state.data(), state.size()}, {row.data(), row.size()}}) &&
+        std::string_view(state.data(), state.size()) == "state" &&
+        std::string_view(row.data(), row.size()) == "row", "read two validated snapshot sections");
+    expect(!d3::read_cache_file(first, {{state.data(), state.size()}}), "reject a different snapshot size");
+    std::filesystem::copy_file(first, second);
+    expect(!d3::read_cache_file(second, {{state.data(), state.size()}, {row.data(), row.size()}}),
+        "payload identifies its cache key");
+    std::filesystem::last_write_time(first, std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
+    d3::write_cache_file(second, {"state", "row"}, 1);
+    expect(!std::filesystem::exists(first) && std::filesystem::exists(second) && std::filesystem::exists(unrelated),
+        "prune the oldest cache entry and keep unrelated files");
+}
+
 void expect_rejected(const std::string & value) {
     try {
         (void)d3::parse_reference_cache_slots({{"fish_drama3.reference_cache_slots", value}});
@@ -153,6 +243,8 @@ int main() {
         test_lru_eviction();
         test_exact_match();
         test_long_clip();
+        test_disk_cache();
+        test_cache_file();
         test_option();
     } catch (const std::exception & error) {
         std::cerr << error.what() << "\n";

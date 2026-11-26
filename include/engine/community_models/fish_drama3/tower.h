@@ -51,7 +51,10 @@ public:
     void mix_backbone_embeddings(std::vector<float> & embeddings,
                                  const std::vector<Drama3Frame> & frames) const;
     std::vector<float> shared_input(const std::vector<Drama3Frame> & frames) const;
-    void prefill(const std::vector<float> & hidden, const std::vector<Drama3Frame> & frames);
+    void prefill(const std::vector<float> & hidden, const std::vector<Drama3Frame> & frames, int64_t prefix = 0);
+    size_t prefill_snapshot_bytes() const;
+    std::vector<std::byte> capture_prefill() const;
+    void restore_prefill(const std::vector<std::byte> & snapshot);
     Drama3TowerOutput run_layer(int64_t layer, const std::vector<float> & hidden,
                               const std::vector<int32_t> & codes,
                               const std::vector<float> & semantic_mask,
