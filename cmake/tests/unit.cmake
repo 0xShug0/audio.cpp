@@ -377,6 +377,14 @@ add_engine_test(partial_text_test tests/unittests/test_partial_text.cpp)
 # partial_text_render
 add_engine_test(partial_text_render_test tests/unittests/test_partial_text_render.cpp)
 
+# Text chunking (PocketTTS)
+if (pocket_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test(pocket_tts_text_chunking_test tests/pocket_tts/test_text_chunking.cpp)
+    target_compile_definitions(pocket_tts_text_chunking_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
+endif()
+
 # prepared_graph
 add_engine_test(prepared_graph_test
     tests/unittests/test_prepared_graph.cpp
