@@ -1,5 +1,6 @@
 #include "engine/community_models/lfm2_audio/session.h"
 
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/debug/profiler.h"
@@ -434,7 +435,11 @@ std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
 runtime::IOfflineVoiceTaskSession & Lfm2AudioSession::vad_session() {
     if (vad_session_ == nullptr) {
         runtime::ModelLoadRequest load_request;
-        load_request.model_path = vad_model_path_;
+        // The default model is looked up beside the library only here, when the VAD is loaded, so
+        // the auto policy above keeps falling back to fixed chunks when the working directory lacks it.
+        load_request.model_path = vad_model_path_ == default_vad_model_path()
+                                      ? engine::assets::resolve_bundled_asset(vad_model_path_)
+                                      : vad_model_path_;
         vad_model_ = runtime::load_vad_model(load_request);
         auto session = vad_model_->create_task_session(
             {runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},

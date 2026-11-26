@@ -528,6 +528,7 @@ add_library(engine_core OBJECT
     src/framework/assets/weight_adapter.cpp
     src/framework/assets/weight_adapter_source.cpp
     src/framework/assets/torch_bin.cpp
+    src/framework/assets/bundled_assets.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
     src/framework/core/attention_fallback.cpp

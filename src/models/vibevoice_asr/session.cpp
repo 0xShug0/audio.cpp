@@ -1,5 +1,6 @@
 #include "engine/models/vibevoice_asr/session.h"
 
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
@@ -70,7 +71,7 @@ void validate_weight_storage(assets::TensorStorageType storage_type, const char 
 }
 
 std::filesystem::path default_vad_model_path() {
-    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+    return engine::assets::resolve_bundled_asset(std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
 }
 
 int64_t audio_frame_count(const runtime::AudioBuffer & audio) {

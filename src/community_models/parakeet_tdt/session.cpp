@@ -1,6 +1,7 @@
 #include "engine/community_models/parakeet_tdt/session.h"
 #include "engine/community_models/parakeet_tdt/routing.h"
 
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/audio/conversion.h"
@@ -214,7 +215,7 @@ std::string streaming_attention_mode_option(const runtime::SessionOptions& optio
 }
 
 std::filesystem::path default_vad_model_path() {
-    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+    return engine::assets::resolve_bundled_asset(std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
 }
 
 void validate_enum_contract_options(const runtime::SessionOptions& options, const std::string & prefix) {

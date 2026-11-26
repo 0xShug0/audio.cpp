@@ -8,6 +8,7 @@
 #ifdef ENGINE_HAVE_NEON
 #include "engine/models/moonshine_asr/neon_decoder.h"
 #endif
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -27,7 +28,7 @@ constexpr const char * kFamily = "moonshine_asr";
 constexpr float kDefaultAudioChunkSeconds = 60.0F;
 
 std::filesystem::path default_vad_model_path() {
-    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+    return engine::assets::resolve_bundled_asset(std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
 }
 
 int64_t audio_frame_count(const runtime::AudioBuffer & audio) {
