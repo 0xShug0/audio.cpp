@@ -15,14 +15,16 @@ namespace engine::models::sanotts {
 
 /** Complete nano-lineage decoder (frame-stage
  *  acoustic blocks -> mel projection -> noise-fed ConvNeXt-1D -> spectrum
- *  head), for CPU sessions selecting neon through sanotts.exec_plan.
+ *  head), plus optional NEON front-end (duration + token-stage acoustic) and
+ *  fused head->iSTFT->DC audio output, for CPU sessions selecting neon
+ *  through sanotts.exec_plan.
  *
- *  Same inputs and output as the GGML decoder graph in runtime.cpp, so the
- *  rest of the pipeline (durations, token stage, host iSTFT, DC block) is
- *  unchanged. Outputs match the GGML path to float rounding, not bit-exact:
- *  acoustic.output is folded into decoder.embed, GELU uses an erf
- *  approximation with |error| < 1.5e-7, and sums run in a different order.
- *
+ *  decode() takes the same inputs and gives the same output as the GGML
+ *  decoder graph in runtime.cpp. Outputs match the GGML path to float
+ *  rounding, not bit-exact: acoustic.output is folded into decoder.embed,
+ *  GELU uses an erf approximation with |error| < 1.5e-7, and sums run in a
+ *  different order. The front end and decode_audio() exist only without
+ *  ENGINE_HAVE_NEON.
  */
 class SanoTtsNeonDecoder {
 public:
@@ -33,6 +35,18 @@ public:
 #else
     using WeightReader = std::function<std::vector<float>(const std::string &)>;
     SanoTtsNeonDecoder(const SanoTtsConfig &config, const WeightReader &read_weight, int threads);
+
+    void init_frontend(const SanoTtsConfig &config, const WeightReader &read_weight);
+    bool has_frontend() const;
+    std::vector<float> predict_duration(const std::vector<int32_t> &tokens,
+                                        const std::vector<float> &feats, int threads);
+    std::vector<float> predict_acoustic(const std::vector<int32_t> &tokens,
+                                        const std::vector<float> &feats, int threads);
+    bool can_decode_audio() const;
+    std::vector<float> decode_audio(const std::vector<float> &context,
+                                    const std::vector<float> &feats,
+                                    const std::vector<float> &noise,
+                                    int64_t frames, int threads);
 #endif
     ~SanoTtsNeonDecoder();
 
