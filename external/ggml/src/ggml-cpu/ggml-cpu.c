@@ -521,6 +521,12 @@ static inline void ggml_thread_cpu_relax(void) {
 static inline void ggml_thread_cpu_relax(void) {
     _mm_pause();
 }
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+// MSVC defines _M_X64 / _M_IX86, not __x86_64__, so MSVC builds took the empty
+// fallback below and spun without `pause`. YieldProcessor() emits `pause`.
+static inline void ggml_thread_cpu_relax(void) {
+    YieldProcessor();
+}
 #elif defined(__riscv)
 static inline void ggml_thread_cpu_relax(void) {
     #ifdef __riscv_zihintpause
