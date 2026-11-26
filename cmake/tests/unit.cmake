@@ -155,7 +155,7 @@ if (firered_vad IN_LIST AUDIOCPP_LINKED_MODELS)
     add_test(NAME firered_vad_rules_test COMMAND firered_vad_rules_test)
 endif()
 
-# Expert quantization, reference-cache eviction and sampling (Drama3)
+# Expert quantization, reference caching and sampling (Drama3)
 if (fish_drama3 IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(fish_drama3_expert_quantization_test
         tests/fish_drama3/expert_quantization_test.cpp)

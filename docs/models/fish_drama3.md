@@ -272,7 +272,11 @@ are rejected without staging, preserving alias equivalence.
 | `fish_drama3.codec_batch_frames` | `int` | `4` | Streaming codec batch ceiling. Starts at one frame and grows to this size; partial final batches are flushed. Offline decoding is unchanged. Declared range: minimum 1. |
 | `fish_drama3.codec_async_decode` | `bool` | `true` | Overlap streaming codec decoding with AR generation on the dedicated codec backend. Uses a bounded queue and waits for all audio before completing the request. |
 | `fish_drama3.device_sampling` | `bool` | `false` | Enable tower decode and codebook sampling in one cached backend graph. Disabled by default; enabled by cuda_perf unless explicitly overridden. Uses F32 probabilities; sampled outputs may differ from the host sampler. |
-| `fish_drama3.reference_cache_slots` | `int` | `8` | Encoded reference voices kept in host memory (0 to 64), least recently used evicted first. A hit needs the exact same waveform; 0 encodes every request. Each slot keeps its waveform (up to 5.3 MB). |
+| `fish_drama3.reuse_prefill` | `bool` | `false` | Reuse the most recent complete tokenized prompt and its prefill state in an offline session with resident experts. |
+| `fish_drama3.reuse_reference_prefill` | `bool` | `false` | Prefill the reference prefix separately and reuse its state in an offline session with resident experts. Changes sampled output relative to monolithic prefill. |
+| `fish_drama3.reference_cache_dir` | `string` | Empty | Optional cache root for encoded reference and history audio. An empty path disables persistence. |
+| `fish_drama3.prefill_cache_dir` | `string` | Empty | Optional cache root for reference-prefix snapshots. Requires reuse_reference_prefill. An empty path disables persistence. |
+| `fish_drama3.reference_cache_slots` | `int` | `8` | Encoded reference voices kept in host memory (0 to 64), least recently used evicted first. A hit needs the exact same waveform. Zero disables the in-memory cache. Each slot keeps its waveform (up to 5.3 MB). |
 | `fish_drama3.profile_first_audio` | `bool` | `false` | Emit first-audio stage timings to stderr for performance diagnosis. Disabled by default. |
 | `fish_drama3.context_length` | `int` | `2048` | Cache capacity for prompt plus generated frames; includes references and history. Declared range: minimum 1. |
 | `moe_cpu_expert_layers` | `int` | `4` | Number of the 40 expert banks kept and evaluated on CPU; use 4 for a 24 GB profile or 24 for a 16 GB profile. Dense layers and the tower use the selected backend. Declared range: minimum 0, maximum 40. |
@@ -521,6 +525,56 @@ The flag indicates that at least one generated output chunk reached its effectiv
 budget. A `max_tokens reduced` log message identifies a context-limited budget.
 If passages are cut off, reduce chunk size or increase the limiting budget
 within available memory. Compare several seeds when checking repetition.
+
+## Prompt caching
+
+The four options are opt-in. For another take with a different seed, set
+`fish_drama3.reuse_prefill=true`. The session keeps one snapshot before the first
+sample. A hit compares all prompt rows, including codebook values from the
+reference and history. Changing the seed alone still hits and preserves the
+PCM for each seed in the same execution configuration.
+
+Set `fish_drama3.reuse_reference_prefill=true` to reuse a voice across different
+lines or histories. The backbone and tower process the reference separately on
+the first request and resume from the saved state on later requests. The split
+changes arithmetic and can change sampled PCM even on the first request. With
+both options enabled, an identical full prompt uses its full snapshot. These
+two options apply to offline sessions with resident experts. Prefix reuse
+requires a voice reference.
+
+Set `fish_drama3.reference_cache_dir` to persist VQ codes for reference WAVs and
+`previous_takes` audio across restarts. Exact decoded waveform bytes, sample
+rate, and channel count identify audio. Disk hits populate the existing
+in-memory LRU when it is enabled. The disk cache retains up to 64 entries and
+1 MiB, enough for 64 entries the size of the largest VQ entry (about 12 KiB)
+in the public LibriSpeech probe.
+Clips exceeding the RAM cache's sample limit or 4,096 codec frames are skipped.
+
+With prefix reuse enabled, set `fish_drama3.prefill_cache_dir` to persist up to
+four reference snapshots within a 1 GiB disk budget. Each snapshot contains backbone KV,
+recurrent state and convolution tails, tower KV, and the last backbone row.
+RAM holds one snapshot per enabled prefill reuse mode. Snapshot size depends on
+the context, cache precision and model. A snapshot for the 40-layer model with
+context 2,048 and F16 backbone KV uses about 155 MiB, so four such entries use
+about 620 MiB. Larger entries can reach the byte limit first. Packing and
+unpacking a disk snapshot temporarily requires another host buffer of its size.
+
+Both caches use the framework [DiskCache](../framework/disk_cache.md). The
+configured paths are roots for the `fish_drama3-reference` and
+`fish_drama3-prefill` subdirectories, respectively. You can give both options
+the same trusted, writable local root. Each subdirectory has its own limit and
+least-recently-used eviction. Legacy `.vq` and `.prefill` files are left in place.
+
+Versioned keys include the linked runtime build, weight file identity, and
+relevant device and session settings. A miss or a payload of the wrong size
+triggers recomputation. With logging enabled, corruption and read or write
+failures produce warnings, at most once per cache and operation in each
+session. Synthesis continues with a fresh result. The framework syncs writes
+before atomic replacement and reclaims an abandoned temporary file on the next
+operation. Entries over the byte budget produce a write warning and remain in
+memory if the corresponding session cache is enabled. Generated files contain
+voice conditioning and may be deleted when the server is idle. Clear them
+after changing backend libraries or drivers in place.
 
 ## Validation limits
 

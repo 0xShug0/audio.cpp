@@ -36,11 +36,32 @@ public:
         const std::vector<Drama3Take> & generated_history = {}, bool allow_empty = false);
 
 private:
+    struct PromptPrefill {
+        std::vector<Drama3Frame> prompt;
+        std::vector<std::byte> backbone;
+        std::vector<std::byte> tower;
+        std::vector<float> hidden;
+    };
+
+    std::vector<float> embed_prompt(const std::vector<Drama3Frame> & prompt);
+    PromptPrefill capture_prefill(const std::vector<Drama3Frame> & prompt, const std::vector<float> & hidden) const;
+    void restore_prefill(const PromptPrefill & snapshot);
+    std::vector<float> prefill_reference_prompt(const std::vector<Drama3Frame> & prompt, size_t reference_end,
+        double & embedding_ms, double & backbone_ms, double & tower_ms);
+
     std::shared_ptr<const Drama3Assets> assets_;
     Drama3TextTokenizer tokenizer_;
     int64_t cache_steps_;
     bool profile_first_audio_ = false;
     bool disk_experts_ = false;
+    bool reuse_prefill_ = false;
+    bool reuse_reference_prefill_ = false;
+    std::optional<PromptPrefill> prompt_prefill_;
+    std::optional<PromptPrefill> reference_prefill_;
+    std::optional<io::DiskCache> prefill_disk_cache_;
+    std::string prefill_identity_;
+    bool prefill_disk_read_warned_ = false;
+    bool prefill_disk_write_warned_ = false;
     bool device_sampling_ = false;
     size_t codec_batch_frames_ = 4;
     bool codec_async_decode_ = true;

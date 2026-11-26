@@ -1917,6 +1917,7 @@ audiocpp_add_model(fish_drama3
     SOURCES
         src/community_models/fish_drama3/assets.cpp
         src/community_models/fish_drama3/backbone.cpp
+        src/community_models/fish_drama3/cache_key.cpp
         src/community_models/fish_drama3/generator.cpp
         src/community_models/fish_drama3/loader.cpp
         src/community_models/fish_drama3/prompt.cpp
