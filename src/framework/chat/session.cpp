@@ -38,12 +38,14 @@ struct Duplex::Impl {
     int64_t consumed_frames = 0;
     int64_t code_base = 0;
     int64_t emitted_samples = 0;
+    int64_t discarded_samples = 0;
     std::vector<int32_t> codes;
     runtime::AudioBuffer raw;
     runtime::AudioBuffer output;
     bool started = false;
     bool used = false;
     bool input_closed = false;
+    bool output_suspended = false;
 
     int64_t target_samples() const {
         return static_cast<int64_t>(std::llround(static_cast<double>(source_frames) * source.sample_rate / input_rate));
@@ -96,9 +98,13 @@ struct Duplex::Impl {
         }
         if (!generated.empty()) {
             auto decoded = source.decode_stream(generated, frames(generated));
-            runtime::append_audio_buffer(output, decoded);
+            if (!output_suspended) runtime::append_audio_buffer(output, decoded);
+            else discarded_samples += static_cast<int64_t>(decoded.samples.size());
         }
-        if (flush && static_cast<int64_t>(output.samples.size()) > target) output.samples.resize(static_cast<size_t>(target));
+        if (flush) {
+            const auto retained_target = std::max<int64_t>(0, target - discarded_samples);
+            if (static_cast<int64_t>(output.samples.size()) > retained_target) output.samples.resize(static_cast<size_t>(retained_target));
+        }
         const auto visible = static_cast<int64_t>(output.samples.size());
         if (visible > emitted_samples) {
             event.audio_output = runtime::AudioBuffer{output.sample_rate, output.channels,
@@ -191,6 +197,25 @@ runtime::TaskResult Duplex::interrupt() {
     return result;
 }
 
+void Duplex::interrupt_output(int64_t played_frames) {
+    auto & m = *impl_;
+    if (!m.started || m.input_closed) throw std::logic_error("Duplex chat input is not open");
+    if (played_frames < 0 || played_frames > m.emitted_samples / m.output.channels) {
+        throw runtime::InvalidRequestError("Played audio exceeds published duplex output");
+    }
+    const auto retained = static_cast<size_t>(played_frames) * static_cast<size_t>(m.output.channels);
+    m.discarded_samples += static_cast<int64_t>(m.output.samples.size() - retained);
+    m.output.samples.resize(retained);
+    m.emitted_samples = static_cast<int64_t>(m.output.samples.size());
+    m.output_suspended = true;
+}
+
+void Duplex::resume_output() {
+    auto & m = *impl_;
+    if (!m.started || m.input_closed) throw std::logic_error("Duplex chat input is not open");
+    m.output_suspended = false;
+}
+
 runtime::TaskResult Duplex::run(const runtime::AudioBuffer & input) {
     auto & m = *impl_;
     if (m.used) throw std::logic_error("Duplex execution has already been used; start a new conversation execution");
@@ -223,6 +248,7 @@ struct Session::Impl {
         size_t imported_turns = 0;
         std::unique_ptr<std::deque<runtime::StreamEvent>> ready;
         size_t published_samples = 0;
+        int output_channels = 1;
         int64_t received_frames = 0;
     };
     std::unique_ptr<Active> active;
@@ -380,7 +406,10 @@ std::optional<runtime::StreamEvent> Session::poll() {
         if (active.ready->empty()) return std::nullopt;
         auto event = std::move(active.ready->front());
         active.ready->pop_front();
-        if (event.audio_output) active.published_samples += event.audio_output->samples.size();
+        if (event.audio_output) {
+            active.output_channels = event.audio_output->channels;
+            active.published_samples += event.audio_output->samples.size();
+        }
         return event;
     }
     if (!active.reply) return std::nullopt;
@@ -451,6 +480,21 @@ void Session::interrupt() {
     } else {
         impl_->active.reset();
     }
+}
+void Session::interrupt_output(int64_t played_frames) {
+    auto & a = impl_->require_active();
+    if (!a.duplex) throw runtime::InvalidRequestError("Output interruption requires duplex chat");
+    if (played_frames < 0 || played_frames > static_cast<int64_t>(a.published_samples / static_cast<size_t>(a.output_channels))) {
+        throw runtime::InvalidRequestError("Played audio exceeds published chat output");
+    }
+    a.duplex->interrupt_output(played_frames);
+    a.ready->clear();
+    a.published_samples = static_cast<size_t>(played_frames) * static_cast<size_t>(a.output_channels);
+}
+void Session::resume_output() {
+    auto & a = impl_->require_active();
+    if (!a.duplex) throw runtime::InvalidRequestError("Output resumption requires duplex chat");
+    a.duplex->resume_output();
 }
 void Session::cancel() { impl_->active.reset(); }
 
