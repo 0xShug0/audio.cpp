@@ -75,6 +75,28 @@ int main() {
     const auto trimmed = trim_silence(audio, sr);
     check(trimmed.size() == static_cast<size_t>(sr / 2 + 2 * sr / 10), "trim_silence drops the edge burst");
 
+    // cut_end_burst: a loud blip after the speech has faded is cut at its onset; a take that just
+    // fades out, or ends on speech, is kept whole.
+    std::vector<float> take(static_cast<size_t>(sr), 0.0F);
+    for (int i = 0; i < sr - sr / 5; ++i) {
+        take[static_cast<size_t>(i)] = 0.3F * std::sin(0.03F * static_cast<float>(i));
+    }
+    for (int i = sr - sr / 5; i < sr - sr / 10; ++i) {
+        take[static_cast<size_t>(i)] = 0.001F * std::sin(0.03F * static_cast<float>(i));  // faded
+    }
+    auto faded = take;
+    check(cut_end_burst(faded, sr).size() == take.size(), "cut_end_burst keeps a take that fades out");
+    for (int i = sr - sr / 10 + sr / 50; i < sr; ++i) {
+        take[static_cast<size_t>(i)] = 0.2F * std::sin(0.4F * static_cast<float>(i));  // burst
+    }
+    check(cut_end_burst(take, sr).size() == static_cast<size_t>(sr - sr / 10 + sr / 50),
+        "cut_end_burst cuts at the burst's onset");
+    std::vector<float> speaking(static_cast<size_t>(sr), 0.0F);
+    for (int i = 0; i < sr; ++i) {
+        speaking[static_cast<size_t>(i)] = 0.3F * std::sin(0.03F * static_cast<float>(i));
+    }
+    check(cut_end_burst(speaking, sr).size() == speaking.size(), "cut_end_burst keeps speech to the end");
+
     // raise_quiet leaves normal levels alone and lifts a very quiet clip to about -20 dBFS.
     std::vector<float> quiet(static_cast<size_t>(sr), 0.0F);
     for (int i = 0; i < sr; ++i) {

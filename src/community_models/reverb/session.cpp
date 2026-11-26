@@ -18,6 +18,8 @@
 #include "engine/models/omnivoice/tokenizer_text.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <optional>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -215,6 +217,17 @@ public:
         }
         const bool trim = runtime::find_option(options, {"trim"})
             ? runtime::parse_bool_option(*runtime::find_option(options, {"trim"}), "trim") : true;
+        // "burst" (default) or a fixed number of seconds; see cut_end_burst.
+        const std::string end_cut = runtime::find_option(options, {"end_cut"}).value_or("burst");
+        std::optional<double> fixed_end_cut;
+        if (end_cut != "burst") {
+            char * end = nullptr;
+            const double seconds = std::strtod(end_cut.c_str(), &end);
+            if (end == end_cut.c_str() || *end != '\0' || !std::isfinite(seconds) || seconds < 0.0) {
+                throw std::runtime_error("Reverb end_cut must be burst or a number of seconds of at least 0");
+            }
+            fixed_end_cut = seconds;
+        }
         const auto seed_option = runtime::parse_i64_option(options, {"seed"});
         if (seed_option && (*seed_option < 0 || *seed_option > std::numeric_limits<uint32_t>::max())) {
             throw std::runtime_error("Reverb seed must be between 0 and 4294967295");
@@ -256,8 +269,12 @@ public:
             const auto decode_start = std::chrono::steady_clock::now();
             auto samples = decode(codes, frames);
             decode_ms += debug::elapsed_ms(decode_start);
-            const auto cut = static_cast<size_t>(kEndCutSeconds * sample_rate);
-            samples.resize(samples.size() > cut ? samples.size() - cut : 0);
+            if (fixed_end_cut) {
+                const auto cut = static_cast<size_t>(*fixed_end_cut * sample_rate);
+                samples.resize(samples.size() > cut ? samples.size() - cut : 0);
+            } else {
+                samples = cut_end_burst(std::move(samples), sample_rate);
+            }
             if (trim) {
                 samples = trim_silence(samples, sample_rate);
             }

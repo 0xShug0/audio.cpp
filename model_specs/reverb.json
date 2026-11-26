@@ -117,6 +117,13 @@
         "description": "Cut the take's silent edges."
       },
       {
+        "name": "end_cut",
+        "type": "string",
+        "default": "burst",
+        "required": false,
+        "description": "How each take's end is cut before trimming: burst cuts only a trailing codec noise burst, if there is one; a number of seconds cuts that much from every take (0.2 matches upstream reverb-tts, which can clip the last syllable)."
+      },
+      {
         "name": "num_inference_steps",
         "type": "int",
         "min": 1,

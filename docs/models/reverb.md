@@ -98,6 +98,15 @@ settings `num_inference_steps`, `remasking`, `remask_ratio`, `shift`,
 estimated over 30 s is cut at sentence ends into pieces of about 15 s, each with the
 next seed. Session options: `reverb.weight_type` and `reverb.codec_weight_type`.
 
+One deliberate difference from upstream: upstream cuts a fixed 0.2 s from the end
+of every take to remove an occasional codec noise burst. That 0.2 s usually holds
+the last syllable's fade and sometimes speech, so endings sound clipped. By
+default (`end_cut=burst`) this port cuts only a burst that is there: within the
+last 0.2 s, a 10 ms window at least 15 dB louder than the quietest one before it
+and within 30 dB of the take's peak, cut at its onset. `end_cut=0.2` restores
+upstream's cut (the parity check uses it), and any other number of seconds cuts
+that much.
+
 ## Text normalization
 
 Upstream passes text through [Verbalis](https://github.com/software-mansion-labs/Verbalis),

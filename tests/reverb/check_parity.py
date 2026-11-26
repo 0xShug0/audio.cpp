@@ -46,7 +46,7 @@ def main() -> int:
             subprocess.run([args.cli, "--task", "tts", "--family", "reverb", "--model", args.package,
                             "--model-spec-override", args.model_spec, "--backend", "cpu",
                             "--threads", str(args.threads), "--text", text, "--request-option", f"voice_id={voice}",
-                            "--request-option", f"seed={seed}", "--session-option", "reverb.weight_type=f32",
+                            "--request-option", f"seed={seed}", "--request-option", "end_cut=0.2", "--session-option", "reverb.weight_type=f32",
                             "--out", str(out)], check=True, capture_output=True)
             got, _ = sf.read(out, dtype="float32")
             same_length = len(got) == len(want)

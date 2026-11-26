@@ -261,6 +261,29 @@ double speech_length(const std::vector<float> & audio, int sample_rate) {
     return static_cast<double>(kept + edges) / 100.0;
 }
 
+std::vector<float> cut_end_burst(std::vector<float> audio, int sample_rate, double span) {
+    constexpr float kRiseDb = 15.0F;
+    constexpr float kBelowPeakDb = 30.0F;
+    const size_t window = static_cast<size_t>(sample_rate / 100);
+    const auto level = levels(audio, window);
+    if (level.empty()) {
+        return audio;
+    }
+    const float peak = *std::max_element(level.begin(), level.end());
+    const auto span_windows = static_cast<size_t>(span * 100.0);
+    const size_t first = level.size() > span_windows ? level.size() - span_windows : 0;
+    size_t quietest = first;
+    for (size_t w = first; w < level.size(); ++w) {
+        if (level[w] < level[quietest]) {
+            quietest = w;
+        } else if (level[w] - level[quietest] >= kRiseDb && level[w] >= peak - kBelowPeakDb) {
+            audio.resize(w * window);
+            return audio;
+        }
+    }
+    return audio;
+}
+
 std::vector<float> trim_silence(const std::vector<float> & audio, int sample_rate, double keep) {
     const size_t window = static_cast<size_t>(sample_rate / 100);
     const auto level = levels(audio, window);

@@ -39,7 +39,7 @@ done
 - `reverb_rules_test`: pass.
 - `check_frontend.py`: 0 failures (300 texts; resampling 48k/44.1k/22.05k/16k to 24k and 24k to
   16k, max abs error 1.2e-7 to 1.8e-7; `raise_quiet` 6e-8; `speech_length` and `trim_silence` exact).
-- `check_parity.py` (safetensors package, `reverb.weight_type=f32`): `en_female_narrator` seed 0,
+- `check_parity.py` (safetensors package, `reverb.weight_type=f32`, `end_cut=0.2` for upstream's fixed end cut): `en_female_narrator` seed 0,
   `en_male_narrator_1` seed 7 and `fr_female_standard` seed 3 all give the same sample count and
   waveform correlation 1.00000000. The prompt token ids, first-pass log-probabilities (max abs error
   3.2e-3, every argmax equal) and all 840 generated codes of the first case were also compared
