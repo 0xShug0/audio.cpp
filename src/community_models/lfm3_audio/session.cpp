@@ -474,7 +474,11 @@ struct Lfm3AsrSession::Impl {
     runtime::IOfflineVoiceTaskSession & vad_session() {
         if (vad == nullptr) {
             runtime::ModelLoadRequest load_request;
-            load_request.model_path = vad_model_path;
+            // The default model is looked up beside the library only here, when the VAD is loaded, so
+            // the auto policy above keeps falling back to fixed chunks when the working directory lacks it.
+            const auto bundled = std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+            load_request.model_path =
+                vad_model_path == bundled ? engine::assets::resolve_bundled_asset(vad_model_path) : vad_model_path;
             vad_model = runtime::load_vad_model(load_request);
             auto session = vad_model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
                                                           runtime::SessionOptions{model.execution.config(), {}});
@@ -546,9 +550,7 @@ Lfm3AsrSession::Lfm3AsrSession(runtime::TaskSpec task, runtime::SessionOptions o
     const auto & session = RuntimeSessionBase::options();
     impl_.reset(new Impl{task, std::move(contract), Model(require_assets(std::move(assets)), session, execution_context(), true, false),
                          runtime::find_option(session.options, {"lfm3_audio.vad_model_path"})
-                             .value_or(engine::assets::resolve_bundled_asset(
-                                           std::filesystem::path("assets") / "framework" / "models" / "silero_vad")
-                                           .string()),
+                             .value_or((std::filesystem::path("assets") / "framework" / "models" / "silero_vad").string()),
                          nullptr, nullptr, false});
 }
 

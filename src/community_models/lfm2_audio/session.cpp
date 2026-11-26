@@ -299,7 +299,7 @@ std::vector<runtime::TimeSpan> plan_fixed_chunks(int64_t samples, int64_t chunk_
 }
 
 std::filesystem::path default_vad_model_path() {
-    return engine::assets::resolve_bundled_asset(std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
+    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
 }
 
 // Set LFM2_AUDIO_DUMP_DIR to write each stage (features, adapter output,
@@ -435,7 +435,11 @@ std::vector<runtime::TimeSpan> Lfm2AudioSession::plan_chunks(
 runtime::IOfflineVoiceTaskSession & Lfm2AudioSession::vad_session() {
     if (vad_session_ == nullptr) {
         runtime::ModelLoadRequest load_request;
-        load_request.model_path = vad_model_path_;
+        // The default model is looked up beside the library only here, when the VAD is loaded, so
+        // the auto policy above keeps falling back to fixed chunks when the working directory lacks it.
+        load_request.model_path = vad_model_path_ == default_vad_model_path()
+                                      ? engine::assets::resolve_bundled_asset(vad_model_path_)
+                                      : vad_model_path_;
         vad_model_ = runtime::load_vad_model(load_request);
         auto session = vad_model_->create_task_session(
             {runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
