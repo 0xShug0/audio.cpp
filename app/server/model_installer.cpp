@@ -436,9 +436,10 @@ std::string ModelInstaller::start(
             std::lock_guard<std::mutex> lock(shared->mutex);
             auto & job = shared->jobs.at(package_id);
             job.state = job.cancel_requested ? "cancelled" : "failed";
+            const std::string detail = error.what() != nullptr ? std::string(error.what()) : std::string{};
             job.message = job.cancel_requested
                 ? "Download stopped; completed staging files were removed"
-                : error.what();
+                : (!detail.empty() ? detail : "Model installation failed");
             job.exit_code = -1;
             job.finished_at_ms = now_ms();
         }
