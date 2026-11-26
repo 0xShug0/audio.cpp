@@ -469,6 +469,73 @@ void test_duplex_clock_and_bounded_reuse() {
     queued.interrupt();
     require_eq(queued.history().size(), exchanges, "an unopened user message does not poison history");
 
+    // A barge-in drops unplayed and unpolled audio but keeps consuming input on
+    // the same causal execution. Resume must not replay the suppressed frames.
+    seen.clear();
+    queued.begin({});
+    queued.push_audio({8, 1, 0, {1, 0, 2, 0}});
+    queued.poll();
+    queued.push_audio({8, 1, 4, {3, 0}});
+    bool invalid_cursor = false;
+    try { queued.interrupt_output(5); } catch (const runtime::InvalidRequestError &) { invalid_cursor = true; }
+    require(invalid_cursor, "unpublished audio is not a valid playback cursor");
+    queued.interrupt_output(2);
+    require(!queued.poll(), "barge-in clears pending events");
+    queued.push_audio({8, 1, 6, {4, 0}});
+    require(!queued.poll(), "listening continues without publishing interrupted speech");
+    queued.resume_output();
+    queued.push_audio({8, 1, 8, {5, 0}});
+    require(queued.poll()->audio_output->samples == std::vector<float>({15, 15}), "resume publishes only fresh audio");
+    queued.interrupt_output(3);
+    queued.resume_output();
+    queued.push_audio({8, 1, 10, {6, 0}});
+    queued.poll();
+    require(seen == std::vector<int32_t>({1, 2, 3, 4, 5, 6}), "barge-in does not restart or skip model input frames");
+    require(queued.finalize().audio_output->samples == std::vector<float>({11, 11, 15, 16, 16}),
+        "history retains the played prefix across repeated interruptions");
+
+    queued.begin({});
+    queued.push_audio({8, 1, 0, {1, 0}});
+    queued.poll();
+    queued.interrupt_output(1);
+    queued.push_audio({8, 1, 2, {2, 0}});
+    queued.resume_output();
+    queued.push_audio({8, 1, 4, {3}});
+    require(queued.finalize().audio_output->samples == std::vector<float>({11, 13}),
+        "partial final frame is trimmed after discarded and suppressed output");
+
+    size_t suspended_tail_failures = 0;
+    for (bool preencoded : {false, true}) {
+        for (bool explicit_end : {false, true}) {
+            for (int64_t played : {int64_t{2}, int64_t{1}}) {
+                runtime::TaskRequest request;
+                if (preencoded) request.audio_input = runtime::AudioBuffer{8, 1, {1, 0, 2}};
+                queued.begin(request);
+                queued.push_audio({8, 1, 0, {1, 0}});
+                require(queued.poll()->audio_output->samples == std::vector<float>({11, 11}),
+                    "played prefix is available before tail suspension");
+                queued.interrupt_output(played);
+                queued.push_audio({8, 1, 2, {2}});
+                if (explicit_end) {
+                    queued.end_input();
+                    require(!queued.poll(), "suspended final padding publishes no event");
+                }
+                const auto result = queued.finalize();
+                const std::vector<float> expected(static_cast<size_t>(played), 11);
+                const auto actual = result.audio_output ? result.audio_output->samples : std::vector<float>{};
+                if (actual != expected) {
+                    ++suspended_tail_failures;
+                    std::cerr << "suspended tail: preencoded=" << preencoded << " explicit_end=" << explicit_end
+                              << " played=" << played << " retained=" << actual.size() << '\n';
+                }
+                const auto & history_audio = queued.history().back().assistant.audio_output;
+                require(history_audio.has_value() == result.audio_output.has_value() &&
+                    (!history_audio || history_audio->samples == actual), "finalized history matches the retained result");
+            }
+        }
+    }
+    require_eq(suspended_tail_failures, size_t{0}, "suspended final padding must not trim the played prefix");
+
 }
 }  // namespace
 
