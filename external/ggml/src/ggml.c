@@ -1015,6 +1015,9 @@ struct ggml_context {
 
     struct ggml_object * objects_begin;
     struct ggml_object * objects_end;
+
+    size_t mem_committed; // bytes of mem_buffer committed so far (mem_size unless reserved)
+    bool   mem_reserved;  // mem_buffer was reserved, and is committed as objects fill it
 };
 
 //
@@ -1673,6 +1676,44 @@ static inline bool ggml_can_repeat_rows(const struct ggml_tensor * t0, const str
 
 ////////////////////////////////////////////////////////////////////////////////
 
+#if defined(_WIN32)
+// A pool is often sized far above what it holds: a no_alloc context keeps only tensor and
+// graph headers. Windows charges committed memory against the system commit limit whether
+// it is touched or not, so a pool of at least GGML_CTX_RESERVE_MIN is reserved, and
+// committed as ggml_new_object fills it.
+#define GGML_CTX_RESERVE_MIN ((size_t) 1 << 20)
+#define GGML_CTX_COMMIT_STEP ((size_t) 1 << 16)
+
+static void * ggml_ctx_reserve(size_t mem_size, size_t * committed) {
+    void * base = VirtualAlloc(NULL, mem_size, MEM_RESERVE, PAGE_READWRITE);
+    if (base == NULL) {
+        return NULL;
+    }
+    const size_t first = mem_size < GGML_CTX_COMMIT_STEP ? mem_size : GGML_CTX_COMMIT_STEP;
+    if (VirtualAlloc(base, first, MEM_COMMIT, PAGE_READWRITE) == NULL) {
+        VirtualFree(base, 0, MEM_RELEASE);
+        return NULL;
+    }
+    *committed = first;
+    return base;
+}
+
+// Commit the pool up to at least `needed` bytes (<= mem_size), at least doubling it.
+static bool ggml_ctx_commit(struct ggml_context * ctx, size_t needed) {
+    size_t target = ctx->mem_committed * 2 > needed ? ctx->mem_committed * 2 : needed;
+    target = GGML_PAD(target, GGML_CTX_COMMIT_STEP);
+    if (target > ctx->mem_size) {
+        target = ctx->mem_size;
+    }
+    if (VirtualAlloc((char *) ctx->mem_buffer + ctx->mem_committed, target - ctx->mem_committed,
+                     MEM_COMMIT, PAGE_READWRITE) == NULL) {
+        return false;
+    }
+    ctx->mem_committed = target;
+    return true;
+}
+#endif
+
 struct ggml_context * ggml_init(struct ggml_init_params params) {
     static bool is_first_call = true;
 
@@ -1696,15 +1737,32 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
 
     const size_t mem_size = params.mem_buffer ? params.mem_size : GGML_PAD(params.mem_size, GGML_MEM_ALIGN);
 
+    void * mem_buffer    = params.mem_buffer;
+    size_t mem_committed = mem_size;
+    bool   mem_reserved  = false;
+#if defined(_WIN32)
+    if (mem_buffer == NULL && mem_size >= GGML_CTX_RESERVE_MIN) {
+        mem_buffer   = ggml_ctx_reserve(mem_size, &mem_committed);
+        mem_reserved = mem_buffer != NULL;
+    }
+#endif
+    if (mem_buffer == NULL) {
+        mem_buffer    = ggml_aligned_malloc(mem_size);
+        mem_committed = mem_size;
+    }
+
     *ctx = (struct ggml_context) {
         /*.mem_size           =*/ mem_size,
-        /*.mem_buffer         =*/ params.mem_buffer ? params.mem_buffer : ggml_aligned_malloc(mem_size),
+        /*.mem_buffer         =*/ mem_buffer,
         /*.mem_buffer_owned   =*/ params.mem_buffer ? false : true,
         /*.no_alloc           =*/ params.no_alloc,
         /*.n_objects          =*/ 0,
         /*.objects_begin      =*/ NULL,
         /*.objects_end        =*/ NULL,
     };
+
+    ctx->mem_committed = mem_committed;
+    ctx->mem_reserved  = mem_reserved;
 
     GGML_ASSERT(ctx->mem_buffer != NULL);
 
@@ -1731,6 +1789,11 @@ void ggml_free(struct ggml_context * ctx) {
     }
 
     if (ctx->mem_buffer_owned) {
+#if defined(_WIN32)
+        if (ctx->mem_reserved) {
+            VirtualFree(ctx->mem_buffer, 0, MEM_RELEASE);
+        } else
+#endif
         ggml_aligned_free(ctx->mem_buffer, ctx->mem_size);
     }
 
@@ -1804,6 +1867,15 @@ static struct ggml_object * ggml_new_object(struct ggml_context * ctx, enum ggml
 #endif
         return NULL;
     }
+
+#if defined(_WIN32)
+    if (ctx->mem_reserved && cur_end + size_needed + GGML_OBJECT_SIZE > ctx->mem_committed &&
+        !ggml_ctx_commit(ctx, cur_end + size_needed + GGML_OBJECT_SIZE)) {
+        GGML_LOG_WARN("%s: could not commit %zu bytes of the context's memory pool\n", __func__,
+                cur_end + size_needed + GGML_OBJECT_SIZE);
+        return NULL;
+    }
+#endif
 
     *obj_new = (struct ggml_object) {
         .offs = cur_end + GGML_OBJECT_SIZE,
