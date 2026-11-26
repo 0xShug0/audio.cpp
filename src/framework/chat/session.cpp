@@ -99,7 +99,16 @@ struct Duplex::Impl {
         if (!generated.empty()) {
             auto decoded = source.decode_stream(generated, frames(generated));
             if (!output_suspended) runtime::append_audio_buffer(output, decoded);
-            else discarded_samples += static_cast<int64_t>(decoded.samples.size());
+            else {
+                auto discarded = static_cast<int64_t>(decoded.samples.size());
+                if (flush) {
+                    // Padding is not discarded audio: counting it would shorten
+                    // the prefix that the caller has already played.
+                    const auto remaining = std::max<int64_t>(0, target - discarded_samples - static_cast<int64_t>(output.samples.size()));
+                    discarded = std::min(discarded, remaining);
+                }
+                discarded_samples += discarded;
+            }
         }
         if (flush) {
             const auto retained_target = std::max<int64_t>(0, target - discarded_samples);

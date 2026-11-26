@@ -504,6 +504,38 @@ void test_duplex_clock_and_bounded_reuse() {
     require(queued.finalize().audio_output->samples == std::vector<float>({11, 13}),
         "partial final frame is trimmed after discarded and suppressed output");
 
+    size_t suspended_tail_failures = 0;
+    for (bool preencoded : {false, true}) {
+        for (bool explicit_end : {false, true}) {
+            for (int64_t played : {int64_t{2}, int64_t{1}}) {
+                runtime::TaskRequest request;
+                if (preencoded) request.audio_input = runtime::AudioBuffer{8, 1, {1, 0, 2}};
+                queued.begin(request);
+                queued.push_audio({8, 1, 0, {1, 0}});
+                require(queued.poll()->audio_output->samples == std::vector<float>({11, 11}),
+                    "played prefix is available before tail suspension");
+                queued.interrupt_output(played);
+                queued.push_audio({8, 1, 2, {2}});
+                if (explicit_end) {
+                    queued.end_input();
+                    require(!queued.poll(), "suspended final padding publishes no event");
+                }
+                const auto result = queued.finalize();
+                const std::vector<float> expected(static_cast<size_t>(played), 11);
+                const auto actual = result.audio_output ? result.audio_output->samples : std::vector<float>{};
+                if (actual != expected) {
+                    ++suspended_tail_failures;
+                    std::cerr << "suspended tail: preencoded=" << preencoded << " explicit_end=" << explicit_end
+                              << " played=" << played << " retained=" << actual.size() << '\n';
+                }
+                const auto & history_audio = queued.history().back().assistant.audio_output;
+                require(history_audio.has_value() == result.audio_output.has_value() &&
+                    (!history_audio || history_audio->samples == actual), "finalized history matches the retained result");
+            }
+        }
+    }
+    require_eq(suspended_tail_failures, size_t{0}, "suspended final padding must not trim the played prefix");
+
 }
 }  // namespace
 
