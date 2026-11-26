@@ -198,6 +198,8 @@
   let packageSizePoll: number | null = null;
   let packageSizeRefreshPromise: Promise<void> | null = null;
   let refreshedInstallFinishes: Record<string, number> = {};
+  let reportedInstallFailures: Record<string, number> = {};
+  let dismissedInstallFailures: Record<string, number> = {};
   let quickStartVoices: string[] = [];
   let configuredVoices: string[] = [];
   let quickStartVoice = '';
@@ -887,14 +889,23 @@
   }
 
   function installProgressLabel(job: ModelInstallJob) {
+    if (job.state === 'failed') {
+      return job.downloaded_bytes > 0 && job.total_bytes > 0
+        ? `Download failed · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`
+        : 'Download failed';
+    }
+    if (job.state === 'cancelled') {
+      return job.downloaded_bytes > 0 && job.total_bytes > 0
+        ? `Download stopped · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`
+        : 'Download stopped';
+    }
+    if (job.state === 'cleaned') return 'Partial files cleaned';
+    if (job.state === 'complete') return '100% · complete';
     const percent = installPercent(job);
     if (job.total_bytes > 0) {
       return `${percent}% · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`;
     }
     if (job.downloaded_bytes > 0) return `${formatBytes(job.downloaded_bytes)} downloaded`;
-    if (job.state === 'failed') return 'Download failed';
-    if (job.state === 'cleaned') return 'Partial files cleaned';
-    if (job.state === 'complete') return '100% · complete';
     return job.state === 'queued' ? '0% · queued' : 'Connecting and checking package files…';
   }
 
@@ -1185,6 +1196,8 @@
       packageSizes = {};
       packageSizeState = 'idle';
       refreshedInstallFinishes = {};
+      reportedInstallFailures = {};
+      dismissedInstallFailures = {};
       if (installPoll !== null) {
         window.clearInterval(installPoll);
         installPoll = null;
@@ -2596,17 +2609,37 @@
     if (!server?.ui_management) return;
     try {
       const jobs = await modelInstallJobs();
-      const incoming = Object.fromEntries(jobs.map((job) => {
+      const incoming: Record<string, ModelInstallJob> = {};
+      for (const job of jobs) {
+        const failureKey = job.finished_at_ms || -1;
+        if (job.state === 'failed' && dismissedInstallFailures[job.id] === failureKey) {
+          continue;
+        }
         const local = installJobs[job.id];
-        return [job.id, {
+        incoming[job.id] = {
           ...job,
           total_bytes: job.total_bytes || local?.total_bytes || 0
-        }];
-      }));
+        };
+      }
       // Preserve a just-created local job if a status request races the server's
       // worker registration. This keeps the progress row visible from the click
       // until the authoritative job appears in a later poll.
       installJobs = { ...installJobs, ...incoming };
+      for (const job of Object.values(incoming)) {
+        if (job.state !== 'failed') continue;
+        const failureKey = job.finished_at_ms || -1;
+        if (reportedInstallFailures[job.id] === failureKey) continue;
+        reportedInstallFailures = { ...reportedInstallFailures, [job.id]: failureKey };
+        const owner = catalog.find((entry) => entry.install_packages?.some((choice) => choice.id === job.id));
+        const choice = owner?.install_packages?.find((candidate) => candidate.id === job.id);
+        const targetLabel = owner
+          ? `${owner.display_name}${choice ? ` ${choice.label}` : ''}`
+          : job.id;
+        const reason = job.message?.trim() || 'Model installation failed';
+        status = `${targetLabel} download failed: ${reason}`;
+        errorStatus = status;
+        log(status);
+      }
       let refreshInventory = false;
       for (const entry of catalog) {
         let newlyCompleted = false;
@@ -2656,7 +2689,13 @@
     );
     if (!confirmed) return;
     rememberPackageChoice(entry, choice);
+    if (choice.id in dismissedInstallFailures) {
+      const nextDismissed = { ...dismissedInstallFailures };
+      delete nextDismissed[choice.id];
+      dismissedInstallFailures = nextDismissed;
+    }
     status = `Starting ${choice.label} installation for ${entry.display_name}...`;
+    errorStatus = '';
     const expectedBytes = packageSizes[choice.id]?.size_bytes || 0;
     installJobs = {
       ...installJobs,
@@ -2682,26 +2721,42 @@
         [job.id]: { ...job, total_bytes: job.total_bytes || expectedBytes }
       };
       await refreshInstallJobs();
-      status = `${entry.display_name} ${choice.label} installation is running in the background.`;
-      log(status);
+      if (installJobs[choice.id]?.state !== 'failed') {
+        status = `${entry.display_name} ${choice.label} installation is running in the background.`;
+        log(status);
+      }
     } catch (error) {
-      status = error instanceof Error ? error.message : String(error);
+      const reason = error instanceof Error ? error.message : String(error);
+      const finishedAt = Date.now();
+      status = `${entry.display_name} ${choice.label} download failed: ${reason}`;
+      errorStatus = status;
+      reportedInstallFailures = { ...reportedInstallFailures, [choice.id]: finishedAt };
       installJobs = {
         ...installJobs,
         [choice.id]: {
           id: choice.id,
           state: 'failed',
-          message: status,
+          message: reason,
           exit_code: -1,
           downloaded_bytes: 0,
-          total_bytes: 0,
+          total_bytes: expectedBytes,
           progress_percent: -1,
           started_at_ms: 0,
-          finished_at_ms: Date.now()
+          finished_at_ms: finishedAt
         }
       };
-      log(`Installer failed to start: ${status}`);
+      log(status);
     }
+  }
+
+  function dismissInstallFailure(job: ModelInstallJob) {
+    dismissedInstallFailures = {
+      ...dismissedInstallFailures,
+      [job.id]: job.finished_at_ms || -1
+    };
+    const nextJobs = { ...installJobs };
+    delete nextJobs[job.id];
+    installJobs = nextJobs;
   }
 
 
@@ -3536,7 +3591,7 @@
     <ModelLibrary search={modelSearch} task={modelTask} groups={modelGroups} {packageSizes} {installJobs} {packageSizeState}
       bind:modelsFolderInput {modelsFolder} {modelsFolderHistory} {defaultModelsFolder} {applyingModelsFolder} {modelsFolderIsDefault}
       {openFolderBrowser} {applyModelsFolder} {installPackage} {removePackage} {stopPackageDownload}
-      {cleanPartialDownload} {formatBytes} {installProgressLabel} {workflowForEntry}
+      {cleanPartialDownload} {dismissInstallFailure} {formatBytes} {installProgressLabel} {workflowForEntry}
       taskLabel={(entry) => localizedTaskLabel(entry.task, tr, entry)}
       workflows={workflowTabs.map((w) => ({ id: w.id, label: workflowLabel(w.id, w.filterLabel, tr) }))}
       openModel={(entry, choice) => {

@@ -17,6 +17,13 @@ FILES = {
     "/org/repo/resolve/main/Slow/sibling.gguf": b"t" * (16 * 1024 * 1024),
 }
 
+ERROR_STATUSES = {
+    "/org/repo/resolve/main/Errors/gated.gguf": 403,
+    "/org/repo/resolve/main/Errors/missing.gguf": 404,
+    "/org/repo/resolve/main/Errors/ratelimited.gguf": 429,
+    "/org/repo/resolve/main/Errors/servererror.gguf": 503,
+}
+
 # ModelScope-style repo: default branch is master, and the file-list API is
 # the source of truth for per-file size and sha256.
 MS_REPO = "ms/repo"
@@ -58,6 +65,11 @@ class Handler(BaseHTTPRequestHandler):
             if not self.check_ms_auth():
                 return
             self.respond_ms_resolve(parsed.path, body)
+            return
+        error_status = ERROR_STATUSES.get(self.path)
+        if error_status is not None:
+            self.send_error(error_status)
+            self.count_request()
             return
         payload = FILES.get(self.path)
         if payload is None:
