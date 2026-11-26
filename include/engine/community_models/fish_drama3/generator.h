@@ -4,7 +4,6 @@
 #include "engine/community_models/fish_drama3/reference_cache.h"
 #include "engine/framework/runtime/streaming_audio.h"
 
-#include <filesystem>
 #include <functional>
 #include <optional>
 
@@ -59,8 +58,10 @@ private:
     bool reuse_reference_prefill_ = false;
     std::optional<PromptPrefill> prompt_prefill_;
     std::optional<PromptPrefill> reference_prefill_;
-    std::filesystem::path prefill_cache_dir_;
+    std::optional<io::DiskCache> prefill_disk_cache_;
     std::string prefill_identity_;
+    bool prefill_disk_read_warned_ = false;
+    bool prefill_disk_write_warned_ = false;
     bool device_sampling_ = false;
     size_t codec_batch_frames_ = 4;
     bool codec_async_decode_ = true;

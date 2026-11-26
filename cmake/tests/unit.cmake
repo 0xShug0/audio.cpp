@@ -160,9 +160,6 @@ if (fish_drama3 IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(fish_drama3_expert_quantization_test
         tests/fish_drama3/expert_quantization_test.cpp)
     add_engine_test(fish_drama3_reference_cache_test tests/fish_drama3/reference_cache_test.cpp)
-    if (CMAKE_DL_LIBS)
-        target_link_libraries(fish_drama3_reference_cache_test PRIVATE ${CMAKE_DL_LIBS})
-    endif()
     add_engine_test(fish_drama3_sampler_test tests/fish_drama3/sampler_test.cpp --log)
 endif()
 

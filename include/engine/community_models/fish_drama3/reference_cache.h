@@ -1,12 +1,14 @@
 #pragma once
 
 #include "engine/framework/codecs/fish_dac_codec_runtime.h"
+#include "engine/framework/io/disk_cache.h"
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session.h"
 
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -42,9 +44,11 @@ private:
     struct SameWaveform {
         bool operator()(const runtime::AudioBuffer & a, const runtime::AudioBuffer & b) const;
     };
-    std::filesystem::path disk_directory_;
+    std::optional<io::DiskCache> disk_cache_;
     std::string disk_identity_;
     int64_t codebook_size_ = 0;
+    bool disk_read_warned_ = false;
+    bool disk_write_warned_ = false;
     runtime::CacheSlots<runtime::AudioBuffer, codecs::FishDacCodes, SameWaveform> slots_;
 };
 

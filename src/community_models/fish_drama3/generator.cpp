@@ -1,6 +1,7 @@
 #include "engine/framework/runtime/moe_options.h"
 #include "engine/community_models/fish_drama3/generator.h"
-#include "disk_cache.h"
+#include "cache_key.h"
+#include "prefill_cache.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/errors.h"
@@ -22,9 +23,13 @@
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace engine::models::fish_drama3 {
 namespace {
+
+constexpr size_t kDiskPrefillEntries = 4;
+constexpr uint64_t kDiskPrefillBytes = 1024ULL * 1024 * 1024;
 
 struct PerfPreset {
     std::string_view name;
@@ -236,11 +241,16 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
                         cache_key_field(identity, value);
                     }
                     prefill_identity_ = identity.hex();
-                    prefill_cache_dir_ = std::filesystem::u8path(prefill_dir);
+                    prefill_disk_cache_.emplace(io::DiskCacheConfig{
+                        std::filesystem::u8path(prefill_dir) / "fish_drama3-prefill", kDiskPrefillEntries, kDiskPrefillBytes});
                 }
+            } else {
+                debug::log_message(debug::LogLevel::Warning, "fish_drama3",
+                    "Disk cache unavailable: could not identify the build");
             }
-        } catch (const std::filesystem::filesystem_error &) {
-            // An unidentifiable asset can still use the session caches.
+        } catch (const std::exception & error) {
+            debug::log_message(debug::LogLevel::Warning, "fish_drama3",
+                "Disk cache setup failed: " + std::string(error.what()));
         }
     }
     assets_->model_weights->release_storage();
@@ -272,27 +282,30 @@ std::vector<float> Drama3Generator::prefill_reference_prompt(const std::vector<D
     size_t reference_end, double & embedding_ms, double & backbone_ms, double & tower_ms) {
     const bool memory_hit = reference_prefill_ && reference_prefill_->prompt.size() == reference_end &&
         std::equal(reference_prefill_->prompt.begin(), reference_prefill_->prompt.end(), prompt.begin());
-    std::filesystem::path path;
+    std::string disk_key;
     if (!memory_hit) {
         reference_prefill_.reset();
-        if (!prefill_cache_dir_.empty()) {
+        if (prefill_disk_cache_) {
             const auto started = std::chrono::steady_clock::now();
             Sha256 key;
             cache_key_field(key, prefill_identity_);
             cache_key_field(key, cache_bytes(prompt.data(), reference_end));
-            path = prefill_cache_dir_ / (key.hex() + ".prefill");
-            const auto backbone_bytes = decoder_->prefill_snapshot_bytes();
-            const auto tower_bytes = tower_->prefill_snapshot_bytes();
-            const auto hidden_count = static_cast<size_t>(assets_->backbone.hidden_size);
-            const auto hidden_bytes = hidden_count * sizeof(float);
-            if (cache_payload_size(path) == backbone_bytes + tower_bytes + hidden_bytes) {
-                PromptPrefill snapshot{{prompt.begin(), prompt.begin() + reference_end},
-                    std::vector<std::byte>(backbone_bytes), std::vector<std::byte>(tower_bytes),
-                    std::vector<float>(hidden_count)};
-                if (read_cache_file(path, {{snapshot.backbone.data(), backbone_bytes},
-                        {snapshot.tower.data(), tower_bytes}, {snapshot.hidden.data(), hidden_bytes}})) {
-                    reference_prefill_ = std::move(snapshot);
+            disk_key = "fish_drama3/prefill/v1/" + key.hex();
+            try {
+                if (const auto payload = prefill_disk_cache_->get(disk_key)) {
+                    const auto unpack_started = std::chrono::steady_clock::now();
+                    auto state = unpack_prefill(*payload, decoder_->prefill_snapshot_bytes(),
+                        tower_->prefill_snapshot_bytes(), static_cast<size_t>(assets_->backbone.hidden_size));
+                    if (state) {
+                        reference_prefill_ = PromptPrefill{{prompt.begin(), prompt.begin() + reference_end},
+                            std::move(state->backbone), std::move(state->tower), std::move(state->hidden)};
+                        debug::timing_log_scalar("drama3.reference_prefill_disk_unpack_ms", debug::elapsed_ms(unpack_started));
+                    }
                 }
+            } catch (const std::exception & error) {
+                if (!std::exchange(prefill_disk_read_warned_, true))
+                    debug::log_message(debug::LogLevel::Warning, "fish_drama3.prefill_cache",
+                        "Cache read failed, recomputing the reference prefix: " + std::string(error.what()));
             }
             debug::trace_log_scalar("drama3.reference_prefill_disk", std::string_view(reference_prefill_ ? "hit" : "miss"));
             debug::timing_log_scalar("drama3.reference_prefill_disk_read_ms", debug::elapsed_ms(started));
@@ -324,12 +337,20 @@ std::vector<float> Drama3Generator::prefill_reference_prompt(const std::vector<D
         tower_->prefill(hidden, prefix);
         tower_ms += debug::elapsed_ms(started);
         reference_prefill_ = capture_prefill(prefix, last_hidden(hidden, assets_->backbone.hidden_size));
-        if (!path.empty()) {
+        if (!disk_key.empty()) {
             const auto & snapshot = *reference_prefill_;
             started = std::chrono::steady_clock::now();
-            write_cache_file(path, {cache_bytes(snapshot.backbone.data(), snapshot.backbone.size()),
-                cache_bytes(snapshot.tower.data(), snapshot.tower.size()),
-                cache_bytes(snapshot.hidden.data(), snapshot.hidden.size())}, 4);
+            try {
+                if (snapshot.backbone.size() + snapshot.tower.size() + snapshot.hidden.size() * sizeof(float) >
+                    kDiskPrefillBytes) throw std::invalid_argument("disk cache entry exceeds byte limit");
+                const auto payload = pack_prefill(snapshot.backbone, snapshot.tower, snapshot.hidden);
+                debug::timing_log_scalar("drama3.reference_prefill_disk_pack_ms", debug::elapsed_ms(started));
+                prefill_disk_cache_->put(disk_key, payload);
+            } catch (const std::exception & error) {
+                if (!std::exchange(prefill_disk_write_warned_, true))
+                    debug::log_message(debug::LogLevel::Warning, "fish_drama3.prefill_cache",
+                        "Cache write failed, using the computed reference prefix: " + std::string(error.what()));
+            }
             debug::timing_log_scalar("drama3.reference_prefill_disk_write_ms", debug::elapsed_ms(started));
         }
     }

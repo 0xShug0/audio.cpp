@@ -1,14 +1,26 @@
 #include "../../src/community_models/fish_drama3/reference_cache.cpp"
-#include "../../src/community_models/fish_drama3/disk_cache.cpp"
+#include "../../src/community_models/fish_drama3/prefill_cache.h"
 
 #include "engine/framework/runtime/errors.h"
 
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <sddl.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace {
 namespace d3 = engine::models::fish_drama3;
+namespace fs = std::filesystem;
 using engine::runtime::AudioBuffer;
 using Outcome = d3::Drama3ReferenceCache::Outcome;
 
@@ -146,8 +158,21 @@ public:
     std::filesystem::path path;
 };
 
+class WarningLog {
+public:
+    WarningLog() {
+        engine::debug::set_log_callback([](engine::debug::LogLevel level, const char * text, void * data) {
+            if (level == engine::debug::LogLevel::Warning) static_cast<WarningLog *>(data)->messages.emplace_back(text);
+        }, this);
+    }
+    ~WarningLog() { engine::debug::set_log_callback(nullptr, nullptr); }
+
+    std::vector<std::string> messages;
+};
+
 void test_disk_cache() {
     TemporaryDirectory directory;
+    WarningLog warnings;
     const auto audio = voice(1.0F);
     const engine::codecs::FishDacCodes expected{std::vector<int32_t>(20, 42), 10, 2};
     int calls = 0;
@@ -155,8 +180,8 @@ void test_disk_cache() {
         ++calls;
         return expected;
     };
-    const auto cache_for = [&](std::string identity) {
-        d3::Drama3ReferenceCache cache(1);
+    const auto cache_for = [&](std::string identity, size_t slots = 1) {
+        d3::Drama3ReferenceCache cache(slots);
         cache.set_disk_cache(directory.path, std::move(identity), 128);
         return cache;
     };
@@ -165,55 +190,121 @@ void test_disk_cache() {
     expect(original.lookup_or_encode(audio, encode, &outcome).codes == expected.codes &&
         outcome == Outcome::Miss && calls == 1, "cold cache encodes");
 
-    const auto path = std::filesystem::directory_iterator(directory.path)->path();
+    const auto entries = directory.path / "fish_drama3-reference";
+    fs::path path;
+    for (const auto & entry : fs::directory_iterator(entries)) {
+        if (entry.path().extension() == ".cache") path = entry.path();
+    }
+    expect(!path.empty(), "reference cache uses its dedicated subdirectory");
     auto warm = cache_for("encoder-a");
     expect(warm.lookup_or_encode(audio, encode, &outcome).codes == expected.codes &&
         outcome == Outcome::DiskHit && calls == 1, "fresh cache reads the same codes from disk");
-    {
+    const auto corrupt = [&] {
         std::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
-        file.seekp(12);
+        file.seekp(-1, std::ios::end);
         file.put('x');
         expect(static_cast<bool>(file), "corrupt a payload byte without changing the file size");
-    }
+    };
+    corrupt();
     warm.lookup_or_encode(audio, encode, &outcome);
     expect(outcome == Outcome::Hit && calls == 1, "disk hit was promoted to the in-memory LRU");
 
-    auto repaired = cache_for("encoder-a");
+    auto repaired = cache_for("encoder-a", 0);
     expect(repaired.lookup_or_encode(audio, encode, &outcome).codes == expected.codes &&
         outcome == Outcome::Miss && calls == 2, "corrupt payload is recomputed");
+    expect(warnings.messages.size() == 1 && warnings.messages.front().find("checksum mismatch") != std::string::npos,
+        "corruption warns with its cause");
+    corrupt();
+    repaired.lookup_or_encode(audio, encode, &outcome);
+    expect(outcome == Outcome::Miss && calls == 3 && warnings.messages.size() == 1,
+        "repeated read failures in one session still recompute and warn only once");
     auto reread = cache_for("encoder-a");
     reread.lookup_or_encode(audio, encode, &outcome);
-    expect(outcome == Outcome::DiskHit && calls == 2, "valid content replaces a corrupt file");
+    expect(outcome == Outcome::DiskHit && calls == 3, "valid content replaces a corrupt file");
+
+    engine::io::DiskCache disk({entries, 64, 1024 * 1024});
+    const auto key = d3::reference_key("encoder-a", audio);
+    auto payload = disk.get(key).value();
+    payload.resize(payload.size() - 10 * sizeof(int32_t));
+    disk.put(key, payload);
+    expect(repaired.lookup_or_encode(audio, encode, &outcome).codes == expected.codes &&
+        outcome == Outcome::Miss && calls == 4 && warnings.messages.size() == 1,
+        "a checksummed payload with the wrong size is a miss");
+    auto resized = cache_for("encoder-a");
+    resized.lookup_or_encode(audio, encode, &outcome);
+    expect(outcome == Outcome::DiskHit && calls == 4, "wrong-sized payload is replaced");
+
     auto changed = cache_for("encoder-b");
     changed.lookup_or_encode(audio, encode, &outcome);
-    expect(outcome == Outcome::Miss && calls == 3, "new encoder identity misses");
+    expect(outcome == Outcome::Miss && calls == 5, "new encoder identity misses");
 }
 
-void test_cache_file() {
+void test_unwritable_cache() {
+#ifndef _WIN32
+    if (geteuid() == 0) return;
+#endif
+    TemporaryDirectory directory;
+    WarningLog warnings;
+    const auto entries = directory.path / "fish_drama3-reference";
+#ifdef _WIN32
+    // Deny FILE_ADD_FILE on this test-only directory, including for its owner.
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    expect(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        L"D:P(D;;0x2;;;WD)(A;;FA;;;OW)", SDDL_REVISION_1, &descriptor, nullptr) != 0,
+        "build a read-only test directory ACL");
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), descriptor, FALSE};
+    const bool created = CreateDirectoryW(entries.c_str(), &attributes) != 0;
+    LocalFree(descriptor);
+    expect(created, "create the directory with writes denied");
+#else
+    fs::create_directory(entries);
+    fs::permissions(entries, fs::perms::owner_read | fs::perms::owner_exec);
+#endif
+    d3::Drama3ReferenceCache cache(0);
+    cache.set_disk_cache(directory.path, "encoder", 128);
+    const engine::codecs::FishDacCodes expected{std::vector<int32_t>(20, 42), 10, 2};
+    Outcome outcome{};
+    const auto encode = [&](const AudioBuffer &) { return expected; };
+    const bool encoded = cache.lookup_or_encode(voice(1.0F), encode, &outcome).codes == expected.codes &&
+        outcome == Outcome::Miss;
+    const bool repeated = cache.lookup_or_encode(voice(2.0F), encode).codes == expected.codes;
+#ifndef _WIN32
+    fs::permissions(entries, fs::perms::owner_all);
+#endif
+    expect(encoded && repeated, "unwritable cache still returns the freshly encoded conditioning");
+    expect(warnings.messages.size() == 2 &&
+        warnings.messages[0].find("Cache read failed") != std::string::npos &&
+        warnings.messages[1].find("Cache write failed") != std::string::npos,
+        "unwritable cache warns once per operation");
+    expect(fs::is_empty(entries), "permission failure publishes no files");
+}
+
+void test_prefill_payload() {
     TemporaryDirectory directory;
     d3::Sha256 hash;
     hash.update("a");
     hash.update("bc");
     expect(hash.hex() == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
         "SHA-256 known answer");
-    const auto first = directory.path / (std::string(64, 'a') + ".prefill");
-    const auto second = directory.path / (std::string(64, 'b') + ".prefill");
-    const auto unrelated = directory.path / "notes.prefill";
-    std::ofstream(unrelated).put('x');
-    d3::write_cache_file(first, {"state", "row"}, 1);
-    std::array<char, 5> state{};
-    std::array<char, 3> row{};
-    expect(d3::read_cache_file(first, {{state.data(), state.size()}, {row.data(), row.size()}}) &&
-        std::string_view(state.data(), state.size()) == "state" &&
-        std::string_view(row.data(), row.size()) == "row", "read two validated snapshot sections");
-    expect(!d3::read_cache_file(first, {{state.data(), state.size()}}), "reject a different snapshot size");
-    std::filesystem::copy_file(first, second);
-    expect(!d3::read_cache_file(second, {{state.data(), state.size()}, {row.data(), row.size()}}),
-        "payload identifies its cache key");
-    std::filesystem::last_write_time(first, std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
-    d3::write_cache_file(second, {"state", "row"}, 1);
-    expect(!std::filesystem::exists(first) && std::filesystem::exists(second) && std::filesystem::exists(unrelated),
-        "prune the oldest cache entry and keep unrelated files");
+    const std::vector<std::byte> backbone(5, std::byte{1}), tower(3, std::byte{2});
+    const std::vector<float> hidden{0.25F, -0.5F};
+    const auto payload = d3::pack_prefill(backbone, tower, hidden);
+    const auto legacy_prefill = directory.path / (std::string(64, 'a') + ".prefill");
+    const auto legacy_vq = directory.path / (std::string(64, 'b') + ".vq");
+    std::ofstream(legacy_prefill).put('p');
+    std::ofstream(legacy_vq).put('v');
+    engine::io::DiskCache cache({directory.path, 1, 1024});
+    cache.put("fish_drama3/prefill/v1/old", payload);
+    cache.put("fish_drama3/prefill/v1/new", payload);
+    expect(std::ifstream(legacy_prefill).get() == 'p' && std::ifstream(legacy_vq).get() == 'v',
+        "eviction leaves legacy files intact");
+    const auto stored = cache.get("fish_drama3/prefill/v1/new").value();
+    const auto state = d3::unpack_prefill(stored, backbone.size(), tower.size(), hidden.size());
+    expect(state && state->backbone == backbone && state->tower == tower && state->hidden == hidden,
+        "round trip all three prefill sections");
+    expect(!d3::unpack_prefill(stored, backbone.size(), tower.size(), hidden.size() - 1) &&
+           !d3::unpack_prefill(stored, backbone.size(), tower.size(), hidden.size() + 1),
+        "reject checksummed snapshots with a different payload size");
 }
 
 void expect_rejected(const std::string & value) {
@@ -244,7 +335,8 @@ int main() {
         test_exact_match();
         test_long_clip();
         test_disk_cache();
-        test_cache_file();
+        test_unwritable_cache();
+        test_prefill_payload();
         test_option();
     } catch (const std::exception & error) {
         std::cerr << error.what() << "\n";

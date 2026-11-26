@@ -212,14 +212,14 @@
       {
         "name": "reference_cache_dir",
         "type": "string",
-        "description": "Optional directory for encoded reference and history audio. An empty path disables persistence.",
+        "description": "Optional cache root for encoded reference and history audio. An empty path disables persistence.",
         "required": false,
         "default": ""
       },
       {
         "name": "prefill_cache_dir",
         "type": "string",
-        "description": "Optional directory for reference-prefix snapshots. Requires reuse_reference_prefill. An empty path disables persistence.",
+        "description": "Optional cache root for reference-prefix snapshots. Requires reuse_reference_prefill. An empty path disables persistence.",
         "required": false,
         "default": ""
       },
