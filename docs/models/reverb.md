@@ -22,7 +22,7 @@ GGML ops but has not been run yet. Vulkan builds need the SPIR-V headers (`spirv
 
 ```sh
 cmake -S . -B build -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=reverb
-cmake --build build --target audiocpp_cli audiocpp_server audiocpp_gguf --parallel
+cmake --build build --target audiocpp_cli audiocpp_server audiocpp_gguf -j 8
 ```
 
 `AUDIOCPP_MODELS=reverb` links `omnivoice` as a dependency. Add

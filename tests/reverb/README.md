@@ -5,7 +5,7 @@ Run from the audio.cpp repository root. Build with model tests:
 ```sh
 cmake -S . -B build -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=reverb \
   -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON
-cmake --build build --target audiocpp_cli audiocpp_gguf reverb_rules_test reverb_frontend_probe --parallel
+cmake --build build --target audiocpp_cli audiocpp_gguf reverb_rules_test reverb_frontend_probe -j 8
 ctest --test-dir build -R reverb_rules_test   # unit test (cmake/tests/unit.cmake)
 python tools/check_loader_catalog_sync.py
 ```
