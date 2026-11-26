@@ -639,17 +639,14 @@ S3TokenizerComponent S3TokenizerComponent::load_from_source(
         throw std::runtime_error("S3 tokenizer requires tensor source");
     }
     auto weights = load_s3tokenizer_weights(std::move(source), execution_context, std::move(config));
-    S3TokenizerComponent component(std::move(weights), execution_context);
-    component.state_ = std::make_shared<State>(State{
-        make_s3_tokenizer_inference_session_cache(),
-    });
-    return component;
+    return S3TokenizerComponent(std::move(weights), execution_context);
 }
 
 S3TokenizerComponent::S3TokenizerComponent(
     std::shared_ptr<const S3TokenizerWeights> weights,
     const engine::core::ExecutionContext & execution_context)
-    : weights_(std::move(weights)), execution_context_(&execution_context) {}
+    : weights_(std::move(weights)), execution_context_(&execution_context),
+      state_(std::make_shared<State>(State{make_s3_tokenizer_inference_session_cache()})) {}
 
 const engine::core::BackendConfig & S3TokenizerComponent::backend() const noexcept {
     return execution_context_->config();

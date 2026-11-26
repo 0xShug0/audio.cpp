@@ -1,0 +1,39 @@
+# Checkpoint-dependent runtime lifecycle tests
+
+These targets are built only with `ENGINE_BUILD_MODEL_TESTS=ON`. They call
+framework runtimes directly, without model sessions or reference/output caches.
+They are not checkpoint-free unit tests.
+
+Each suite compares A, repeated A, same-shape B, return to A, changed-shape C,
+return to A and destruction/recreation against separately constructed runtimes.
+Where exposed by the API, it also checks explicit release/reprepare. These are
+lifecycle comparisons, not independent references for the model mathematics.
+
+Build in Debug:
+
+```bash
+cmake --build build/debug --target framework_encoder_lifecycle_test fsq_codec_lifecycle_test -j8
+```
+
+Run `framework_encoder_lifecycle_test` with `--model`, `--component`, `--prefix`,
+`--audio`, `--backend cuda --threads 8 --log --log-file <path>`:
+
+| Component | Compatible checkpoint | Prefix | Additional arguments |
+|---|---|---|---|
+| `qwen3` | M5-TTS GGUF | `codec` | `--attention eager` or `--attention flash` |
+| `s3` | Chatterbox GGUF | `s3gen` | `--construction factory` or `--construction weights` |
+| `wav2vec2` | ControlFoley GGUF | `mert` | Uses the published MERT configuration with graph retention enabled |
+| `musicgen_style` | ControlFoley GGUF | `mert` | `--aux-prefix musicgen_style` |
+
+Use a mono speech recording such as `assets/resources/b.wav`. MERT expects
+24 kHz audio; the tests use up to four seconds, matching the conditioner input
+budget. The `weights` S3 construction path exercises its public constructor
+with valid weights loaded through the factory.
+
+Run `fsq_codec_lifecycle_test --model <NeuTTS-GGUF> --backend cuda --threads 8
+--log --log-file <path>`. It uses the model adapter only to obtain checkpoint
+bindings/configuration, then calls the shared FSQ codec directly with generated
+valid code IDs. It compares raw decoder-head values before waveform processing.
+
+Run cases sequentially. No checkpoints, tensor dumps or generated WAVs belong
+in this test directory.
