@@ -238,6 +238,7 @@ const english: Record<string, string> = {
   'studio.loadPackage': 'Load {package}',
   'studio.unloadPackage': 'Unload {package}',
   'studio.packageNotDownloaded': '{package} is not downloaded',
+  'yue2.noDownloadedWeights': 'No downloaded weights',
   'run.chooseModel': 'Choose an installed model first',
   'run.installModel': 'Install this model from the Models tab first',
   'run.elapsed': 'Elapsed generation time',
