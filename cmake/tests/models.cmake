@@ -1173,6 +1173,11 @@ if (ENGINE_ENABLE_OPENMP)
     target_link_libraries(sheetsage2_decoder_parity_probe PRIVATE OpenMP::OpenMP_CXX)
 endif()
 
+# silero_vad (offline input at other sample rates; in-repo weights)
+add_engine_test(silero_vad_resample_test tests/silero_vad/resample_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/framework/models/silero_vad"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/resources/sample_16k.wav")
+
 # soprano_text_cleaning
 add_engine_test(soprano_text_cleaning_test tests/unittests/test_soprano_text_cleaning.cpp)
 target_sources(soprano_text_cleaning_test PRIVATE

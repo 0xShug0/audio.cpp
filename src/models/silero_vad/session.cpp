@@ -160,7 +160,8 @@ runtime::RunMode SileroVADSession::run_mode() const {
 
 void SileroVADSession::prepare(const runtime::SessionPreparationRequest & request) {
     int sample_rate = 16000;
-    if (request.audio.has_value() && request.audio->sample_rate > 0) {
+    // Offline runs resample their input to 16 kHz; streaming chunks must already be 16 kHz.
+    if (task_.mode != runtime::RunMode::Offline && request.audio.has_value() && request.audio->sample_rate > 0) {
         sample_rate = request.audio->sample_rate;
     }
     runtime_.prepare(sample_rate);
