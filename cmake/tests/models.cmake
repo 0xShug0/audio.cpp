@@ -569,6 +569,10 @@ endif()
 
 # kitten_tts2
 if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_executable(audiocpp_kitten_tts2_prepare_voices EXCLUDE_FROM_ALL
+        tools/gguf/kitten_tts2/kitten_tts2_voices_prepare.cpp)
+    audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
+    target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
     add_executable(kitten_tts2_components_probe tests/kitten_tts2/components_probe.cpp)
     audiocpp_use_utf8_codepage(kitten_tts2_components_probe)
     target_link_libraries(kitten_tts2_components_probe PRIVATE engine_runtime)

@@ -408,7 +408,9 @@ stored separately.
 ## Self-contained GGUF
 
 The conversion commands above produce complete runtime packages. They require
-the native converter and `audiocpp_kitten_tts2_prepare_voices` beside it.
+the native converter and `audiocpp_kitten_tts2_prepare_voices` beside it. Enable
+`ENGINE_BUILD_MODEL_TESTS=ON` and explicitly build the preparation target, as shown
+above; it is excluded from the default build.
 
 The upstream prepared `cpp/default/voices.json` omits the nine language presets;
 the helper fills those from `voices/voices.json`, the NPZ embeddings/tokens, and

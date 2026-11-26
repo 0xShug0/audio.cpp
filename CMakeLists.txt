@@ -3712,13 +3712,6 @@ if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
     target_link_libraries(audiocpp_model_manager PRIVATE audiocpp_package_manager)
 endif()
 
-if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
-    add_executable(audiocpp_kitten_tts2_prepare_voices EXCLUDE_FROM_ALL
-        tools/gguf/kitten_tts2/kitten_tts2_voices_prepare.cpp)
-    audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
-    target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
-endif()
-
 # Shared test setup; declarations and category selection stay separate.
 if (ENGINE_BUILD_TESTS OR ENGINE_BUILD_EXTENDED_TESTS OR ENGINE_BUILD_MODEL_TESTS)
     enable_testing()
