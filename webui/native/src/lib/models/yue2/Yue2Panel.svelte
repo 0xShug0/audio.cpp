@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
-  import { jsonRequest, loadModel, models, runTask, unloadModel, uploadFile } from '$lib/api';
+  import { jsonRequest, loadModel, models, runTask, unloadModel, uploadFile, type ModelPackageSize } from '$lib/api';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import LoraGroup from '$lib/LoraGroup.svelte';
   import type { Translator } from '$lib/i18n';
-  import type { CatalogEntry, LoadedModel, PackageLoadTarget, ParamSpec, ServerHealth } from '$lib/types';
+  import type { CatalogEntry, InstallPackageChoice, LoadedModel, PackageLoadTarget, ParamSpec, ServerHealth } from '$lib/types';
+  import { resolveYue2ComponentChoices, type Yue2ComponentChoiceState } from './weights';
 
   export let lyrics = '';
   export let seed = 1234;
@@ -15,6 +16,10 @@
   export let catalogEntries: CatalogEntry[] = [];
   export let loadedModels: LoadedModel[] = [];
   export let server: ServerHealth | null = null;
+  export let modelId = 'yue2';
+  export let installPackages: InstallPackageChoice[] = [];
+  export let packageSizes: Record<string, ModelPackageSize> = {};
+  export let uiManaged = false;
   export let modelPathFor: (entry: CatalogEntry) => string = (entry) => entry.path;
   export let loadTargetFor: (entry: CatalogEntry) => Promise<PackageLoadTarget | undefined>;
   export let loadOptionsFor: (entry: CatalogEntry) => Record<string, string> = entry => entry.load_options || {};
@@ -273,7 +278,15 @@
     }
   }
 
+  $: residentYue2 = loadedModels.find((model) => model.id === modelId && model.loaded);
   $: componentSpecs = specsByName(componentParamNames, paramSpecs);
+  $: componentChoiceStates = Object.fromEntries(componentSpecs.map((spec) => {
+    const key = spec.session_option || spec.name;
+    return [spec.name, resolveYue2ComponentChoices(spec, installPackages, packageSizes, {
+      uiManaged,
+      residentValue: residentYue2?.session_options?.[key]
+    })];
+  })) as Record<string, Yue2ComponentChoiceState>;
   $: coreSpecs = specsByName(coreParamNames, paramSpecs);
   $: abcSpecs = specsByName(abcParamNames, paramSpecs);
   $: semanticSpecs = specsByName(semanticParamNames, paramSpecs);
@@ -297,11 +310,18 @@
       <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
     </div>
     {#each componentSpecs as spec}
+      {@const state = componentChoiceStates[spec.name]}
       <div class="yue2-field">
         <label for={'param-' + spec.name}>{localizedParameterText(spec, 'label', tr)}</label>
-        <select id={'param-' + spec.name} value={String(advancedValues[spec.name] ?? '')}
+        <select id={'param-' + spec.name}
+          disabled={state?.missing}
+          value={String(advancedValues[spec.name] ?? '')}
           on:change={(event) => setParameterValue(spec, event.currentTarget.value)}>
-          {#each spec.choices || [] as choice}<option value={choice}>{choice}</option>{/each}
+          {#if state?.missing}
+            <option value="">{tr('yue2.noDownloadedWeights')}</option>
+          {:else}
+            {#each state?.choices || spec.choices || [] as choice}<option value={choice}>{choice}</option>{/each}
+          {/if}
         </select>
         {#if localizedParameterText(spec, 'info', tr)}<small>{localizedParameterText(spec, 'info', tr)}</small>{/if}
       </div>
