@@ -217,6 +217,13 @@ public:
             ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, time_, heads, half_head_dim}));
+        // The RoPE tables are written once, after allocation, and the graph is reused for every
+        // clip of the same length. ggml-alloc frees and reuses the memory of any tensor that is
+        // not an output after its last use, so keep them as outputs.
+        ggml_set_input(cos_.tensor);
+        ggml_set_output(cos_.tensor);
+        ggml_set_input(sin_.tensor);
+        ggml_set_output(sin_.tensor);
 
         auto seq = TransposeModule({{0, 2, 1, 3}, x.shape.rank}).build(ctx, x);
         for (const auto & block : weights.blocks) {
