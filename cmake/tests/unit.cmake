@@ -81,6 +81,9 @@ add_engine_test(convnext_modules_test
 # cpu_extra_buffers
 add_engine_test(cpu_extra_buffers_test tests/unittests/test_cpu_extra_buffers.cpp)
 
+# Filesystem byte cache (no model checkpoints).
+add_engine_test(disk_cache_test tests/unittests/test_disk_cache.cpp --log)
+
 # Transcript-to-word timestamp alignment (CrisperWhisper)
 if (crisperwhisper IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(crisperwhisper_transcript_alignment_test

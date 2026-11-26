@@ -569,6 +569,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/workspace.cpp
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
+    src/framework/io/disk_cache.cpp
     # Vision/video modules, runtimes and media helpers.
     src/framework/vision/media/image.cpp
     src/framework/vision/media/processing.cpp
