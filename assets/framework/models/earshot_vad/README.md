@@ -8,7 +8,7 @@ Earshot is dual-licensed under MIT OR Apache-2.0; the MIT notice is in
 `LICENSE-MIT`. Regenerate the file with:
 
 ```bash
-python tests/earshot_vad/convert_earshot.py \
+python tools/gguf/earshot_vad_weights_prepare.py \
   --output assets/framework/models/earshot_vad/earshot_vad.safetensors
 ```
 

@@ -423,7 +423,7 @@ audiocpp_gguf --root models/Ace-Step1.5 --family ace_step \
 
 Swap `dit_xl_turbo_*` for `dit_xl_sft_*` to build the SFT one. Upstream ships
 `silence_latent.pt` where the spec wants safetensors;
-`tests/ace_step/convert_silence_latent.py --input <variant>/silence_latent.pt`
+`tools/gguf/ace_step_silence_latent_prepare.py --input <variant>/silence_latent.pt`
 converts it. Of the turbo and base snapshots only `config.json` is genuinely
 needed — those are required sidecars, a few KB each.
 

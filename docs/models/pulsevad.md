@@ -72,7 +72,7 @@ From the repository root, prepare both checkpoints from a PulseVAD upstream
 checkout, then package each variant with the standard GGUF tool:
 
 ```bash
-python tests/pulsevad/convert_pulsevad.py \
+python tools/gguf/pulsevad_weights_prepare.py \
   --upstream /path/to/PulseVAD \
   --output /path/to/PulseVAD-safetensors \
   --log pulsevad-conversion.log

@@ -70,7 +70,7 @@ Download an ONNX voice and its matching `.onnx.json` configuration from
 [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices), then run:
 
 ```bash
-python tests/piper_tts/convert_piper_onnx.py \
+python tools/gguf/piper_tts_onnx_weights_prepare.py \
   --onnx en_US-lessac-medium.onnx \
   --config en_US-lessac-medium.onnx.json \
   --output-dir piper-lessac-converted

@@ -89,7 +89,7 @@ Download `kitten_tts_mini_v0_8.onnx`, `voices.npz`, and `config.json` from the
 upstream model repository, then run:
 
 ```bash
-python tests/kitten_tts/convert_onnx_to_safetensors.py \
+python tools/gguf/kitten_tts/kitten_tts_onnx_weights_prepare.py \
   --onnx kitten_tts_mini_v0_8.onnx \
   --voices voices.npz \
   --output-dir kitten-converted/ggml
@@ -108,7 +108,7 @@ Download the complete official TTS2 Mini checkpoint, including its configuration
 vocabulary and language voice packs, then run from the repository root:
 
 ```bash
-python tests/kitten_tts/convert_tts2_mini.py \
+python tools/gguf/kitten_tts/kitten_tts_mini_weights_prepare.py \
   --model /path/to/kitten-tts-2-mini --output-dir kitten-mini2-converted
 audiocpp_gguf \
   --input kitten=kitten-mini2-converted/ggml/kitten_tts.safetensors \

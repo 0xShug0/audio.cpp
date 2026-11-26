@@ -109,7 +109,7 @@ configuration and face mask. Preparation requires PyTorch, safetensors,
 OmegaConf, NumPy, OpenCV and ONNX.
 
 ```bash
-python tests/latentsync/prepare_weights.py \
+python tools/gguf/latentsync/latentsync_weights_prepare.py \
   --checkpoint-dir /path/to/checkpoints --vae-dir /path/to/sd-vae-ft-mse \
   --reference-dir /path/to/LatentSync --face-model-dir /path/to/buffalo_l \
   --output-dir prepared
