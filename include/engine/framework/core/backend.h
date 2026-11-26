@@ -46,10 +46,31 @@ struct BackendDeviceInfo {
     ggml_backend_dev_caps caps{};
 };
 
+struct ResolvedBackendDevice {
+    BackendType type = BackendType::Cpu;
+    int device = 0;
+    BackendDeviceInfo info;
+};
+
 // Enumerates every device of every loaded ggml backend registry, in registry order.
 // query_properties also reads each device's PCI id, memory and caps. On CUDA and HIP
 // that creates the device's primary context, so the plain listing leaves it off.
 std::vector<BackendDeviceInfo> list_backend_devices(bool query_properties = false);
+// Resolves a user-supplied device name (from --device-name / "device_name") to a
+// concrete (BackendType, device index) pair without probing device properties
+// (avoiding CUDA/HIP context creation on unused GPUs). Matches selectable devices
+// (optionally filtered to backend_filter) by:
+//   1. exact case-insensitive ggml device_name (e.g. "CUDA0", "Vulkan1", "CPU")
+//   2. exact case-insensitive description (or display name)
+//   3. unique case-insensitive substring of description (or display name)
+// Throws std::runtime_error listing available devices on empty, missing, or ambiguous matches.
+ResolvedBackendDevice resolve_backend_device(
+    const std::string & query,
+    std::optional<BackendType> backend_filter,
+    const std::vector<BackendDeviceInfo> & devices);
+ResolvedBackendDevice resolve_backend_device(
+    const std::string & query,
+    std::optional<BackendType> backend_filter = std::nullopt);
 void print_backend_devices(std::ostream & out);
 // --list-devices --json: schema_version 1, documented in docs/usage.md.
 void print_backend_devices_json(std::ostream & out);

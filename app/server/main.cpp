@@ -89,7 +89,7 @@ std::filesystem::path executable_directory(const char * argv0) {
 void print_help() {
     std::cout
         << "audiocpp_server [--config <server.json>] [--ui] [--host <ip|unix:path>] [--port <port>] [--backend <backend>]\n"
-        << "                [--device <id>] [--list-devices [--json]] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "                [--device <id> | --device-name <name>] [--list-devices [--json]] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory|embedded>] [--voice-dir <directory>]\n"
         << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
@@ -115,6 +115,7 @@ void print_help() {
         << "  --port <port>                    TCP listening port; ignored for unix:; default 8080\n"
         << "  --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu|sycl  default cuda (rocm is an alias for hip)\n"
         << "  --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
+        << "  --device-name <name>             select backend device by ggml name (e.g. CUDA0) or unique description substring\n"
         << "  --list-devices                   list available backend devices and exit; add --json\n"
         << "                                   for PCI ids and free/total memory as JSON\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
@@ -233,7 +234,7 @@ int main(int argc, char ** argv) {
 #endif
 
         auto config = config_path.has_value()
-            ? minitts::server::load_server_config(*config_path, parallel_jobs)
+            ? minitts::server::parse_server_config(*config_path, parallel_jobs)
             : minitts::server::ServerConfig{};
         if (!config_path.has_value() && !has_arg(argc, argv, "--model")) {
             config.lazy_load = true;
@@ -274,12 +275,26 @@ int main(int argc, char ** argv) {
         }
         if (const auto backend = arg_value(argc, argv, "--backend")) {
             config.backend = minitts::server::parse_server_backend(*backend);
+            config.backend_explicit = true;
         }
         if (const auto impl = arg_value(argc, argv, "--backend-impl")) {
             config.backend_impl = *impl;
         }
+        const bool cli_device = has_arg(argc, argv, "--device");
+        const bool cli_device_name = has_arg(argc, argv, "--device-name");
+        if (cli_device && cli_device_name) {
+            throw std::runtime_error("cannot specify both --device and --device-name");
+        }
         if (const auto device = arg_value(argc, argv, "--device")) {
             config.device = std::stoi(*device);
+            config.device_name.reset();
+        }
+        if (cli_device_name) {
+            const auto device_name = arg_value(argc, argv, "--device-name");
+            if (!device_name || device_name->empty() || device_name->rfind("--", 0) == 0) {
+                throw std::runtime_error("--device-name requires a non-empty device name");
+            }
+            config.device_name = *device_name;
         }
         if (const auto threads = arg_value(argc, argv, "--threads")) {
             config.threads = std::stoi(*threads);
@@ -314,6 +329,7 @@ int main(int argc, char ** argv) {
             config.frontend_options[std::move(key)] = std::move(value);
         }
         minitts::server::apply_model_cli_options(config, argc, argv);
+        minitts::server::resolve_server_devices(config);
         if (config.frontend_listener.empty() && !config.frontend_options.empty()) {
             throw std::runtime_error("--frontend-option requires --frontend-listener");
         }

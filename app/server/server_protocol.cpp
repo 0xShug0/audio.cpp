@@ -439,13 +439,26 @@ model_config_from_json(const Value &body,
   model.task = engine::io::json::optional_string(body, "task", model.task);
   model.mode = engine::io::json::optional_string(body, "mode", model.mode);
   model.lazy = lazy;
-  if (body.find("device") != nullptr) {
+  const bool has_device = body.find("device") != nullptr;
+  const auto *device_name = body.find("device_name");
+  if (has_device && device_name != nullptr) {
+    throw engine::runtime::InvalidRequestError(
+        "model " + model.id + " cannot specify both device and device_name");
+  }
+  if (has_device) {
     const int device = engine::io::json::optional_i32(body, "device", 0);
     if (device < 0) {
       throw engine::runtime::InvalidRequestError(
           "device for model " + model.id + " must be >= 0");
     }
     model.device = device;
+  }
+  if (device_name != nullptr) {
+    if (!device_name->is_string() || device_name->as_string().empty()) {
+      throw engine::runtime::InvalidRequestError(
+          "device_name for model " + model.id + " must be a non-empty string");
+    }
+    model.device_name = device_name->as_string();
   }
   if (const auto *value = body.find("model_spec_override")) {
     const auto &selection = value->as_string();
