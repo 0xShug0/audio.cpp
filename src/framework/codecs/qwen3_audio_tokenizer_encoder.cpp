@@ -552,10 +552,15 @@ public:
         seq = core::ensure_backend_addressable_layout(build_ctx, seq);
         transformer_frames_ = seq.shape.dims[1];
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, transformer_frames_);
+        // Uploaded once: keep these constants alive across cached graph executions.
+        ggml_set_input(positions_);
+        ggml_set_output(positions_);
         auto positions_value = core::wrap_tensor(positions_, core::TensorShape::from_dims({transformer_frames_}), GGML_TYPE_I32);
         std::optional<core::TensorValue> attention_mask = std::nullopt;
         if (flash_attention_) {
             attention_mask_ = ggml_new_tensor_4d(ctx_.get(), GGML_TYPE_F16, transformer_frames_, transformer_frames_, 1, 1);
+            ggml_set_input(attention_mask_);
+            ggml_set_output(attention_mask_);
             attention_mask = core::wrap_tensor(
                 attention_mask_,
                 core::TensorShape::from_dims({1, 1, transformer_frames_, transformer_frames_}),
