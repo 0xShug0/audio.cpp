@@ -196,7 +196,7 @@
   let packageSizes: Record<string, ModelPackageSize> = {};
   let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
   let packageSizePoll: number | null = null;
-  let packageSizeRefreshInFlight = false;
+  let packageSizeRefreshPromise: Promise<void> | null = null;
   let refreshedInstallFinishes: Record<string, number> = {};
   let quickStartVoices: string[] = [];
   let configuredVoices: string[] = [];
@@ -986,33 +986,38 @@
     return value === 'Ready' ? translate('status.ready') : value;
   }
 
-  async function refreshPackageSizes() {
-    if (!server?.ui_management || packageSizeRefreshInFlight) return;
-    packageSizeRefreshInFlight = true;
-    try {
-      const response = await modelPackageSizes();
-      packageSizeState = response.state;
-      if (response.data.length) {
-        packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
-        if (response.state === 'complete') reconcileSelectedPackageChoices(packageSizes);
-        if (selectedId && !directModelPath && !isConfiguredEntry(selected) && selected.install_packages?.length) {
-          modelPath = selectedModelPath(selected);
-          syncPackageSessionControls();
+  async function refreshPackageSizes(): Promise<void> {
+    if (!server?.ui_management) return;
+    if (packageSizeRefreshPromise) return packageSizeRefreshPromise;
+    packageSizeRefreshPromise = (async () => {
+      try {
+        const response = await modelPackageSizes();
+        packageSizeState = response.state;
+        if (response.data.length) {
+          packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
+          if (response.state === 'running' || response.state === 'complete') {
+            reconcileSelectedPackageChoices(packageSizes);
+          }
+          if (selectedId && !directModelPath && !isConfiguredEntry(selected) && selected.install_packages?.length) {
+            modelPath = selectedModelPath(selected);
+            syncPackageSessionControls();
+          }
         }
+        const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
+        if (inventoryPending && packageSizePoll === null) {
+          packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
+        } else if (!inventoryPending && packageSizePoll !== null) {
+          window.clearInterval(packageSizePoll);
+          packageSizePoll = null;
+        }
+      } catch (error) {
+        packageSizeState = 'failed';
+        log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
+      } finally {
+        packageSizeRefreshPromise = null;
       }
-      const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
-      if (inventoryPending && packageSizePoll === null) {
-        packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
-      } else if (!inventoryPending && packageSizePoll !== null) {
-        window.clearInterval(packageSizePoll);
-        packageSizePoll = null;
-      }
-    } catch (error) {
-      packageSizeState = 'failed';
-      log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
-    } finally {
-      packageSizeRefreshInFlight = false;
-    }
+    })();
+    return packageSizeRefreshPromise;
   }
 
   function openModelsPage() {
@@ -1231,8 +1236,11 @@
     if (!uiManaged) return;
     const resident = loadedModels.find((model) => model.id === selectedId && model.loaded);
     const installPackages = selected.install_packages || [];
+    const packageOptions = selectedPackageChoice(selected)?.session_options || {};
     let changed = false;
+    let editedChanged = false;
     const next = { ...advancedValues };
+    const nextEdited = new Set(editedPackageOptions);
     for (const spec of paramSpecs) {
       if (spec.name !== 'main_gguf' && spec.name !== 'vae_gguf') continue;
       const key = spec.session_option || spec.name;
@@ -1247,8 +1255,14 @@
         next[spec.name] = valid;
         changed = true;
       }
+      const packageValue = importedSessionOptions[key] ?? packageOptions[key];
+      if (packageValue !== undefined && !state.choices.includes(packageValue) && !nextEdited.has(key)) {
+        nextEdited.add(key);
+        editedChanged = true;
+      }
     }
     if (changed) advancedValues = next;
+    if (editedChanged) editedPackageOptions = nextEdited;
   }
 
   function syncPackageSessionControls() {
