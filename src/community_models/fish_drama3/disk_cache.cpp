@@ -1,3 +1,9 @@
+// Runtime targets define _POSIX_C_SOURCE for libyaml. On macOS that hides
+// Dl_info and stat::st_ctimespec unless Darwin extensions stay enabled.
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
+
 #include "disk_cache.h"
 
 #include <algorithm>
@@ -88,7 +94,9 @@ void cache_file_identity(Sha256 & hash, const std::filesystem::path & path) {
     const auto resolved = std::filesystem::canonical(path);
     cache_key_field(hash, resolved.generic_u8string());
     cache_key_field(hash, std::to_string(std::filesystem::file_size(resolved)));
-    cache_key_field(hash, std::to_string(std::filesystem::last_write_time(resolved).time_since_epoch().count()));
+    // libc++ stores file times as __int128, which std::to_string does not accept.
+    cache_key_field(hash, std::to_string(static_cast<long long>(
+        std::filesystem::last_write_time(resolved).time_since_epoch().count())));
     // Include the file identity and change time to detect replacement and edits
     // that retain the modification time without rereading the checkpoint.
 #ifdef _WIN32
