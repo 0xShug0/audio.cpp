@@ -863,6 +863,124 @@ void test_config_file_token_used_as_option_value() {
     engine::test::require_eq(expanded.back(), std::string("--config-file"), "config-file token not parsed as option");
 }
 
+void test_cli_backend_device_name_selection_and_yaml_overrides() {
+    auto make_dev = [](std::string reg, std::string opt, int idx, std::string dev_name, std::string desc) {
+        engine::core::BackendDeviceInfo d;
+        d.backend = std::move(reg);
+        d.backend_option = std::move(opt);
+        d.index = idx;
+        d.device_name = std::move(dev_name);
+        d.description = std::move(desc);
+        d.name = d.description;
+        d.type = opt == "cpu" ? "CPU" : "GPU";
+        return d;
+    };
+    const std::vector<engine::core::BackendDeviceInfo> devices = {
+        make_dev("CUDA", "cuda", 0, "CUDA0", "NVIDIA GeForce RTX 5090"),
+        make_dev("Vulkan", "vulkan", 0, "Vulkan0", "NVIDIA GeForce RTX 5090"),
+        make_dev("Vulkan", "vulkan", 1, "Vulkan1", "Intel(R) Arc(TM) A770"),
+        make_dev("CPU", "cpu", 0, "CPU", "CPU"),
+    };
+
+    // Numeric --device behavior remains unchanged.
+    {
+        const char * argv[] = {"audiocpp_cli", "--backend", "vulkan", "--device", "1"};
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(5, const_cast<char **>(argv), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "numeric backend");
+        engine::test::require_eq(cfg.device, 1, "numeric device");
+        engine::test::require_eq(cfg.threads, 4, "threads");
+    }
+
+    // --device-name without --backend resolves both backend and index.
+    {
+        const char * argv[] = {"audiocpp_cli", "--device-name", "Intel"};
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(3, const_cast<char **>(argv), 2, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "inferred vulkan");
+        engine::test::require_eq(cfg.device, 1, "inferred index");
+    }
+
+    // --backend filters --device-name to disambiguate same GPU across CUDA and Vulkan.
+    {
+        const char * argv[] = {"audiocpp_cli", "--backend", "cuda", "--device-name", "RTX 5090"};
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(5, const_cast<char **>(argv), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Cuda), "disambiguated cuda");
+        engine::test::require_eq(cfg.device, 0, "disambiguated index");
+    }
+
+    // Mutual exclusion, dangling flag, and --backend best rejection.
+    for (const auto & bad_args : std::vector<std::vector<const char *>>{
+             {"audiocpp_cli", "--device", "0", "--device-name", "Vulkan1"},
+             {"audiocpp_cli", "--device-name"},
+             {"audiocpp_cli", "--backend", "best", "--device-name", "CPU"},
+             {"audiocpp_cli", "--device-name", "RTX 5090"},
+         }) {
+        bool rejected = false;
+        try {
+            std::vector<char *> mutable_argv;
+            for (const char * arg : bad_args) mutable_argv.push_back(const_cast<char *>(arg));
+            (void) minitts::cli::parse_backend_config_from_cli(
+                static_cast<int>(mutable_argv.size()), mutable_argv.data(), 4, &devices);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        engine::test::require(rejected, "invalid --device-name CLI invocation rejected");
+    }
+
+    // YAML config overrides: CLI --device-name supersedes YAML device, and CLI --device supersedes YAML device-name.
+    const auto temp_dir = std::filesystem::temp_directory_path();
+    const auto yaml_device = temp_dir / "audiocpp_cli_device_override_test.yaml";
+    {
+        std::ofstream out(yaml_device);
+        out << "backend: vulkan\ndevice: 0\n";
+    }
+    {
+        const std::string path_str = yaml_device.string();
+        const char * argv[] = {"audiocpp_cli", "--config-file", path_str.c_str(), "--device-name", "Intel"};
+        const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+        std::vector<char *> exp_argv;
+        for (const auto & arg : expanded) exp_argv.push_back(const_cast<char *>(arg.c_str()));
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(
+            static_cast<int>(exp_argv.size()), exp_argv.data(), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "YAML+CLI backend");
+        engine::test::require_eq(cfg.device, 1, "CLI --device-name overrides YAML device");
+    }
+    {
+        std::ofstream out(yaml_device);
+        out << "backend: vulkan\ndevice-name: Intel\n";
+    }
+    {
+        const std::string path_str = yaml_device.string();
+        const char * argv[] = {"audiocpp_cli", "--config-file", path_str.c_str(), "--device", "0"};
+        const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+        std::vector<char *> exp_argv;
+        for (const auto & arg : expanded) exp_argv.push_back(const_cast<char *>(arg.c_str()));
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(
+            static_cast<int>(exp_argv.size()), exp_argv.data(), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "YAML+CLI numeric backend");
+        engine::test::require_eq(cfg.device, 0, "CLI --device overrides YAML device-name");
+    }
+    {
+        std::ofstream out(yaml_device);
+        out << "device: 0\ndevice-name: Intel\n";
+    }
+    {
+        const std::string path_str = yaml_device.string();
+        const char * argv[] = {"audiocpp_cli", "--config-file", path_str.c_str()};
+        const auto expanded = minitts::cli::expand_cli_args(3, const_cast<char **>(argv));
+        std::vector<char *> exp_argv;
+        for (const auto & arg : expanded) exp_argv.push_back(const_cast<char *>(arg.c_str()));
+        bool rejected = false;
+        try {
+            (void) minitts::cli::parse_backend_config_from_cli(
+                static_cast<int>(exp_argv.size()), exp_argv.data(), 4, &devices);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        engine::test::require(rejected, "YAML with both device and device-name must be rejected");
+    }
+    std::filesystem::remove(yaml_device);
+}
+
 }  // namespace
 
 int main() {
@@ -884,6 +1002,7 @@ int main() {
     test_cli_key_value_options_override_yaml();
     test_cli_option_aliases_and_load_options_override_yaml();
     test_config_file_token_used_as_option_value();
+    test_cli_backend_device_name_selection_and_yaml_overrides();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }

@@ -362,6 +362,13 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
         }
     }
     auto requested = model_config_from_json(body, request_base_, false);
+    if (requested.device_name.has_value()) {
+        try {
+            resolve_model_device(config_.backend, requested);
+        } catch (const std::exception & error) {
+            throw engine::runtime::InvalidRequestError(error.what());
+        }
+    }
     if (slots != nullptr) {
         requested.slots = static_cast<int>(slots->as_number());
     }

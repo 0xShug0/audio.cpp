@@ -714,7 +714,8 @@ Common interface options:
 - `--request-option key=value` passes per-request model options
 - `--config <id>` selects a discovered config asset
 - `--weight <id>` selects a discovered weight asset
-- `--device <n>` selects the backend device
+- `--device <n>` selects the backend device by index
+- `--device-name <name>` selects the backend device by ggml name (e.g. `CUDA0`, `Vulkan1`) or unique description substring (mutually exclusive with `--device`)
 - `--threads <n>` sets backend and OpenMP worker threads
 
 CLI options can also be loaded from a YAML file with `--config-file`. Use the option name

@@ -331,6 +331,13 @@ HttpResponse ServerState::handle_model_load(const std::string & body_text) {
             "invalid_request_error");
     }
     auto requested = model_config_from_json(body, request_base_, false);
+    if (requested.device_name.has_value()) {
+        try {
+            resolve_model_device(config_.backend, requested);
+        } catch (const std::exception & error) {
+            throw engine::runtime::InvalidRequestError(error.what());
+        }
+    }
     requested.path = resolve_ui_model_path(engine::io::json::require_string(body, "path"));
     apply_default_session_options(config_, requested);
     if (const auto configured = configured_models_.find(requested.id); configured != configured_models_.end()) {

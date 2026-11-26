@@ -569,15 +569,31 @@ void write_words_result(
 engine::core::BackendConfig parse_step_backend(
     const engine::io::json::Value & step,
     engine::core::BackendConfig fallback) {
-    if (const auto backend = workflow_optional_string(step, "backend")) {
+    const auto backend = workflow_optional_string(step, "backend");
+    const auto impl = workflow_optional_string(step, "backend_impl");
+    const auto device = workflow_optional_number(step, "device");
+    const auto device_name = workflow_optional_string(step, "device_name");
+    if (device.has_value() && device_name.has_value()) {
+        throw std::runtime_error("workflow step cannot specify both device and device_name");
+    }
+    if (backend.has_value()) {
         fallback.type = minitts::cli::parse_backend(*backend);
         fallback.impl.clear();
     }
-    if (const auto impl = workflow_optional_string(step, "backend_impl")) {
-        fallback.impl = *impl;
-    }
-    if (const auto device = workflow_optional_number(step, "device")) {
+    if (device_name.has_value()) {
+        const std::optional<engine::core::BackendType> filter =
+            backend.has_value() ? std::optional<engine::core::BackendType>(fallback.type) : std::nullopt;
+        const auto resolved = engine::core::resolve_backend_device(*device_name, filter);
+        if (resolved.type != fallback.type) {
+            fallback.impl.clear();
+        }
+        fallback.type = resolved.type;
+        fallback.device = resolved.device;
+    } else if (device.has_value()) {
         fallback.device = static_cast<int>(*device);
+    }
+    if (impl.has_value()) {
+        fallback.impl = *impl;
     }
     if (const auto threads = workflow_optional_number(step, "threads")) {
         fallback.threads = static_cast<int>(*threads);

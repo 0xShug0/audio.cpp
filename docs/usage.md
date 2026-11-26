@@ -18,7 +18,8 @@ audiocpp_cli --task <task> --family <family> --model <model-dir> --backend <back
 | `--backend` | `cpu`, `cuda`, `vulkan`, `metal`, `best` | `cpu` | Inference backend. |
 | `--mode` | `offline`, `streaming` | `offline` | Run mode. Most models are offline. |
 | `--device` | integer | `0` | Backend device index. |
-| `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` to select one. Add `--json` for [machine-readable output](#listing-devices) with PCI ids and memory. |
+| `--device-name` | string | not set | Select a backend device by ggml device name (e.g. `CUDA0`, `Vulkan1`) or unique case-insensitive description substring (e.g. `"RTX 5090"`, `"Intel"`). Mutually exclusive with `--device`; combine with `--backend` to disambiguate when the same GPU appears on multiple backends. |
+| `--list-devices` | flag | off | List available backend devices and exit; combine with `--backend`/`--device` or `--device-name` to select one. Add `--json` for [machine-readable output](#listing-devices) with PCI ids and memory. |
 | `--threads` | integer | `4` | Backend/OpenMP worker threads. |
 | `--moe-cpu-share` | number, `0`–`1` | `0` | Global CPU share of disk-backed MoE expert-cache misses. |
 | `--log` | flag | off | Print progress and timing logs to stdout. |
