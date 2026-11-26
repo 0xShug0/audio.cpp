@@ -907,8 +907,27 @@ SanoTtsFrontend::SanoTtsFrontend(
 
 SanoTtsFrontend::~SanoTtsFrontend() = default;
 
+std::string SanoTtsFrontend::keep_contractions(const std::string & text) {
+    const auto is_letter = [](char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+    };
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\'' && i > 0 && i + 1 < text.size() &&
+            is_letter(text[i - 1]) && is_letter(text[i + 1])) {
+            out += "\xE2\x80\x99";
+        } else {
+            out += text[i];
+        }
+    }
+    return out;
+}
+
 SanoTtsEncoded SanoTtsFrontend::encode(const std::string & text) const {
-    auto [chunks, marks] = preserve_punctuation(text);
+    // Differs from the reference front end on purpose: it counts the
+    // apostrophe as punctuation, so "don't" is read as "don" plus the letter T.
+    auto [chunks, marks] = preserve_punctuation(keep_contractions(text));
     std::vector<std::string> chunk_phonemes;
     chunk_phonemes.reserve(chunks.size());
     for (const auto & chunk : chunks) {

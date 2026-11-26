@@ -48,6 +48,22 @@ int main() try {
         SanoTtsFrontend::boundary_pause_seconds("trailing space. ") == 0.20,
         "pause looks through trailing whitespace");
 
+    const auto keep = [](const std::string & text) {
+        return SanoTtsFrontend::keep_contractions(text);
+    };
+    engine::test::require(
+        keep("Don't stop, it's fine.") ==
+            "Don\xE2\x80\x99t stop, it\xE2\x80\x99s fine.",
+        "apostrophes inside words are kept with the word");
+    engine::test::require(
+        keep("rock'n'roll") == "rock\xE2\x80\x99n\xE2\x80\x99roll",
+        "two apostrophes in one word");
+    engine::test::require(
+        keep("'quoted' dogs' 'til 5'6 a ' b '") == "'quoted' dogs' 'til 5'6 a ' b '",
+        "other apostrophes stay punctuation");
+    engine::test::require(
+        keep("").empty() && keep("'") == "'", "empty and lone apostrophe");
+
     std::cout << "sanotts frontend tests passed\n";
     return 0;
 } catch (const std::exception & error) {

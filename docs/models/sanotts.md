@@ -187,6 +187,9 @@ The runtimes reproduce the reference implementations' exact semantics:
   codepoints convention, per-voice `phoneme_id_map`, `[BOS, PAD, (id, PAD)…,
   EOS]` framing, and the schwa fallback for ids outside a component's
   trained vocabulary.
+- One intentional difference, nano voices only: an ASCII apostrophe between
+  two letters stays part of the word. The reference counts it as punctuation,
+  which reads "don't" as "don" plus the letter "T".
 - nano: ATen-compatible MT19937 noise (24-bit uniform, Box–Muller in blocks
   of 16), torch.istft window normalisation and centre trim, and the
   reference's DC blocker `H(z) = (1 - z^-1)/(1 - 0.9973 z^-1)`.
