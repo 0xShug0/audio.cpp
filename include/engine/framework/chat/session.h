@@ -29,6 +29,11 @@ public:
     runtime::StreamEvent end_input();
     runtime::TaskResult finalize();
     runtime::TaskResult interrupt();
+    // Stop publishing audio while continuing codec/AR progression and listening.
+    // played_frames is the cumulative audible output retained by the caller,
+    // in output sample frames. This does not rewind the model's causal state.
+    void interrupt_output(int64_t played_frames);
+    void resume_output();
     runtime::TaskResult run(const runtime::AudioBuffer & input);
 private:
     struct Impl;
@@ -80,6 +85,10 @@ public:
     runtime::TaskResult finalize();
     runtime::TaskResult run(const runtime::TaskRequest & request, HistoryMode history = HistoryMode::Conversation);
     void interrupt();
+    // Duplex-only barge-in. Clear pending events, retain only played output and
+    // keep consuming input. Calls are serialized with push_audio()/poll().
+    void interrupt_output(int64_t played_frames);
+    void resume_output();
     // Discard the current execution; completed conversation history is kept.
     void cancel();
     void reset();

@@ -145,7 +145,7 @@ Licenses change. If a row is wrong or out of date, please open a PR.
 | `sheetsage2` | [m-a-p/SheetSage2](https://huggingface.co/m-a-p/SheetSage2) | CC-BY-NC-4.0 | No | | 2026-09-21 |
 | `sherpa_kws` | [Zipformer zh-en 3M, 2025-12-20](https://modelscope.cn/models/pkufool/icefall-kws-zipformer-zh-en-3M-2025-12-20) | Apache-2.0 | Yes | Default Chinese-English checkpoint; [model author confirmed the license](https://github.com/k2-fsa/sherpa-onnx/issues/3802#issuecomment-6052663364). Other user-supplied exports may have different terms. | 2026-10-14 |
 | `sidon` | [sarulab-speech/sidon-v0.1](https://huggingface.co/sarulab-speech/sidon-v0.1) | MIT | Yes | | 2026-09-28 |
-| `silero_vad` | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) | MIT | Yes | Bundled in `assets/framework/models`. | 2026-09-21 |
+| `silero_vad` | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) | MIT | Yes | Bundled in `assets/framework/models`: the official v6.2 weights, prepared by `tools/gguf/silero_vad_weights_prepare.py`. | 2026-11-26 |
 | `smart_turn` | [pipecat-ai/smart-turn](https://github.com/pipecat-ai/smart-turn) | BSD-2-Clause | Yes | Smart Turn v3.2. | 2026-09-30 |
 | `soprano_tts` | [ekwek/Soprano-1.1-80M](https://huggingface.co/ekwek/Soprano-1.1-80M) | Apache-2.0 | Yes | | 2026-09-21 |
 | `sopro_tts` | [samuel-vitorino/sopro-v2-turbo](https://huggingface.co/samuel-vitorino/sopro-v2-turbo) | Apache-2.0 | Yes | | 2026-09-21 |

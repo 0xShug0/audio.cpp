@@ -44,6 +44,7 @@
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
   import AceStepPanel from '$lib/models/ace_step/AceStepPanel.svelte';
+  import { pickYue2WeightValue, resolveYue2ComponentChoices } from '$lib/models/yue2/weights';
   import type { PanelRunner } from '$lib/models/panel_runner';
   import { prepareRgb24Output } from '$lib/media/rgb24_video';
   import Arena from './Arena.svelte';
@@ -1224,19 +1225,47 @@
     folderBrowserOpen = false;
   }
 
+  function syncYue2DownloadedWeights() {
+    if (selected?.family !== 'yue2') return;
+    const uiManaged = Boolean(server?.ui_management && !isConfiguredEntry(selected) && !directModelPath);
+    if (!uiManaged) return;
+    const resident = loadedModels.find((model) => model.id === selectedId && model.loaded);
+    const installPackages = selected.install_packages || [];
+    let changed = false;
+    const next = { ...advancedValues };
+    for (const spec of paramSpecs) {
+      if (spec.name !== 'main_gguf' && spec.name !== 'vae_gguf') continue;
+      const key = spec.session_option || spec.name;
+      const state = resolveYue2ComponentChoices(spec, installPackages, packageSizes, {
+        uiManaged,
+        residentValue: resident?.session_options?.[key]
+      });
+      if (!state.filtered) continue;
+      const current = String(next[spec.name] ?? '');
+      const valid = pickYue2WeightValue(current, spec, state.choices);
+      if (valid !== current) {
+        next[spec.name] = valid;
+        changed = true;
+      }
+    }
+    if (changed) advancedValues = next;
+  }
+
   function syncPackageSessionControls() {
     if (directModelPath) return;
     const options = selectedPackageChoice(selected)?.session_options || {};
-    if (!Object.keys(options).length) return;
-    const next = { ...advancedValues };
-    for (const spec of paramSpecs.filter(spec => spec.scope === 'session')) {
-      const key = spec.session_option || spec.name;
-      if (options[key] === undefined || editedPackageOptions.has(key)) continue;
-      const value = importedSessionOptions[key] ?? options[key];
-      next[spec.name] = spec.type === 'bool' ? value === 'true'
-        : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
+    if (Object.keys(options).length) {
+      const next = { ...advancedValues };
+      for (const spec of paramSpecs.filter(spec => spec.scope === 'session')) {
+        const key = spec.session_option || spec.name;
+        if (options[key] === undefined || editedPackageOptions.has(key)) continue;
+        const value = importedSessionOptions[key] ?? options[key];
+        next[spec.name] = spec.type === 'bool' ? value === 'true'
+          : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
+      }
+      advancedValues = next;
     }
-    advancedValues = next;
+    syncYue2DownloadedWeights();
   }
 
   function resetParams(packageChoice?: InstallPackageChoice) {
@@ -1270,6 +1299,7 @@
         advancedValues[spec.name] = value;
       }
     }
+    syncYue2DownloadedWeights();
     if (selected?.family === 'ace_step' && isConfiguredEntry(selected)) {
       const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
       advancedValues = { ...advancedValues,
@@ -3062,6 +3092,9 @@
               {paramSpecs}
               {advancedValues}
               catalogEntries={activeCatalog}
+              installPackages={selected?.install_packages || []}
+              {packageSizes}
+              uiManaged={Boolean(server?.ui_management && !isConfiguredEntry(selected) && !directModelPath)}
               {loadedModels}
               {server}
               modelId={selected.id}

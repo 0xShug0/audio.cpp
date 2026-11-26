@@ -1,5 +1,6 @@
 #include "engine/models/qwen3_asr/session.h"
 
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/assets/weight_adapter.h"
 #include "engine/framework/debug/profiler.h"
@@ -143,7 +144,7 @@ engine::assets::TensorStorageType option_weight_type(
 }
 
 std::filesystem::path default_vad_model_path() {
-    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+    return engine::assets::resolve_bundled_asset(std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
 }
 
 int64_t audio_frame_count(const runtime::AudioBuffer & audio) {

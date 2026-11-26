@@ -26,6 +26,9 @@ add_engine_test(audio_dsp_test tests/unittests/test_audio_dsp.cpp)
 # backend_device_resolution
 add_engine_test(backend_device_resolution_test tests/unittests/test_backend_device_resolution.cpp)
 
+# Bundled asset paths beside the module (default VAD model)
+add_engine_test(bundled_assets_test tests/unittests/test_bundled_assets.cpp $<TARGET_FILE_DIR:bundled_assets_test>)
+
 # C ABI export contract
 if (AUDIOCPP_BUILD_C_API)
     if (Python3_Interpreter_FOUND)
@@ -77,6 +80,9 @@ add_engine_test(convnext_modules_test
 
 # cpu_extra_buffers
 add_engine_test(cpu_extra_buffers_test tests/unittests/test_cpu_extra_buffers.cpp)
+
+# Filesystem byte cache (no model checkpoints).
+add_engine_test(disk_cache_test tests/unittests/test_disk_cache.cpp --log)
 
 # Transcript-to-word timestamp alignment (CrisperWhisper)
 if (crisperwhisper IN_LIST AUDIOCPP_LINKED_MODELS)

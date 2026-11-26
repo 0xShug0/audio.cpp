@@ -8,6 +8,7 @@
 #include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/community_models/lfm3_audio/assets.h"
 #include "engine/community_models/lfm3_audio/weights.h"
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/chat/reply.h"
 #include "engine/framework/debug/profiler.h"
@@ -473,7 +474,11 @@ struct Lfm3AsrSession::Impl {
     runtime::IOfflineVoiceTaskSession & vad_session() {
         if (vad == nullptr) {
             runtime::ModelLoadRequest load_request;
-            load_request.model_path = vad_model_path;
+            // The default model is looked up beside the library only here, when the VAD is loaded, so
+            // the auto policy above keeps falling back to fixed chunks when the working directory lacks it.
+            const auto bundled = std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+            load_request.model_path =
+                vad_model_path == bundled ? engine::assets::resolve_bundled_asset(vad_model_path) : vad_model_path;
             vad_model = runtime::load_vad_model(load_request);
             auto session = vad_model->create_task_session({runtime::VoiceTaskKind::Vad, runtime::RunMode::Offline},
                                                           runtime::SessionOptions{model.execution.config(), {}});

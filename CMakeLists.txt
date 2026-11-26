@@ -528,6 +528,7 @@ add_library(engine_core OBJECT
     src/framework/assets/weight_adapter.cpp
     src/framework/assets/weight_adapter_source.cpp
     src/framework/assets/torch_bin.cpp
+    src/framework/assets/bundled_assets.cpp
     src/framework/core/module.cpp
     src/framework/core/backend.cpp
     src/framework/core/attention_fallback.cpp
@@ -568,6 +569,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/workspace.cpp
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
+    src/framework/io/disk_cache.cpp
     # Vision/video modules, runtimes and media helpers.
     src/framework/vision/media/image.cpp
     src/framework/vision/media/processing.cpp
@@ -3710,13 +3712,6 @@ if (AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER)
         app/model_manager/main.cpp
     )
     target_link_libraries(audiocpp_model_manager PRIVATE audiocpp_package_manager)
-endif()
-
-if ("kitten_tts2" IN_LIST AUDIOCPP_LINKED_MODELS)
-    add_executable(audiocpp_kitten_tts2_prepare_voices EXCLUDE_FROM_ALL
-        tools/gguf/kitten_tts2/kitten_tts2_voices_prepare.cpp)
-    audiocpp_use_utf8_codepage(audiocpp_kitten_tts2_prepare_voices)
-    target_link_libraries(audiocpp_kitten_tts2_prepare_voices PRIVATE engine_runtime)
 endif()
 
 # Shared test setup; declarations and category selection stay separate.
