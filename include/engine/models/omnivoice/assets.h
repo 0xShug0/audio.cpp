@@ -91,5 +91,10 @@ struct OmniVoiceAssets {
 };
 
 std::shared_ptr<const OmniVoiceAssets> load_omnivoice_assets(const std::filesystem::path & model_path);
+// The same assets read through another family's package spec, for models that reuse OmniVoice's
+// text tokenizer and Higgs Audio v2 codec (Reverb-TTS) under their own family name.
+std::shared_ptr<const OmniVoiceAssets> load_omnivoice_assets(
+    const std::filesystem::path & model_path,
+    const std::filesystem::path & package_spec_path);
 
 }  // namespace engine::models::omnivoice

@@ -1342,6 +1342,16 @@ if (ENGINE_ENABLE_NEON)
     target_sources(engine_model_kitten_tts2 PRIVATE src/community_models/kitten_tts2/neon_vocoder.cpp)
 endif()
 
+audiocpp_add_model(reverb
+    SOURCES
+        src/community_models/reverb/frontend.cpp
+        src/community_models/reverb/generator.cpp
+        src/community_models/reverb/session.cpp
+    INCLUDES engine/community_models/reverb/session.h
+    LOADERS engine::community_models::reverb::make_reverb_loader
+    DEPENDS omnivoice
+    OBJECT_LIBRARIES utf8proc_vendor)
+
 audiocpp_add_model(kitten_tts
     SOURCES
         src/community_models/kitten_tts/assets.cpp

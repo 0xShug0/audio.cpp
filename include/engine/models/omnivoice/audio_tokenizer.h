@@ -12,6 +12,9 @@ namespace engine::models::omnivoice {
 struct OmniVoiceReferenceAudioOptions {
     bool preprocess_prompt = true;
     bool has_reference_text = false;
+    // Raise a reference quieter than 0.1 RMS to 0.1 RMS before encoding. Models trained on
+    // references at their recorded level (Reverb-TTS) turn this off.
+    bool normalize_rms = true;
 };
 
 struct OmniVoiceHiggsAudioV2TokenizerRuntimeStats {
