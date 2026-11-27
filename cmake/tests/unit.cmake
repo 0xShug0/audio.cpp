@@ -166,6 +166,9 @@ endif()
 # gated_delta_net_module
 add_engine_test(gated_delta_net_module_test tests/unittests/test_gated_delta_net_module.cpp cpu --log)
 
+# ggml context pools: reserved and committed as they fill on Windows
+add_engine_test(ggml_context_commit_test tests/unittests/test_ggml_context_commit.cpp)
+
 # gguf_tensor_source
 add_engine_test(gguf_tensor_source_test tests/unittests/test_gguf_tensor_source.cpp)
 
