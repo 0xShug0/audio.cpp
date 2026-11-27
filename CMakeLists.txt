@@ -675,6 +675,7 @@ add_library(engine_core OBJECT
     src/framework/modules/positional_modules.cpp
     src/framework/modules/text_encoders/t5_base_encoder.cpp
     src/framework/modules/text_encoders/t5_gemma_encoder.cpp
+    src/framework/modules/text_encoders/t5_encoder_runtime.cpp
     src/framework/modules/transformers/gemma_decoder.cpp
     src/framework/modules/optimizations/fast_kv_modules.cpp
     src/framework/tokenizers/hf_tokenizer_json.cpp

@@ -58,6 +58,15 @@ void fill_torch_cuda_tensor_iterator_randn(
     const TorchCudaSamplingPolicy & policy,
     TorchRandnPrecision precision = TorchRandnPrecision::Float32);
 
+// Fill an allocated contiguous F32 backend tensor using the same RNG mapping.
+// CUDA fast policy enqueues the existing kernel on this backend's stream, with
+// no temporary device allocation or host round trip. Backend/policy must own
+// the target device. Other backends retain the existing host RNG mathematics.
+void fill_torch_cuda_tensor_iterator_randn(
+    ggml_backend_t backend, const core::TensorValue & output,
+    uint64_t seed, uint64_t offset_blocks, const TorchCudaSamplingPolicy & policy,
+    TorchRandnPrecision precision = TorchRandnPrecision::Float32);
+
 std::vector<float> generate_torch_cuda_tensor_iterator_randn(
     size_t count,
     uint64_t seed,

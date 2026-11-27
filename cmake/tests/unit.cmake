@@ -545,6 +545,10 @@ endif()
 # torch_bin_storage_offset
 add_engine_test(torch_bin_storage_offset_test tests/unittests/test_torch_bin_storage_offset.cpp)
 
+# Shared T5 encoder execution and resource lifecycle (synthetic weights only).
+add_engine_test(t5_encoder_runtime_test tests/unittests/test_t5_encoder_runtime.cpp
+    --log ${CMAKE_CURRENT_BINARY_DIR}/t5_encoder_runtime_test.log)
+
 # torch_random
 add_engine_test(torch_random_test tests/unittests/test_torch_random.cpp)
 

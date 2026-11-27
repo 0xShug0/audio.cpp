@@ -128,8 +128,10 @@ one name for each control in a request.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `stable_audio.max_batch` | integer >= 1 | `1` | Maximum prompt batch size. |
 | `stable_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; defaults to native. |
 | `stable_audio.mem_saver` | bool | `false` | Release staged graph/cache state after conditioner, diffusion, and autoencoder phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+
+Stable Audio 3 uses the request's `batch_size` directly. No batch-capacity session
+option is needed; the encoder graph is reused until the batch size changes.
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family stable_audio`.
