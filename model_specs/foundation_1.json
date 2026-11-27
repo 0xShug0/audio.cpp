@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "family": "foundation_1",
+  "display_name": "Foundation-1",
+  "description": "Text-conditioned stereo instrument and musical-loop generation.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "music"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": ["gguf"]
+  },
+  "capabilities": {
+    "music": [
+      "instrumental"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Generated audio duration in seconds.",
+        "min": 0.1,
+        "max": 20,
+        "default": 10,
+        "required": false
+      },
+      {
+        "name": "num_steps",
+        "type": "int",
+        "description": "Denoising steps.",
+        "min": 1,
+        "default": 100,
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale.",
+        "min": 0,
+        "default": 7,
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "min": 0,
+        "default": 42,
+        "required": false
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "description": "Optional negative text conditioning.",
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Transformer weight storage.",
+        "default": "native",
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "packages": [],
+  "dependencies": [],
+  "ui": {
+    "tags": [
+      "Music",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/foundation_1.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "text_config": "model:text_encoder/config.json",
+        "tokenizer": "model:text_encoder/spiece.model"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "text_weights": {
+          "source": "weights:",
+          "prefix": "text_encoder"
+        }
+      }
+    }
+  ]
+}

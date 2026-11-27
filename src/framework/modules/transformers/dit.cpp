@@ -464,13 +464,18 @@ TensorValue DitModule::build(core::ModuleBuildContext & ctx, const DitForwardInp
         for (const auto & condition : in.frame_conditions)
             x = AddModule().build(ctx, x, mlp(ctx, condition, weights.frame_embedding, c, true));
     if (!weights.position_convolutions.empty()) x = position_convolution(ctx, core::ensure_backend_addressable_layout(ctx, x), weights.position_convolutions, c);
+    TensorValue time;
+    if (c.prepend_condition_token) {
+        time = build_condition(ctx, in, weights, c);
+        time = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, time), TensorShape::from_dims({time.shape.dims[0], 1, c.hidden_size}));
+        x = ConcatModule({1}).build(ctx, time, x);
+    }
     if (weights.memory_tokens.valid()) {
         auto prefix = core::reshape_tensor(ctx, weights.memory_tokens, TensorShape::from_dims({1, c.memory_tokens, c.hidden_size}));
         prefix = RepeatModule({TensorShape::from_dims({x.shape.dims[0], c.memory_tokens, c.hidden_size})}).build(ctx, prefix);
         x = ConcatModule({1}).build(ctx, prefix, x);
     }
-    TensorValue time;
-    if (!in.modulations.valid()) {
+    if (!in.modulations.valid() && !c.prepend_condition_token) {
         time = build_condition(ctx, in, weights, c);
         time = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, time), TensorShape::from_dims({time.shape.dims[0], 1, c.hidden_size}));
     }
@@ -575,7 +580,8 @@ TensorValue DitModule::build(core::ModuleBuildContext & ctx, const DitForwardInp
             }
         }
     }
-    if (c.memory_tokens) x = SliceModule({1, c.memory_tokens, in.latent.shape.dims[1]}).build(ctx, x);
+    if (c.memory_tokens) x = SliceModule({1, c.memory_tokens, in.latent.shape.dims[1] + int64_t{c.prepend_condition_token}}).build(ctx, x);
+    if (c.prepend_condition_token) x = SliceModule({1, 1, in.latent.shape.dims[1]}).build(ctx, x);
     if (in.output_tokens > 0) x = SliceModule({1, in.output_start, in.output_tokens}).build(ctx, x);
     if (c.modulation == DitModulation::AdaptiveRms) {
         x = MulModule(true).build(ctx, norm(ctx, x, {}, c), project(ctx, time, weights.final_modulation, c, false));

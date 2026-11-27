@@ -674,6 +674,7 @@ add_library(engine_core OBJECT
     src/framework/modules/predictor_modules.cpp
     src/framework/modules/positional_modules.cpp
     src/framework/modules/text_encoders/t5_base_encoder.cpp
+    src/framework/modules/text_encoders/t5_encoder_runtime.cpp
     src/framework/modules/text_encoders/t5_gemma_encoder.cpp
     src/framework/modules/text_encoders/t5_encoder_runtime.cpp
     src/framework/modules/transformers/gemma_decoder.cpp
@@ -1747,6 +1748,12 @@ audiocpp_add_model(dettato
         src/community_models/dettato/gru.cpp src/community_models/dettato/pipeline.cpp src/community_models/dettato/session.cpp
     INCLUDES engine/community_models/dettato/session.h
     LOADERS engine::community_models::dettato::make_dettato_loader
+)
+
+audiocpp_add_model(foundation_1
+    SOURCES src/models/foundation_1/assets.cpp src/models/foundation_1/pipeline.cpp src/models/foundation_1/session.cpp
+    INCLUDES engine/models/foundation_1/pipeline.h
+    LOADERS engine::models::foundation_1::make_foundation_1_loader
 )
 
 audiocpp_add_model(rosvot

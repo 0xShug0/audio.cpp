@@ -62,6 +62,59 @@ void check_solvers() {
     require(runtime.latent()[0] == expected, "fixed-step Euler result");
 }
 
+void check_condition_prefix(core::ExecutionContext & execution, const assets::TensorSource & source) {
+    modules::DitRuntimeConfig config;
+    config.label = "test.condition_prefix";
+    config.graph_metadata_bytes = 2 * 1024 * 1024;
+    config.graph_nodes = 1024;
+    auto & c = config.model;
+    c.input_channels = c.output_channels = c.hidden_size = c.intermediate_size = 4;
+    c.layers = 1; c.time_features = 4; c.norm_eps = 1e-5f;
+    c.modulation = modules::DitModulation::PerLayer;
+    c.self_attention = {1, 1, 4, modules::DitQKNorm::None, 1e-6f, {}, modules::ScaledDotProductAttentionLowering::Explicit};
+    modules::DitWeightNames names;
+    names.input.weight = names.output.weight = "input";
+    names.layer.self_attention = {{"self.q", ""}, {"self.k", ""}, {"self.v", ""}, {"self.out", ""}, {}, {}, {}, {}};
+    names.layer.feed_forward_in.weight = "up"; names.layer.feed_forward_out.weight = "down";
+    names.layer.modulation = {"modulation", "gates"};
+    names.time_frequencies = "learned_frequencies";
+    const std::vector<float> latent{1,-1,2,0,3,4,-2,1}; // C,T.
+    for (const bool prefix : {false, true}) {
+        c.prepend_condition_token = prefix;
+        modules::DitRuntime runtime(execution, source, config, names);
+        modules::DitConditioning condition; condition.frames = 2;
+        runtime.prepare_conditioning(condition);
+        std::vector<float> expected(latent.size());
+        for (const float time : {.25f, .5f, .25f}) {
+            std::vector<std::vector<double>> rows;
+            if (prefix) rows.push_back({1, std::cos(6.283185307179586 * time), 0, std::sin(6.283185307179586 * time)});
+            for (size_t t = 0; t < 2; ++t)
+                rows.push_back({latent[t], latent[2+t], latent[4+t], latent[6+t]});
+            std::vector<double> mean_value(4, 0);
+            for (const auto & row : rows) {
+                double mean = 0, variance = 0;
+                for (double value : row) mean += value / 4;
+                for (double value : row) variance += (value - mean) * (value - mean) / 4;
+                for (size_t ch = 0; ch < 4; ++ch)
+                    mean_value[ch] += (row[ch] - mean) / std::sqrt(variance + c.norm_eps) / rows.size();
+            }
+            const auto output = runtime.predict(latent, time);
+            require(output.size() == latent.size(), "prefix must not escape the output");
+            for (size_t ch = 0; ch < 4; ++ch) for (size_t t = 0; t < 2; ++t) {
+                expected[ch * 2 + t] = static_cast<float>(latent[ch * 2 + t] + mean_value[ch]);
+                test::require_close(output[ch * 2 + t], expected[ch * 2 + t],
+                    2e-5f, "independent uniform-attention condition prefix");
+            }
+        }
+        runtime.release_graphs();
+        runtime.prepare_conditioning(condition);
+        const auto reloaded = runtime.predict(latent, .25f);
+        require(reloaded.size() == expected.size(), "prefix release/reprepare shape");
+        for (size_t i = 0; i < expected.size(); ++i)
+            test::require_close(reloaded[i], expected[i], 2e-5f, "prefix release/reprepare scalar reference");
+    }
+}
+
 void check_apg(core::ExecutionContext & execution) {
     constexpr int B = 2, T = 3, C = 4, N = B*T*C;
     std::vector<float> positive(N), negative(N), reference(N), mask{1,0,1, 0,1,1};
@@ -315,11 +368,13 @@ int main(int argc, char **argv) {
         add("final_table", 2, 4, {.1f,.2f,.3f,.4f, .03f,.02f,.01f,.04f});
         tensors.back().shape = {1,2,4};
         add("input_two",4,2,{1,0,0,1,0,0,0,0});
+        add("learned_frequencies",2,1,{0,1});
         add("frame_two",4,2,{0,0,0,0,1,0,0,1});
         io::write_safetensors_file(path, tensors);
         {
             const auto source = assets::open_tensor_source(path);
             core::ExecutionContext execution({core::BackendType::Cpu, 0, 8});
+            check_condition_prefix(execution, *source);
             check_apg(execution);
             check_rescaled_cfg(execution);
             check_adaptive_prefix(execution,*source);
