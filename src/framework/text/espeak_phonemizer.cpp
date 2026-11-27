@@ -6,6 +6,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 #ifdef AUDIOCPP_STATIC_ESPEAK
 #include <espeak-ng/speak_lib.h>
 #if defined(__APPLE__)
@@ -50,6 +51,8 @@ struct Runtime {
     int (*terminate)() = nullptr;
     bool initialized = false;
     std::filesystem::path library_path, data_path;
+    // Candidate list the active voice was selected from; empty when none is.
+    std::vector<std::string> selected_voices;
 
     ~Runtime() {
         if (initialized) terminate();
@@ -165,7 +168,7 @@ EspeakPhonemizer::EspeakPhonemizer(std::filesystem::path library,
     if (voices_.empty()) throw std::invalid_argument("eSpeak-ng requires at least one voice candidate");
     for (const auto & voice : voices_)
         if (voice.empty()) throw std::invalid_argument("eSpeak-ng voice candidates must not be empty");
-    phonemize("", 2); // Preserve eager validation without retaining a voice globally.
+    phonemize("", 2); // Validate the library, data and voice eagerly.
 }
 
 std::string EspeakPhonemizer::phonemize(const std::string & text, int mode,
@@ -179,11 +182,16 @@ std::string EspeakPhonemizer::phonemize(const std::string & text, int mode,
         state.runtime = std::move(runtime);
     }
     auto & runtime = *state.runtime;
-    bool selected = false;
-    for (const auto & voice : voices_) {
-        if (runtime.voice(voice.c_str()) == 0) { selected = true; break; }
+    // Selecting a voice reloads it, which costs far more than phonemizing a
+    // short clause, so only select when the last caller wanted another one.
+    if (runtime.selected_voices != voices_) {
+        runtime.selected_voices.clear();
+        for (const auto & voice : voices_) {
+            if (runtime.voice(voice.c_str()) == 0) { runtime.selected_voices = voices_; break; }
+        }
+        if (runtime.selected_voices.empty())
+            throw std::runtime_error("eSpeak-ng has no voice matching '" + voices_.front() + "'");
     }
-    if (!selected) throw std::runtime_error("eSpeak-ng has no voice matching '" + voices_.front() + "'");
     std::string out;
     const void * cursor = text.c_str();
     while (cursor && *static_cast<const char *>(cursor)) {
