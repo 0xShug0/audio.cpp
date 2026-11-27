@@ -82,7 +82,8 @@ struct GigaAMRuntime::Impl {
     core::ExecutionContext & execution;
     struct EncoderGraph {
         std::unique_ptr<Graph> graph;
-        TensorValue features, positions, encoded;
+        TensorValue features, positions, valid, encoded;
+        int64_t steps = 0;
     };
     runtime::CacheSlots<int64_t, std::unique_ptr<EncoderGraph>> encoders{2};
     std::unique_ptr<Graph> predictor, joint;
@@ -108,11 +109,18 @@ struct GigaAMRuntime::Impl {
         auto & features = state->features;
         auto & positions = state->positions;
         auto & encoded = state->encoded;
-        encoder = std::make_unique<Graph>(execution, 512 + 256 * weights.encoder.layers.size(), "gigaam_asr.encoder");
+        size_t layers = weights.encoder.layers.size();
+        for (const auto & stack : weights.zapformer.stacks) layers += stack.layers.size();
+        encoder = std::make_unique<Graph>(execution, 512 + 256 * layers, "gigaam_asr.encoder");
         auto ctx = encoder->build_context();
-        features = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, assets.encoder.features, frames}));
+        const int64_t mel_bins = assets.zapformer ? assets.zapformer_encoder.features : assets.encoder.features;
+        features = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, mel_bins, frames}));
         ggml_set_input(features.tensor);
+        if (assets.zapformer) {
+            return build_zapformer(frames, std::move(state));
+        }
         const int64_t steps = (frames + 3) / 4;
+        state->steps = steps;
         positions = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({steps}));
         ggml_set_input(positions.tensor);
         ggml_set_output(positions.tensor);
@@ -131,6 +139,42 @@ struct GigaAMRuntime::Impl {
         std::vector<int32_t> pos(static_cast<size_t>(steps));
         std::iota(pos.begin(), pos.end(), 0);
         core::write_tensor_i32(positions, pos);
+        auto & result = *state;
+        encoders.put(frames, std::move(state));
+        return result;
+    }
+
+    EncoderGraph & build_zapformer(int64_t frames, std::unique_ptr<EncoderGraph> state) {
+        auto & encoder = state->graph;
+        auto ctx = encoder->build_context();
+        const auto & config = assets.zapformer_encoder;
+        const int64_t steps = zapformer_encoder_frames(frames);
+        const int64_t padded = zapformer_padded_frames(config, frames);
+        state->steps = steps;
+        ZapformerInputs inputs;
+        inputs.features = state->features;
+        inputs.positions = core::make_tensor(ctx, GGML_TYPE_I32, TensorShape::from_dims({padded}));
+        inputs.valid = core::make_tensor(ctx, GGML_TYPE_F32, TensorShape::from_dims({1, padded, 1}));
+        for (auto t : {inputs.positions, inputs.valid}) {
+            ggml_set_input(t.tensor);
+            // Written once per graph shape; keep them out of the allocator's reuse.
+            ggml_set_output(t.tensor);
+        }
+        state->positions = inputs.positions;
+        state->valid = inputs.valid;
+        auto x = build_zapformer_encoder(ctx, inputs, frames, config, weights.zapformer);
+        state->encoded = modules::LinearModule({config.embed_dim, assets.joint_hidden, true})
+            .build(ctx, x, weights.joint_encoder);
+        encoder->output(state->encoded);
+        encoder->allocate();
+        std::vector<int32_t> pos(static_cast<size_t>(padded));
+        std::iota(pos.begin(), pos.end(), 0);
+        core::write_tensor_i32(state->positions, pos);
+        if (state->valid.tensor->buffer != nullptr) {  // unused, hence unallocated, without the even padding
+            std::vector<float> valid(static_cast<size_t>(padded), 0.0f);
+            std::fill(valid.begin(), valid.begin() + steps, 1.0f);
+            core::write_tensor_f32(state->valid, valid);
+        }
         auto & result = *state;
         encoders.put(frames, std::move(state));
         return result;
@@ -188,7 +232,7 @@ struct GigaAMRuntime::Impl {
         const int32_t blank = static_cast<int32_t>(assets.classes - 1);
         GigaAMDecodedTokens result;
         result.encoder_ms = debug::elapsed_ms(encoder_start);
-        result.encoder_frames = (frames + 3) / 4;
+        result.encoder_frames = encoder.steps;
         auto & ids = result.ids;
         if (!assets.rnnt) {
             const auto labels = core::read_tensor_i32(encoded.tensor);
@@ -198,7 +242,7 @@ struct GigaAMRuntime::Impl {
             }
         } else {
             const auto projected = core::read_tensor_f32(encoded.tensor);
-            const auto steps = encoded.shape.dims[1];
+            const auto steps = encoder.steps;  // v4 output keeps its even padding past this
             const std::vector<float> zeros(static_cast<size_t>(assets.predictor_hidden), 0.0f);
             core::write_tensor_f32(hidden, zeros);
             core::write_tensor_f32(cell, zeros);

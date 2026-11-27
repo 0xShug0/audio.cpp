@@ -2,7 +2,7 @@
   "schema_version": 1,
   "family": "gigaam_asr",
   "display_name": "GigaAM ASR",
-  "description": "GigaAM v3 and Multilingual Conformer speech recognition with CTC or RNN-T decoding.",
+  "description": "GigaAM v3 and Multilingual Conformer, and GigaAM-v4 Zapformer speech recognition with CTC or RNN-T decoding.",
   "category": "asr",
   "status": "supported",
   "tasks": [
@@ -65,6 +65,17 @@
         "description": "Offline VAD model used only with audio_chunk_mode=vad.",
         "required": false,
         "default": ""
+      },
+      {
+        "name": "head",
+        "type": "enum",
+        "description": "GigaAM-v4 dual-head checkpoints: e2e (punctuation and capitalization) or raw (normalized lowercase text). Ignored by single-head v3 and Multilingual checkpoints.",
+        "values": [
+          "e2e",
+          "raw"
+        ],
+        "required": false,
+        "default": "e2e"
       },
       {
         "name": "weight_type",
