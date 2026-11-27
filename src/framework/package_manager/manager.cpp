@@ -7,6 +7,7 @@
 #include "httplib.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <condition_variable>
@@ -147,13 +148,79 @@ std::string read_text(const std::filesystem::path & path) {
     return out.str();
 }
 
+std::string os_error_suffix(int err) {
+    return err != 0 ? (": " + std::generic_category().message(err)) : std::string{};
+}
+
+std::string provider_label(const Package & package) {
+    return package.download_kind == "modelscope_snapshot" ? "ModelScope" : "Hugging Face";
+}
+
+std::string describe_http_status_error(const Package & package, const std::string & remote, long status) {
+    const std::string target = package.repo + "/" + remote;
+    const std::string provider = provider_label(package);
+    if (status == 401 || status == 403) {
+        return target + (package.download_kind == "modelscope_snapshot"
+            ? " requires ModelScope access to this repo (set AUDIOCPP_MS_TOKEN; HTTP "
+            : " requires accepted Hugging Face access and a valid HF token (set HF_TOKEN or log in via Hugging Face CLI; HTTP ") +
+            std::to_string(status) + ")";
+    }
+    if (status == 404) {
+        return target + " was not found on " + provider + " (HTTP 404)";
+    }
+    if (status == 429) {
+        return provider + " rate-limited " + target + " (HTTP 429); try again later" +
+            (package.download_kind == "modelscope_snapshot" ? "" : " or set HF_TOKEN");
+    }
+    if (status >= 500 && status <= 599) {
+        return provider + " returned a server error for " + target +
+            " (HTTP " + std::to_string(status) + "); try again later";
+    }
+    return "failed to access " + target + " on " + provider + " (HTTP " + std::to_string(status) + ")";
+}
+
+std::string describe_transport_error(const std::string & host, httplib::Error err) {
+    switch (err) {
+        case httplib::Error::Connection:
+            return "could not connect to " + host + " (connection failed)";
+        case httplib::Error::ConnectionTimeout:
+            return "timed out connecting to " + host;
+        case httplib::Error::Timeout:
+            return "request to " + host + " timed out";
+        case httplib::Error::ConnectionClosed:
+            return "connection to " + host + " was closed unexpectedly";
+        case httplib::Error::Read:
+            return "connection to " + host + " dropped while reading response";
+        case httplib::Error::Write:
+            return "connection to " + host + " dropped while sending request";
+        case httplib::Error::ExceedRedirectCount:
+            return "too many redirects from " + host;
+        case httplib::Error::SSLConnection:
+            return "TLS handshake failed with " + host;
+        case httplib::Error::SSLLoadingCerts:
+            return "failed to load TLS CA certificates while connecting to " + host;
+        case httplib::Error::SSLServerVerification:
+            return "TLS certificate verification failed for " + host;
+        case httplib::Error::SSLServerHostnameVerification:
+            return "TLS hostname verification failed for " + host;
+        case httplib::Error::ProxyConnection:
+            return "could not connect to proxy while reaching " + host;
+        default:
+            return "model host request to " + host + " failed (" + httplib::to_string(err) + ")";
+    }
+}
+
 void write_text_atomic(const std::filesystem::path & path, const std::string & text) {
     std::filesystem::create_directories(path.parent_path());
     const auto temporary = path.string() + ".tmp";
     {
+        errno = 0;
         std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output) throw std::runtime_error("could not write " + temporary);
+        if (!output) throw std::runtime_error("could not write " + temporary + os_error_suffix(errno));
+        errno = 0;
         output.write(text.data(), static_cast<std::streamsize>(text.size()));
+        output.flush();
+        if (!output) throw std::runtime_error("could not write " + temporary + os_error_suffix(errno));
     }
     std::error_code error;
     std::filesystem::remove(path, error);
@@ -280,7 +347,8 @@ HttpResult http_request(
     const std::shared_ptr<std::atomic_bool> & cancelled,
     const std::function<void(uint64_t)> & progress,
     RequestAuth auth,
-    bool follow_redirects = true) {
+    bool follow_redirects = true,
+    const std::filesystem::path * output_path = nullptr) {
     const auto parsed = parse_http_url(url);
     // Inventory workers issue many requests to the same origin. Keep their
     // connections local to each thread rather than resolving every file anew.
@@ -297,12 +365,15 @@ HttpResult http_request(
 
     uint64_t downloaded = 0;
     bool write_failed = false;
+    int write_errno = 0;
     const httplib::ContentReceiver receiver = [&](const char * data, size_t size) {
         if (cancelled && cancelled->load()) return false;
         if (output != nullptr) {
+            errno = 0;
             output->write(data, static_cast<std::streamsize>(size));
             if (!*output) {
                 write_failed = true;
+                write_errno = errno;
                 return false;
             }
         }
@@ -319,8 +390,13 @@ HttpResult http_request(
         : client.Get(parsed.path, headers, receiver, keep_downloading);
     if (!response) {
         if (cancelled && cancelled->load()) throw Cancelled();
-        if (write_failed) throw std::runtime_error("could not write downloaded model file");
-        throw std::runtime_error("model host request failed: " + httplib::to_string(response.error()));
+        if (write_failed) {
+            const std::string target = output_path != nullptr && !output_path->empty()
+                ? output_path->string()
+                : "downloaded model file";
+            throw std::runtime_error("could not write " + target + os_error_suffix(write_errno));
+        }
+        throw std::runtime_error(describe_transport_error(parsed.host, response.error()));
     }
 
     HttpResult result;
@@ -337,7 +413,7 @@ HttpResult http_get_body(const std::string & url, std::string & body, RequestAut
     configure_client(client, 60);
     auto response = client.Get(parsed.path, request_headers(auth));
     if (!response) {
-        throw std::runtime_error("model host request failed: " + httplib::to_string(response.error()));
+        throw std::runtime_error(describe_transport_error(parsed.host, response.error()));
     }
     HttpResult result;
     result.status = response->status;
@@ -411,8 +487,7 @@ RemoteFileInfo modelscope_remote_info(
     // which reports the file checksum as X-Linked-Etag but no size.
     const auto response = http_request(ms_url(package, remote), true, nullptr, {}, {}, RequestAuth::modelscope);
     if (response.status < 200 || response.status >= 300) {
-        throw std::runtime_error("remote file is not accessible: " + package.repo + "/" + remote +
-            " (HTTP " + std::to_string(response.status) + ")");
+        throw std::runtime_error(describe_http_status_error(package, remote, response.status));
     }
     RemoteFileInfo result;
     const auto etag = response.headers.find("x-linked-etag");
@@ -483,8 +558,7 @@ RemoteFileInfo remote_info(const Package & package, const std::string & remote, 
         if (package.gated) return {};
     }
     if (response.status < 200 || response.status >= 300) {
-        throw std::runtime_error("remote file is not accessible: " + package.repo + "/" + remote +
-            " (HTTP " + std::to_string(response.status) + ")");
+        throw std::runtime_error(describe_http_status_error(package, remote, response.status));
     }
     RemoteFileInfo result;
     const auto size = response.headers.find("content-length");
@@ -546,22 +620,26 @@ void download_file(
     std::string & transport_note) {
     if (try_xet_download(package, info, destination, cancelled, progress, transport_note)) return;
     std::filesystem::create_directories(destination.parent_path());
+    errno = 0;
     std::ofstream output(destination, std::ios::binary | std::ios::trunc);
-    if (!output) throw std::runtime_error("could not create " + destination.string());
+    if (!output) throw std::runtime_error("could not create " + destination.string() + os_error_suffix(errno));
     const auto url = package.download_kind == "modelscope_snapshot"
         ? ms_url(package, remote)
         : hf_url(package, remote);
-    const auto response = http_request(url, false, &output, cancelled, progress, package_auth(package));
+    const auto response = http_request(url, false, &output, cancelled, progress, package_auth(package), true, &destination);
+    errno = 0;
+    output.flush();
+    const bool flush_failed = !output;
+    const int flush_errno = flush_failed ? errno : 0;
     output.close();
-    if (response.status == 401 || response.status == 403) {
-        throw std::runtime_error(package.repo + "/" + remote +
-            (package.download_kind == "modelscope_snapshot"
-                ? " requires ModelScope access to this repo"
-                : " requires accepted Hugging Face access and a valid HF token"));
-    }
+    const bool close_failed = !flush_failed && !output;
+    const int close_errno = close_failed ? errno : 0;
     if (response.status < 200 || response.status >= 300) {
-        throw std::runtime_error("failed to download " + package.repo + "/" + remote +
-            " (HTTP " + std::to_string(response.status) + ")");
+        throw std::runtime_error(describe_http_status_error(package, remote, response.status));
+    }
+    if (flush_failed || close_failed) {
+        throw std::runtime_error("could not write " + destination.string() +
+            os_error_suffix(flush_failed ? flush_errno : close_errno));
     }
 }
 
@@ -570,12 +648,15 @@ std::filesystem::path make_staging(const std::filesystem::path & models_root, co
     std::string prefix = package.target_directory.generic_string();
     std::replace(prefix.begin(), prefix.end(), '/', '_');
     std::random_device random;
+    std::error_code last_error;
     for (int attempt = 0; attempt < 32; ++attempt) {
         const auto path = models_root / ("." + prefix + "." + std::to_string(random()));
         std::error_code error;
         if (std::filesystem::create_directory(path, error)) return path;
+        if (error) last_error = error;
     }
-    throw std::runtime_error("could not create package staging directory");
+    throw std::runtime_error("could not create package staging directory in " + models_root.string() +
+        (last_error ? ": " + last_error.message() : ""));
 }
 
 }  // namespace
@@ -740,7 +821,7 @@ std::string PackageManager::install(
             if (std::filesystem::exists(destination)) {
                 if (!overwrite) throw std::runtime_error("package file already exists: " + destination.string());
                 std::filesystem::remove(destination, error);
-                if (error) throw std::runtime_error("could not replace " + destination.string());
+                if (error) throw std::runtime_error("could not replace " + destination.string() + ": " + error.message());
             }
             std::filesystem::rename(staged_file, destination);
         }

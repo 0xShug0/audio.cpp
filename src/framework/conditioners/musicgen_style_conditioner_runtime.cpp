@@ -341,6 +341,9 @@ std::unique_ptr<StyleGraph> build_style_graph(
     out->tokens = tokens;
     out->input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch, tokens, config.mert_hidden_size}));
     out->positional_encoding = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({tokens, config.hidden_size}));
+    // A failed computation can leave this graph available for a same-shape retry.
+    ggml_set_input(out->positional_encoding.tensor);
+    ggml_set_output(out->positional_encoding.tensor);
     out->output = build_style_transformer(ctx, out->input, out->positional_encoding, weights, config, options);
     out->graph = ggml_new_graph_custom(out->context.get(), 262144, false);
     ggml_build_forward_expand(out->graph, out->output.tensor);

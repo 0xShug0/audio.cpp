@@ -1285,6 +1285,119 @@ void test_per_model_devices() {
     require(rejected, "negative per-model device is rejected with the model id");
 }
 
+void test_device_name_selection_in_server_config() {
+    auto make_dev = [](std::string reg, std::string opt, int idx, std::string dev_name, std::string desc) {
+        engine::core::BackendDeviceInfo d;
+        d.backend = std::move(reg);
+        d.backend_option = std::move(opt);
+        d.index = idx;
+        d.device_name = std::move(dev_name);
+        d.description = std::move(desc);
+        d.name = d.description;
+        d.type = opt == "cpu" ? "CPU" : "GPU";
+        return d;
+    };
+    const std::vector<engine::core::BackendDeviceInfo> devices = {
+        make_dev("CUDA", "cuda", 0, "CUDA0", "NVIDIA GeForce RTX 5090"),
+        make_dev("CUDA", "cuda", 1, "CUDA1", "NVIDIA GeForce RTX 4090"),
+        make_dev("Vulkan", "vulkan", 0, "Vulkan0", "NVIDIA GeForce RTX 5090"),
+        make_dev("Vulkan", "vulkan", 1, "Vulkan1", "Intel(R) Arc(TM) A770"),
+        make_dev("CPU", "cpu", 0, "CPU", "CPU"),
+    };
+
+    const auto root = make_temp_root();
+
+    // Top-level device_name without explicit backend resolves both backend and device,
+    // and per-model device_name resolves against that resolved backend.
+    {
+        const auto path = write_config(root, "device-name-inferred.json", R"JSON({
+          "device_name": "Vulkan1",
+          "models": [
+            {"id":"inherited","family":"kokoro_tts","path":"a.gguf"},
+            {"id":"gpu0","family":"kokoro_tts","path":"b.gguf","device_name":"RTX 5090"}
+          ]
+        })JSON");
+        const auto config = minitts::server::load_server_config(path, false, devices);
+        require(config.backend == engine::core::BackendType::Vulkan, "top-level device_name infers Vulkan backend");
+        require(config.device == 1, "top-level device_name resolves Vulkan1 to index 1");
+        require(!config.device_name.has_value(), "resolved top-level device_name is cleared");
+        require(!config.models[0].device.has_value(), "model without device_name still inherits server device");
+        require(config.models[1].device == 0, "per-model device_name resolves RTX 5090 within Vulkan");
+        require(!config.models[1].device_name.has_value(), "resolved per-model device_name is cleared");
+    }
+
+    // Explicit backend disambiguates top-level device_name across CUDA and Vulkan.
+    {
+        const auto path = write_config(root, "device-name-filtered.json", R"JSON({
+          "backend": "cuda",
+          "device_name": "RTX 5090",
+          "models": [
+            {"id":"secondary","family":"kokoro_tts","path":"b.gguf","device_name":"4090"}
+          ]
+        })JSON");
+        const auto config = minitts::server::load_server_config(path, false, devices);
+        require(config.backend == engine::core::BackendType::Cuda, "explicit cuda backend preserved");
+        require(config.device == 0, "RTX 5090 resolves to CUDA0");
+        require(config.models[0].device == 1, "4090 resolves to CUDA1");
+    }
+
+    // Deferred resolution allows CLI --backend or --device to override config before resolving.
+    {
+        const auto path = write_config(root, "device-name-cli-override.json", R"JSON({
+          "device_name": "RTX 5090",
+          "models": [{"id":"m","family":"kokoro_tts","path":"a.gguf"}]
+        })JSON");
+        auto config = minitts::server::parse_server_config(path);
+        config.backend = engine::core::BackendType::Vulkan;
+        config.backend_explicit = true;
+        minitts::server::resolve_server_devices(config, devices);
+        require(config.backend == engine::core::BackendType::Vulkan && config.device == 0,
+            "CLI --backend disambiguates config device_name");
+
+        auto numeric_override = minitts::server::parse_server_config(path);
+        numeric_override.backend = engine::core::BackendType::Cpu;
+        numeric_override.backend_explicit = true;
+        numeric_override.device = 0;
+        numeric_override.device_name.reset();
+        minitts::server::resolve_server_devices(numeric_override, {make_dev("CPU", "cpu", 0, "CPU", "CPU")});
+        require(numeric_override.backend == engine::core::BackendType::Cpu && numeric_override.device == 0,
+            "CLI --device overrides config device_name without requiring the config GPU");
+    }
+
+    // Per-model device_name targeting a different backend than the server's backend must fail with model id.
+    {
+        const auto path = write_config(root, "device-name-wrong-backend.json", R"JSON({
+          "backend": "vulkan",
+          "models": [{"id":"mismatch","family":"kokoro_tts","path":"a.gguf","device_name":"CUDA0"}]
+        })JSON");
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(path, false, devices);
+        } catch (const std::runtime_error & error) {
+            const std::string msg = error.what();
+            rejected = msg.find("mismatch") != std::string::npos && msg.find("vulkan") != std::string::npos;
+        }
+        require(rejected, "per-model device_name from wrong backend is rejected with model id");
+    }
+
+    // Mutual exclusion and non-string validation at top level and per model.
+    for (const auto & [name, body] : std::vector<std::pair<std::string, std::string>>{
+             {"both-top.json", R"({"device":0,"device_name":"CPU","models":[{"id":"a","family":"kokoro_tts","path":"a.gguf"}]})"},
+             {"both-model.json", R"({"models":[{"id":"a","family":"kokoro_tts","path":"a.gguf","device":0,"device_name":"CPU"}]})"},
+             {"bad-top-type.json", R"({"device_name":0,"models":[{"id":"a","family":"kokoro_tts","path":"a.gguf"}]})"},
+             {"bad-model-type.json", R"({"models":[{"id":"a","family":"kokoro_tts","path":"a.gguf","device_name":true}]})"},
+         }) {
+        const auto path = write_config(root, name, body);
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(path, false, devices);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        require(rejected, "invalid device_name config rejected: " + name);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -1301,6 +1414,7 @@ int main() {
         }
 
         test_per_model_devices();
+        test_device_name_selection_in_server_config();
         test_model_slots();
         test_inline_default_and_named_presets();
         test_model_spec_override_selection();

@@ -35,6 +35,7 @@ const std::set<std::string> & value_options() {
         "--audio", "--audio-chunk-mode", "--audio-chunk-seconds", "--audio-converter", "--backend",
         "--backend-impl", "--batch-audio-dir", "--batch-audio-role", "--batch-manifest-out",
         "--batch-merge-audio", "--batch-text-dir", "--batch-text-file", "--config", "--device",
+        "--device-name",
         "--do-sample", "--duration-seconds", "--emotion", "--energy-scale", "--family",
         "--guidance-scale", "--input-channels", "--input-format", "--input-rate", "--instruct",
         "--language", "--load-option", "--load-progress", "--log-file", "--lyrics", "--max-steps",
@@ -322,8 +323,24 @@ std::vector<std::string> expand_cli_args(int argc, char ** argv) {
     const auto session_overrides = explicit_session_option_overrides(arguments);
     const auto request_overrides = explicit_request_option_overrides(arguments);
     const auto load_overrides = explicit_key_value_overrides(arguments, "--load-option");
+    bool explicit_device = false;
+    bool explicit_device_name = false;
+    for (size_t i = 1; i < arguments.size(); ++i) {
+        if (arguments[i] == "--device") {
+            explicit_device = true;
+        } else if (arguments[i] == "--device-name") {
+            explicit_device_name = true;
+        }
+        if (value_options().count(arguments[i]) != 0 && i + 1 < arguments.size()) {
+            ++i;
+        }
+    }
     for (const auto & key : keys) {
         const auto option = normalize_config_option(key);
+        if ((option == "--device-name" && explicit_device) ||
+            (option == "--device" && explicit_device_name)) {
+            continue;
+        }
         const std::set<std::string> * key_value_overrides = nullptr;
         if (option == "--session-option") {
             key_value_overrides = &session_overrides;
@@ -505,6 +522,53 @@ engine::core::BackendType parse_backend(const std::string & value) {
         return engine::core::BackendType::BestAvailable;
     }
     throw std::runtime_error("unsupported backend: " + value);
+}
+
+engine::core::BackendConfig parse_backend_config_from_cli(
+    int argc,
+    char ** argv,
+    int threads,
+    const std::vector<engine::core::BackendDeviceInfo> * devices) {
+    const auto backend_arg = find_arg(argc, argv, "--backend");
+    const auto backend_impl = find_arg(argc, argv, "--backend-impl");
+    const auto device_arg = find_arg(argc, argv, "--device");
+    const auto device_name_arg = find_arg(argc, argv, "--device-name");
+
+    bool saw_device_name_flag = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string token = argv[i];
+        if (token == "--device-name") {
+            saw_device_name_flag = true;
+        }
+        if (value_options().count(token) != 0 && i + 1 < argc) {
+            ++i;
+        }
+    }
+    if (saw_device_name_flag && !device_name_arg.has_value()) {
+        throw std::runtime_error("--device-name requires a value");
+    }
+    if (device_arg.has_value() && device_name_arg.has_value()) {
+        throw std::runtime_error("cannot specify both --device and --device-name");
+    }
+
+    engine::core::BackendConfig config;
+    config.impl = backend_impl.value_or("");
+    config.threads = threads;
+    if (device_name_arg.has_value()) {
+        std::optional<engine::core::BackendType> filter;
+        if (backend_arg.has_value()) {
+            filter = parse_backend(*backend_arg);
+        }
+        const auto resolved = devices != nullptr
+            ? engine::core::resolve_backend_device(*device_name_arg, filter, *devices)
+            : engine::core::resolve_backend_device(*device_name_arg, filter);
+        config.type = resolved.type;
+        config.device = resolved.device;
+    } else {
+        config.type = parse_backend(backend_arg.value_or("cpu"));
+        config.device = device_arg.has_value() ? std::stoi(*device_arg) : 0;
+    }
+    return config;
 }
 
 engine::audio::WavSampleFormat parse_wav_sample_format(const std::string & value) {

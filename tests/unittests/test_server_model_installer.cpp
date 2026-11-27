@@ -256,6 +256,87 @@ void test_native_package_lifecycle() {
     std::filesystem::remove_all(root, error);
 }
 
+void test_install_failure_reasons() {
+    namespace json = engine::io::json;
+    const auto root = make_root();
+    try {
+        write(root / "model_specs" / "errors.json", R"JSON({
+          "family":"errors","display_name":"Errors","description":"","category":"tts",
+          "status":"supported","tasks":["tts"],"modes":["offline"],"languages":[],
+          "capabilities":{},"runtime":{},
+          "package_defaults":{"download":{"kind":"huggingface_snapshot","repo":"org/repo","revision":"main"}},
+          "packages":[
+            {"id":"err_gated","display_name":"Gated","format":"gguf","precision":"q8_0",
+             "target_directory":"ErrGated","files":["Errors/gated.gguf"],"strip_prefix":"Errors",
+             "download":{"kind":"huggingface_snapshot","repo":"org/repo","revision":"main","gated":true}},
+            {"id":"err_missing","display_name":"Missing","format":"gguf","precision":"q8_0",
+             "target_directory":"ErrMissing","files":["Errors/missing.gguf"],"strip_prefix":"Errors"},
+            {"id":"err_ratelimit","display_name":"RateLimited","format":"gguf","precision":"q8_0",
+             "target_directory":"ErrRate","files":["Errors/ratelimited.gguf"],"strip_prefix":"Errors"},
+            {"id":"err_server","display_name":"ServerErr","format":"gguf","precision":"q8_0",
+             "target_directory":"ErrSrv","files":["Errors/servererror.gguf"],"strip_prefix":"Errors"},
+            {"id":"err_net","display_name":"NetworkErr","format":"gguf","precision":"q8_0",
+             "target_directory":"ErrNet","files":["Demo/model-q8.gguf"],"strip_prefix":"Demo"}
+          ],"sources":[]
+        })JSON");
+
+        // 5 requests: gated (HEAD 403 + GET 403 = 2), missing (HEAD 404 = 1),
+        // ratelimited (HEAD 429 = 1), servererror (HEAD 503 = 1).
+        set_base_url("http://127.0.0.1:18992");
+        auto fixture = std::async(std::launch::async, [] {
+#ifdef _WIN32
+            return std::system("python \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --port 18992 --requests 5");
+#else
+            return std::system("python3 \"" AUDIOCPP_NATIVE_MANAGER_FIXTURE "\" --port 18992 --requests 5");
+#endif
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        minitts::server::ModelInstaller installer(root, root / "models");
+
+        (void) installer.start("err_gated", "", "", "", "", false);
+        const auto gated_msg = json::parse(wait_for(installer, "err_gated", "failed")).require("message").as_string();
+        require(gated_msg.find("Hugging Face access") != std::string::npos &&
+                gated_msg.find("HF_TOKEN") != std::string::npos &&
+                gated_msg.find("HTTP 403") != std::string::npos,
+            "gated 403 failure must explain HF access/token requirement, got: " + gated_msg);
+
+        (void) installer.start("err_missing", "", "", "", "", false);
+        const auto missing_msg = json::parse(wait_for(installer, "err_missing", "failed")).require("message").as_string();
+        require(missing_msg.find("not found on Hugging Face") != std::string::npos &&
+                missing_msg.find("HTTP 404") != std::string::npos,
+            "404 failure must report missing file, got: " + missing_msg);
+
+        (void) installer.start("err_ratelimit", "", "", "", "", false);
+        const auto rate_msg = json::parse(wait_for(installer, "err_ratelimit", "failed")).require("message").as_string();
+        require(rate_msg.find("rate-limited") != std::string::npos &&
+                rate_msg.find("HTTP 429") != std::string::npos,
+            "429 failure must report rate limiting, got: " + rate_msg);
+
+        (void) installer.start("err_server", "", "", "", "", false);
+        const auto srv_msg = json::parse(wait_for(installer, "err_server", "failed")).require("message").as_string();
+        require(srv_msg.find("server error") != std::string::npos &&
+                srv_msg.find("HTTP 503") != std::string::npos,
+            "503 failure must report server error, got: " + srv_msg);
+
+        require(fixture.get() == 0, "error fixture completed normally");
+
+        // Unreachable host must report a clear connection failure mentioning the host.
+        set_base_url("http://127.0.0.1:18993");
+        (void) installer.start("err_net", "", "", "", "", false);
+        const auto net_msg = json::parse(wait_for(installer, "err_net", "failed")).require("message").as_string();
+        require(net_msg.find("127.0.0.1") != std::string::npos &&
+                net_msg.find("could not connect") != std::string::npos,
+            "connection error must include host and clear reason, got: " + net_msg);
+    } catch (...) {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+        throw;
+    }
+    std::error_code error;
+    std::filesystem::remove_all(root, error);
+}
+
 void test_large_inventory() {
     const auto root = make_root();
     std::string spec = R"({"family":"demo","packages":[)";
@@ -296,6 +377,7 @@ int main() {
     try {
         test_native_package_info();
         test_native_package_lifecycle();
+        test_install_failure_reasons();
         test_large_inventory();
     }
     catch (const std::exception & error) {

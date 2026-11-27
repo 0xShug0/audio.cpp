@@ -337,7 +337,8 @@ public:
       throw std::runtime_error(
           "VoxCPM1 text embedding runtime requires weights");
     }
-    build(graph_context_bytes);
+    graph_context_bytes_ = graph_context_bytes;
+    build(graph_context_bytes_);
   }
 
   ~Impl() {
@@ -352,6 +353,7 @@ public:
       throw std::runtime_error(
           "VoxCPM1 text embedding token id is out of range");
     }
+    ensure_graph();
     ggml_backend_tensor_set(token_id_, &token_id, 0, sizeof(token_id));
     engine::core::set_backend_threads(weights_->backend(), weights_->threads());
     const ggml_status status =
@@ -445,7 +447,15 @@ private:
     }
   }
 
+  // mem_saver releases the graph after a request; the next use rebuilds it.
+  void ensure_graph() {
+    if (graph_ == nullptr) {
+      build(graph_context_bytes_);
+    }
+  }
+
   std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
+  size_t graph_context_bytes_ = 0;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *token_id_ = nullptr;

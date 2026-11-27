@@ -428,6 +428,9 @@ public:
         }
         x = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, x);
         positions_ = ggml_new_tensor_1d(ctx_.get(), GGML_TYPE_I32, config.attention_heads);
+        // Uploaded once; retain the positions for every execution of this graph.
+        ggml_set_input(positions_);
+        ggml_set_output(positions_);
         auto positions = core::wrap_tensor(
             positions_,
             core::TensorShape::from_dims({config.attention_heads}),

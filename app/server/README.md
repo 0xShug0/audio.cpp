@@ -273,6 +273,7 @@ JSON
 | `task` | The model's documented route, such as `tts`, `clon`, `vdes`, `asr`, or `align`. Capabilities such as voice cloning do not imply an identically named route. |
 | `mode` | `offline` or `streaming`, supported by that model. It selects the session created by the server. |
 | `device` | Optional backend device index for this model. When omitted, the top-level `device` is used. |
+| `device_name` | Optional ggml device name (e.g. `CUDA0`, `Vulkan1`) or unique case-insensitive description substring (e.g. `"Intel"`), resolved against the server's backend. Mutually exclusive with `device`. |
 | `load_options` | Options consumed while loading weights/assets. |
 | `session_options` | Options consumed when creating the reusable session. |
 | `default_request_options` | Defaults for the model's inference requests; request values with the same key override them. |
@@ -306,7 +307,7 @@ individual model entries:
 
 The indices use audio.cpp's backend device order; run the server with
 `--list-devices` to inspect it, or `--list-devices --json` for PCI ids and
-free/total memory in [JSON](../../docs/usage.md#listing-devices). Each model remains wholly on one device: this
+free/total memory in [JSON](../../docs/usage.md#listing-devices). You can also select devices by name with `--device-name` on the command line or `"device_name"` at the top level, on individual model entries, or in `POST /v1/models/load` (mutually exclusive with `device`). Each model remains wholly on one device: this
 setting assigns models independently and does not split one model across GPUs.
 `GET /v1/models` reports the effective `device` for every entry. Dynamic loads
 may also send `device`; when a registered model is reloaded and the field is

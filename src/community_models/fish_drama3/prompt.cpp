@@ -78,7 +78,7 @@ void validate_drama3_codes(const codecs::FishDacCodes & codes, int64_t size) {
 std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
     const Drama3TextTokenizer & tokenizer, const std::string & text,
     const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history,
-    const std::vector<Drama3Take> & generated_history, size_t max_rows) {
+    const std::vector<Drama3Take> & generated_history, size_t max_rows, size_t * reference_end) {
     std::vector<Drama3Frame> frames;
     const auto append_text = [&](const std::string & segment) {
         for (const auto token : tokenizer.encode(segment)) {
@@ -104,6 +104,7 @@ std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
         append_codes(references[index].codes);
     }
     append_text("<|im_end|>\n");
+    if (reference_end) *reference_end = frames.size();
     const auto user_turn = [&](const std::string & value) {
         validate_drama3_text(value, "input");
         append_text("<|im_start|>user\n");

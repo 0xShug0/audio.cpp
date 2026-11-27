@@ -4,7 +4,7 @@
   import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, RefreshCw, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
-    base64AudioUrl,
+    base64AudioBlob,
     availableVoices,
     browseDirectories,
     cleanPartialModelInstall,
@@ -52,7 +52,18 @@
   import Configuration from './Configuration.svelte';
   import ModelLibrary from './ModelLibrary.svelte';
   import Library from './Library.svelte';
-  import { loadUiConfiguration, uiConfiguration, uiConfigurationError } from '$lib/configuration';
+  import { loadUiConfiguration, uiConfiguration, uiConfigurationError, updateUiConfiguration } from '$lib/configuration';
+  import {
+    autoSaveDirectory,
+    autoSaveFiles,
+    dataUrlToBlob,
+    ensureAutoSavePermissionOnUserGesture,
+    formatAutoSaveTimestamp,
+    loadAutoSaveDirectory,
+    requestAutoSaveDirectoryPermission,
+    sanitizeFilenameSegment,
+    type AutoSaveFile
+  } from '$lib/auto_save';
   import type {
     AudioOutput,
     CatalogEntry,
@@ -91,6 +102,8 @@
   let autoplay = false;
   let liveText = '';
   let playbackWarning = '';
+  let autoSaveNotice = '';
+  let autoSaveWarning = '';
   let playbackActive = false;
   let streamedAudioPlayed = false;
   let pendingLiveAudio: ArrayBuffer[] = [];
@@ -132,7 +145,7 @@
   let advancedValues: Record<string, unknown> = {};
   let paramSpecs: ParamSpec[] = [];
   let outputAudio: AudioOutput[] = [];
-  let outputArtifacts: Array<{ id: string; url: string; extension: string; mime: string }> = [];
+  let outputArtifacts: Array<{ id: string; url: string; extension: string; mime: string; blob?: Blob }> = [];
   let outputText = '';
   let outputJson = '';
   let outputSettings: { url: string; filename: string } | null = null;
@@ -196,8 +209,10 @@
   let packageSizes: Record<string, ModelPackageSize> = {};
   let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
   let packageSizePoll: number | null = null;
-  let packageSizeRefreshInFlight = false;
+  let packageSizeRefreshPromise: Promise<void> | null = null;
   let refreshedInstallFinishes: Record<string, number> = {};
+  let reportedInstallFailures: Record<string, number> = {};
+  let dismissedInstallFailures: Record<string, number> = {};
   let quickStartVoices: string[] = [];
   let configuredVoices: string[] = [];
   let quickStartVoice = '';
@@ -887,14 +902,23 @@
   }
 
   function installProgressLabel(job: ModelInstallJob) {
+    if (job.state === 'failed') {
+      return job.downloaded_bytes > 0 && job.total_bytes > 0
+        ? `Download failed · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`
+        : 'Download failed';
+    }
+    if (job.state === 'cancelled') {
+      return job.downloaded_bytes > 0 && job.total_bytes > 0
+        ? `Download stopped · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`
+        : 'Download stopped';
+    }
+    if (job.state === 'cleaned') return 'Partial files cleaned';
+    if (job.state === 'complete') return '100% · complete';
     const percent = installPercent(job);
     if (job.total_bytes > 0) {
       return `${percent}% · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`;
     }
     if (job.downloaded_bytes > 0) return `${formatBytes(job.downloaded_bytes)} downloaded`;
-    if (job.state === 'failed') return 'Download failed';
-    if (job.state === 'cleaned') return 'Partial files cleaned';
-    if (job.state === 'complete') return '100% · complete';
     return job.state === 'queued' ? '0% · queued' : 'Connecting and checking package files…';
   }
 
@@ -986,33 +1010,38 @@
     return value === 'Ready' ? translate('status.ready') : value;
   }
 
-  async function refreshPackageSizes() {
-    if (!server?.ui_management || packageSizeRefreshInFlight) return;
-    packageSizeRefreshInFlight = true;
-    try {
-      const response = await modelPackageSizes();
-      packageSizeState = response.state;
-      if (response.data.length) {
-        packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
-        if (response.state === 'complete') reconcileSelectedPackageChoices(packageSizes);
-        if (selectedId && !directModelPath && !isConfiguredEntry(selected) && selected.install_packages?.length) {
-          modelPath = selectedModelPath(selected);
-          syncPackageSessionControls();
+  async function refreshPackageSizes(): Promise<void> {
+    if (!server?.ui_management) return;
+    if (packageSizeRefreshPromise) return packageSizeRefreshPromise;
+    packageSizeRefreshPromise = (async () => {
+      try {
+        const response = await modelPackageSizes();
+        packageSizeState = response.state;
+        if (response.data.length) {
+          packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
+          if (response.state === 'running' || response.state === 'complete') {
+            reconcileSelectedPackageChoices(packageSizes);
+          }
+          if (selectedId && !directModelPath && !isConfiguredEntry(selected) && selected.install_packages?.length) {
+            modelPath = selectedModelPath(selected);
+            syncPackageSessionControls();
+          }
         }
+        const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
+        if (inventoryPending && packageSizePoll === null) {
+          packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
+        } else if (!inventoryPending && packageSizePoll !== null) {
+          window.clearInterval(packageSizePoll);
+          packageSizePoll = null;
+        }
+      } catch (error) {
+        packageSizeState = 'failed';
+        log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
+      } finally {
+        packageSizeRefreshPromise = null;
       }
-      const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
-      if (inventoryPending && packageSizePoll === null) {
-        packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
-      } else if (!inventoryPending && packageSizePoll !== null) {
-        window.clearInterval(packageSizePoll);
-        packageSizePoll = null;
-      }
-    } catch (error) {
-      packageSizeState = 'failed';
-      log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
-    } finally {
-      packageSizeRefreshInFlight = false;
-    }
+    })();
+    return packageSizeRefreshPromise;
   }
 
   function openModelsPage() {
@@ -1180,6 +1209,8 @@
       packageSizes = {};
       packageSizeState = 'idle';
       refreshedInstallFinishes = {};
+      reportedInstallFailures = {};
+      dismissedInstallFailures = {};
       if (installPoll !== null) {
         window.clearInterval(installPoll);
         installPoll = null;
@@ -1231,8 +1262,11 @@
     if (!uiManaged) return;
     const resident = loadedModels.find((model) => model.id === selectedId && model.loaded);
     const installPackages = selected.install_packages || [];
+    const packageOptions = selectedPackageChoice(selected)?.session_options || {};
     let changed = false;
+    let editedChanged = false;
     const next = { ...advancedValues };
+    const nextEdited = new Set(editedPackageOptions);
     for (const spec of paramSpecs) {
       if (spec.name !== 'main_gguf' && spec.name !== 'vae_gguf') continue;
       const key = spec.session_option || spec.name;
@@ -1247,8 +1281,14 @@
         next[spec.name] = valid;
         changed = true;
       }
+      const packageValue = importedSessionOptions[key] ?? packageOptions[key];
+      if (packageValue !== undefined && !state.choices.includes(packageValue) && !nextEdited.has(key)) {
+        nextEdited.add(key);
+        editedChanged = true;
+      }
     }
     if (changed) advancedValues = next;
+    if (editedChanged) editedPackageOptions = nextEdited;
   }
 
   function syncPackageSessionControls() {
@@ -1650,6 +1690,8 @@
     outputSettings = null;
     selectedGenerationId = null;
     outputModelId = '';
+    autoSaveNotice = '';
+    autoSaveWarning = '';
   }
 
   function releaseGeneration(entry: GenerationHistoryEntry) {
@@ -2119,15 +2161,86 @@
       ensureLoaded: (mode) => ensurePanelLoaded(modelId, mode)
     });
     clearOutput();
-    if (outcome.audio) outputAudio = [{ id: 'reply', url: URL.createObjectURL(outcome.audio) }];
+    if (outcome.audio) outputAudio = [{ id: 'reply', url: URL.createObjectURL(outcome.audio), blob: outcome.audio }];
     outputText = outcome.text;
     outputJson = outcome.json;
     outputArtifacts = outcome.artifacts || [];
     outputModelId = modelId;
+    await autoSaveGeneration({
+      modelId,
+      audio: outputAudio,
+      artifacts: outputArtifacts
+    });
     warningStatus = '';
     errorStatus = '';
     status = tr('status.completeIn', { seconds: ((performance.now() - started) / 1000).toFixed(2) });
     log(status);
+  }
+
+  function setAutoSaveEnabled(enabled: boolean) {
+    try {
+      updateUiConfiguration({ autoSave: enabled });
+    } catch (error) {
+      uiConfigurationError.set(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function autoSaveGeneration(params: {
+    modelId: string;
+    audio: AudioOutput[];
+    artifacts: Array<{ id: string; url: string; extension: string; mime: string; blob?: Blob }>;
+    settingsJson?: string;
+  }) {
+    autoSaveNotice = '';
+    autoSaveWarning = '';
+    if (!$uiConfiguration.autoSave) return;
+    if (!params.audio.length && !params.artifacts.length) return;
+    try {
+      const stem = `${sanitizeFilenameSegment(params.modelId, 'output')}-${formatAutoSaveTimestamp()}`;
+      const files: AutoSaveFile[] = [];
+      for (const item of params.audio) {
+        const blob = item.blob ?? dataUrlToBlob(item.url, 'audio/wav');
+        if (!blob) throw new Error(`Audio output "${item.id}" is unavailable for auto-save.`);
+        files.push({
+          filename: `${stem}-${sanitizeFilenameSegment(item.id, 'audio')}.wav`,
+          blob
+        });
+      }
+      for (const artifact of params.artifacts) {
+        const blob = artifact.blob ?? dataUrlToBlob(artifact.url, artifact.mime);
+        if (!blob) throw new Error(`Artifact "${artifact.id}" is unavailable for auto-save.`);
+        files.push({
+          filename: `${stem}-${sanitizeFilenameSegment(artifact.id, 'artifact')}.${sanitizeFilenameSegment(artifact.extension, 'bin')}`,
+          blob
+        });
+      }
+      if ($uiConfiguration.autoSaveSettings && params.settingsJson) {
+        files.push({
+          filename: `${stem}.settings.json`,
+          blob: new Blob([params.settingsJson], { type: 'application/json' })
+        });
+      }
+      const saved = await autoSaveFiles(files);
+      if (saved.warning) {
+        autoSaveWarning = saved.warning;
+        log(`Auto-save warning: ${saved.warning}`);
+      }
+      if (saved.savedFiles.length) {
+        const formatCount = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
+        if (saved.method === 'partial' && saved.folderName) {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.directoryFiles.length)} to ${saved.folderName} and ${formatCount(saved.downloadedFiles.length)} to Downloads`;
+        } else if (saved.method === 'directory' && saved.folderName) {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.savedFiles.length)} to ${saved.folderName}`;
+        } else {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.savedFiles.length)} to Downloads`;
+        }
+        log(`${autoSaveNotice}: ${saved.savedFiles.join(', ')}`);
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      autoSaveWarning = `Auto-save failed: ${reason}`;
+      log(autoSaveWarning);
+    }
   }
 
   function playLiveAudio() {
@@ -2209,11 +2322,16 @@
     streamedAudioPlayed = false;
     liveText = '';
     playbackWarning = '';
+    autoSaveNotice = '';
+    autoSaveWarning = '';
     playback.stop();
     // Resume synchronously from the Generate gesture, before uploads/loading.
     if (autoPlayOutput) {
       try { void playback.begin().catch(error => { playbackWarning = String(error); }); }
       catch (error) { playbackWarning = String(error); }
+    }
+    if (!usesPanelRequest && $uiConfiguration.autoSave && $autoSaveDirectory.permission === 'prompt') {
+      await ensureAutoSavePermissionOnUserGesture();
     }
     running = true;
     aborter = new AbortController();
@@ -2380,7 +2498,7 @@
         }
         const merged = await concatenateAudioBlobs(audioChunks);
         nextPlaybackAudio = merged;
-        nextAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged) }];
+        nextAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged), blob: merged }];
         nextJson = JSON.stringify({
           seed: resolvedSeed,
           chunks: chunks.length,
@@ -2447,14 +2565,18 @@
             ? `<base64 data: ${value.length} chars>` : value, 2);
         if (typeof result.audio === 'string') {
           nextPlaybackAudio = result.audio;
-          nextAudio = [{ id: 'output', url: base64AudioUrl(result.audio) }];
+          const blob = base64AudioBlob(result.audio);
+          nextAudio = [{ id: 'output', url: URL.createObjectURL(blob), blob }];
         }
         if (Array.isArray(result.named_audio_outputs)) {
           for (const output of nextAudio) URL.revokeObjectURL(output.url);
           nextAudio = result.named_audio_outputs
             .filter((entry): entry is { id: string; audio: string } =>
               typeof entry?.id === 'string' && typeof entry?.audio === 'string')
-            .map((entry) => ({ id: entry.id, url: base64AudioUrl(entry.audio) }));
+            .map((entry) => {
+              const blob = base64AudioBlob(entry.audio);
+              return { id: entry.id, url: URL.createObjectURL(blob), blob };
+            });
           const primary = result.named_audio_outputs.find((entry) =>
             typeof entry?.id === 'string' && typeof entry?.audio === 'string');
           nextPlaybackAudio = primary?.audio;
@@ -2469,12 +2591,16 @@
             nextArtifacts = result.artifacts
               .filter((entry): entry is { id: string; payload: string; meta?: Record<string, string> } =>
                 typeof entry?.id === 'string' && typeof entry?.payload === 'string')
-              .map((entry) => ({
-              id: entry.id,
-              extension: entry.meta?.extension || (entry.meta?.format === 'midi' ? 'mid' : 'bin'),
-              mime: entry.meta?.mime || 'application/octet-stream',
-              url: `data:${entry.meta?.mime || 'application/octet-stream'};base64,${entry.payload}`
-            }));
+              .map((entry) => {
+                const mime = entry.meta?.mime || 'application/octet-stream';
+                return {
+                  id: entry.id,
+                  extension: entry.meta?.extension || (entry.meta?.format === 'midi' ? 'mid' : 'bin'),
+                  mime,
+                  url: `data:${mime};base64,${entry.payload}`,
+                  blob: new Blob([base64Bytes(entry.payload)], { type: mime })
+                };
+              });
           }
         }
       }
@@ -2510,6 +2636,12 @@
       }
       historyError = '';
       outputCommitted = true;
+      await autoSaveGeneration({
+        modelId: outputModelId,
+        audio: nextAudio,
+        artifacts: nextArtifacts,
+        settingsJson
+      });
       if (autoPlayOutput && !streamedAudioPlayed && !playbackWarning && nextPlaybackAudio) {
         try {
           await playback.push(typeof nextPlaybackAudio === 'string'
@@ -2582,17 +2714,37 @@
     if (!server?.ui_management) return;
     try {
       const jobs = await modelInstallJobs();
-      const incoming = Object.fromEntries(jobs.map((job) => {
+      const incoming: Record<string, ModelInstallJob> = {};
+      for (const job of jobs) {
+        const failureKey = job.finished_at_ms || -1;
+        if (job.state === 'failed' && dismissedInstallFailures[job.id] === failureKey) {
+          continue;
+        }
         const local = installJobs[job.id];
-        return [job.id, {
+        incoming[job.id] = {
           ...job,
           total_bytes: job.total_bytes || local?.total_bytes || 0
-        }];
-      }));
+        };
+      }
       // Preserve a just-created local job if a status request races the server's
       // worker registration. This keeps the progress row visible from the click
       // until the authoritative job appears in a later poll.
       installJobs = { ...installJobs, ...incoming };
+      for (const job of Object.values(incoming)) {
+        if (job.state !== 'failed') continue;
+        const failureKey = job.finished_at_ms || -1;
+        if (reportedInstallFailures[job.id] === failureKey) continue;
+        reportedInstallFailures = { ...reportedInstallFailures, [job.id]: failureKey };
+        const owner = catalog.find((entry) => entry.install_packages?.some((choice) => choice.id === job.id));
+        const choice = owner?.install_packages?.find((candidate) => candidate.id === job.id);
+        const targetLabel = owner
+          ? `${owner.display_name}${choice ? ` ${choice.label}` : ''}`
+          : job.id;
+        const reason = job.message?.trim() || 'Model installation failed';
+        status = `${targetLabel} download failed: ${reason}`;
+        errorStatus = status;
+        log(status);
+      }
       let refreshInventory = false;
       for (const entry of catalog) {
         let newlyCompleted = false;
@@ -2642,7 +2794,13 @@
     );
     if (!confirmed) return;
     rememberPackageChoice(entry, choice);
+    if (choice.id in dismissedInstallFailures) {
+      const nextDismissed = { ...dismissedInstallFailures };
+      delete nextDismissed[choice.id];
+      dismissedInstallFailures = nextDismissed;
+    }
     status = `Starting ${choice.label} installation for ${entry.display_name}...`;
+    errorStatus = '';
     const expectedBytes = packageSizes[choice.id]?.size_bytes || 0;
     installJobs = {
       ...installJobs,
@@ -2668,26 +2826,42 @@
         [job.id]: { ...job, total_bytes: job.total_bytes || expectedBytes }
       };
       await refreshInstallJobs();
-      status = `${entry.display_name} ${choice.label} installation is running in the background.`;
-      log(status);
+      if (installJobs[choice.id]?.state !== 'failed') {
+        status = `${entry.display_name} ${choice.label} installation is running in the background.`;
+        log(status);
+      }
     } catch (error) {
-      status = error instanceof Error ? error.message : String(error);
+      const reason = error instanceof Error ? error.message : String(error);
+      const finishedAt = Date.now();
+      status = `${entry.display_name} ${choice.label} download failed: ${reason}`;
+      errorStatus = status;
+      reportedInstallFailures = { ...reportedInstallFailures, [choice.id]: finishedAt };
       installJobs = {
         ...installJobs,
         [choice.id]: {
           id: choice.id,
           state: 'failed',
-          message: status,
+          message: reason,
           exit_code: -1,
           downloaded_bytes: 0,
-          total_bytes: 0,
+          total_bytes: expectedBytes,
           progress_percent: -1,
           started_at_ms: 0,
-          finished_at_ms: Date.now()
+          finished_at_ms: finishedAt
         }
       };
-      log(`Installer failed to start: ${status}`);
+      log(status);
     }
+  }
+
+  function dismissInstallFailure(job: ModelInstallJob) {
+    dismissedInstallFailures = {
+      ...dismissedInstallFailures,
+      [job.id]: job.finished_at_ms || -1
+    };
+    const nextJobs = { ...installJobs };
+    delete nextJobs[job.id];
+    installJobs = nextJobs;
   }
 
 
@@ -2809,6 +2983,7 @@
       uiConfigurationError.set(error instanceof Error ? error.message : String(error));
       log(`Configuration could not be loaded: ${error instanceof Error ? error.message : error}`);
     }
+    void loadAutoSaveDirectory();
     await clearLegacyUiCaches();
     themePreferenceQuery = window.matchMedia('(prefers-color-scheme: dark)');
     systemPrefersDark = themePreferenceQuery.matches;
@@ -3388,19 +3563,25 @@
           </details>
         {/if}
 
-        {#if !usesPanelRequest}
+        {#if !usesPanelRequest || selected.task !== 'asr'}
           <div class="studio-request-actions studio-playback-controls">
-            {#if canStreamOutput}
+            {#if !usesPanelRequest && canStreamOutput}
               <label class="toggle"><input type="checkbox" bind:checked={streamOutput} disabled={running} /><span></span>{tr('run.streamingMode')}</label>
             {/if}
             {#if selected.task !== 'asr'}
-              <label class="toggle"><input type="checkbox" bind:checked={autoplay} disabled={running} /><span></span>{tr('run.autoPlay')}</label>
+              {#if !usesPanelRequest}
+                <label class="toggle"><input type="checkbox" bind:checked={autoplay} disabled={running} /><span></span>{tr('run.autoPlay')}</label>
+              {/if}
+              <label class="toggle"><input type="checkbox" checked={$uiConfiguration.autoSave} on:change={(event) => setAutoSaveEnabled(event.currentTarget.checked)} disabled={running} /><span></span>{tr('run.autoSave')}</label>
+              {#if $uiConfiguration.autoSave && $autoSaveDirectory.folderName && $autoSaveDirectory.permission !== 'granted'}
+                <button type="button" disabled={running} on:click={() => void requestAutoSaveDirectoryPermission()}>{tr('configuration.grantAccess')}</button>
+              {/if}
             {/if}
-            {#if running && liveAudioReady && !livePlaybackStart}<button on:click={playLiveAudio}>{tr('run.playLive')}</button>{/if}
-            {#if playbackActive}<button on:click={() => playback.stop()}>{tr('run.stopPlayback')}</button>{/if}
+            {#if !usesPanelRequest && running && liveAudioReady && !livePlaybackStart}<button on:click={playLiveAudio}>{tr('run.playLive')}</button>{/if}
+            {#if !usesPanelRequest && playbackActive}<button on:click={() => playback.stop()}>{tr('run.stopPlayback')}</button>{/if}
           </div>
-          {#if running && liveText}<pre aria-live="polite" aria-label={tr('result.streamingText')}>{liveText}</pre>{/if}
-          {#if playbackWarning}<p role="status">{playbackWarning}</p>{/if}
+          {#if !usesPanelRequest && running && liveText}<pre aria-live="polite" aria-label={tr('result.streamingText')}>{liveText}</pre>{/if}
+          {#if !usesPanelRequest && playbackWarning}<p role="status">{playbackWarning}</p>{/if}
         {/if}
         {#if selectedId && selectedResident && selectedSessionDrift}
           <div class="reload-prompt" role="status">
@@ -3448,6 +3629,8 @@
           {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>{tr('settings.save')}</a>{/if}
           {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
+        {#if autoSaveWarning}<p class="auto-save-warning" role="status">{autoSaveWarning}</p>{/if}
+        {#if autoSaveNotice}<p class="auto-save-notice" role="status">{autoSaveNotice}</p>{/if}
         {#if outputAudio.length}
           <div class="audio-list">
             {#each outputAudio as output}
@@ -3522,7 +3705,7 @@
     <ModelLibrary search={modelSearch} task={modelTask} groups={modelGroups} {packageSizes} {installJobs} {packageSizeState}
       bind:modelsFolderInput {modelsFolder} {modelsFolderHistory} {defaultModelsFolder} {applyingModelsFolder} {modelsFolderIsDefault}
       {openFolderBrowser} {applyModelsFolder} {installPackage} {removePackage} {stopPackageDownload}
-      {cleanPartialDownload} {formatBytes} {installProgressLabel} {workflowForEntry}
+      {cleanPartialDownload} {dismissInstallFailure} {formatBytes} {installProgressLabel} {workflowForEntry}
       taskLabel={(entry) => localizedTaskLabel(entry.task, tr, entry)}
       workflows={workflowTabs.map((w) => ({ id: w.id, label: workflowLabel(w.id, w.filterLabel, tr) }))}
       openModel={(entry, choice) => {

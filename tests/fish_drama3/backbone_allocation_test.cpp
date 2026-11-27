@@ -307,6 +307,39 @@ int main(int argc, char ** argv) {
                 if (maximum > 1e-4F) throw std::runtime_error("decode optimization changed fixed-input continuation");
             }
         }
+        {
+            drama::Drama3BackboneCachedDecodeGraph cache(prefill_execution, resident, c, 32, 8 * 1024 * 1024);
+            const std::vector<float> next(256, .3F);
+            for (int64_t prefix : {2, 3, 2}) {
+                const int64_t steps = prefix + 5;
+                std::vector<float> input(steps * 256);
+                for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
+                const auto cut = input.begin() + prefix * 256;
+                cache.reset();
+                const auto full = cache.prefill_embeddings(input, steps).hidden;
+                const auto full_snapshot = cache.capture_prefill();
+                const auto expected_next = cache.run_embedding_step(next);
+                cache.restore_prefill(full_snapshot, steps);
+                if (cache.run_embedding_step(next) != expected_next)
+                    throw std::runtime_error("full prefill snapshot changed cached decode");
+
+                cache.reset();
+                cache.prefill_embeddings({input.begin(), cut}, prefix);
+                const auto prefix_snapshot = cache.capture_prefill();
+                const auto first_suffix = cache.prefill_embeddings({cut, input.end()}, steps - prefix, prefix).hidden;
+                const auto first_next = cache.run_embedding_step(next);
+                cache.restore_prefill(prefix_snapshot, prefix);
+                const auto second_suffix = cache.prefill_embeddings({cut, input.end()}, steps - prefix, prefix).hidden;
+                if (first_suffix != second_suffix || cache.valid_steps() != steps || cache.run_embedding_step(next) != first_next)
+                    throw std::runtime_error("restored prefix snapshot changed suffix prefill or cached decode");
+                for (size_t i = 0; i < first_suffix.size(); ++i) {
+                    const auto value = first_suffix[i];
+                    if (!std::isfinite(value) || std::abs(value - full[prefix * 256 + i]) > 1e-3F)
+                        throw std::runtime_error("split prefill changed the expected fixed-input hidden state");
+                }
+                std::cout << "prefill_snapshot_prefix=" << prefix << " suffix=" << steps - prefix << '\n';
+            }
+        }
         c.moe.residency = engine::moe::Residency::Staged;
         auto disk = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
         for (int64_t steps : {1, 7}) {

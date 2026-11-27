@@ -65,6 +65,7 @@ void print_task_list_help() {
         << "    --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu|sycl|best  (rocm is an alias for hip)\n"
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
+        << "    --device-name <name>              select backend device by ggml name (e.g. CUDA0) or unique description substring\n"
         << "    --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "    --list-devices  List available backend devices and exit; --json adds PCI ids and memory\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
@@ -830,11 +831,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 #ifdef _OPENMP
             omp_set_num_threads(threads);
 #endif
-            engine::core::BackendConfig backend;
-            backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
-            backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-            backend.device = parse_int_arg(argc, argv, "--device", 0);
-            backend.threads = threads;
+            const auto backend = parse_backend_config_from_cli(argc, argv, threads);
             minitts::app::run_json_workflow(
                 registry,
                 minitts::app::WorkflowRunOptions{
@@ -875,10 +872,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             recipe_options.load_options = collect_key_value_args(argc, argv, "--load-option");
             recipe_options.session_options = common_session_options;
             recipe_options.model_spec_override = optional_path_arg(argc, argv, "--model-spec-override");
-            recipe_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
-            recipe_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-            recipe_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
-            recipe_options.backend.threads = threads;
+            recipe_options.backend = parse_backend_config_from_cli(argc, argv, threads);
 
             auto request = build_request_from_cli(argc, argv);
             const auto wav_options = wav_write_options_from_cli(argc, argv);
@@ -964,15 +958,12 @@ int audiocpp_cli_main(int argc, char ** argv) {
             throw std::runtime_error("--metrics currently supports offline mode only");
         }
 
-        engine::runtime::SessionOptions session_options;
-        session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
-        session_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-        session_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
         const int threads = parse_int_arg(argc, argv, "--threads", 4);
         if (threads <= 0) {
             throw std::runtime_error("--threads must be positive");
         }
-        session_options.backend.threads = threads;
+        engine::runtime::SessionOptions session_options;
+        session_options.backend = parse_backend_config_from_cli(argc, argv, threads);
 #ifdef _OPENMP
         omp_set_num_threads(threads);
 #endif

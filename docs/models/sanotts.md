@@ -165,8 +165,11 @@ checkpoint or session setting, or leaves the optional value unset as described.
   `decoder.impl` to `ggml` to explicitly retain the original graph.
   `{"decoder":{"impl":"neon"}}` runs the frame stage and decoder
   with hand-written AArch64 NEON kernels instead of the GGML graph (see
-  Performance). Durations, the token stage, the iSTFT and the DC block are
-  unchanged. Explicit `neon` requires CPU and an AArch64 NEON build; failures
+  Performance). In default builds (`ENGINE_ENABLE_NEON=OFF`) it also runs the
+  duration and token stages in NEON when both are on the CPU backend, and, when
+  the NEON iSTFT is selected, computes decoder, iSTFT and DC block in one pass
+  on a persistent thread pool. Output does not depend on the thread count. With
+  `ENGINE_ENABLE_NEON=ON` those stages are unchanged. Explicit `neon` requires CPU and an AArch64 NEON build; failures
   are not retried with GGML. Explicit NEON is rejected for Piperlite voices.
   No artifact files or implementation-specific `params` are used. An optional `decoder.backend` must match the session
   backend; NEON only supports CPU. See [component execution plans](../build/rockchip-npu.md#component-execution-plans).
@@ -174,8 +177,10 @@ checkpoint or session setting, or leaves the optional value unset as described.
   NEON code and the GGML graph (logged as `sanotts.neon_self_check_max_diff`,
   ~1e-5 for heart and heart-nano; ~20 ms once per session). If they disagree,
   the default selection falls back to GGML and explicit `neon` fails.
-  `sanotts_neon_decoder_test` compares the NEON decoder with a
-  double-precision reference on random weights.
+  The self-check covers the decoder only; `sanotts_neon_decoder_test` compares
+  the NEON decoder and front end with a double-precision reference on random
+  weights, and the fused audio path with the separate decoder, iSTFT and DC
+  block.
 
 ## Determinism and parity
 
@@ -187,6 +192,9 @@ The runtimes reproduce the reference implementations' exact semantics:
   codepoints convention, per-voice `phoneme_id_map`, `[BOS, PAD, (id, PAD)…,
   EOS]` framing, and the schwa fallback for ids outside a component's
   trained vocabulary.
+- One intentional difference, nano voices only: an ASCII apostrophe between
+  two letters stays part of the word. The reference counts it as punctuation,
+  which reads "don't" as "don" plus the letter "T".
 - nano: ATen-compatible MT19937 noise (24-bit uniform, Box–Muller in blocks
   of 16), torch.istft window normalisation and centre trim, and the
   reference's DC blocker `H(z) = (1 - z^-1)/(1 - 0.9973 z^-1)`.

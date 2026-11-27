@@ -569,6 +569,7 @@ add_library(engine_core OBJECT
     src/framework/runtime/workspace.cpp
     src/framework/midi/midi_file.cpp
     src/framework/io/filesystem.cpp
+    src/framework/io/disk_cache.cpp
     # Vision/video modules, runtimes and media helpers.
     src/framework/vision/media/image.cpp
     src/framework/vision/media/processing.cpp
@@ -1916,6 +1917,7 @@ audiocpp_add_model(fish_drama3
     SOURCES
         src/community_models/fish_drama3/assets.cpp
         src/community_models/fish_drama3/backbone.cpp
+        src/community_models/fish_drama3/cache_key.cpp
         src/community_models/fish_drama3/generator.cpp
         src/community_models/fish_drama3/loader.cpp
         src/community_models/fish_drama3/prompt.cpp

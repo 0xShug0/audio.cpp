@@ -230,11 +230,7 @@ engine::core::BackendType parse_server_backend(const std::string & value) {
     return backend;
 }
 
-ServerConfig load_server_config(const std::filesystem::path & path) {
-    return load_server_config(path, false);
-}
-
-ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs) {
+ServerConfig parse_server_config(const std::filesystem::path & path, bool parallel_jobs) {
     const auto root = engine::io::json::parse_file(path);
     const auto base = path.parent_path();
     ServerConfig config;
@@ -250,8 +246,20 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         }
         config.models_root = resolve_path(base, value->as_string());
     }
+    config.backend_explicit = root.find("backend") != nullptr;
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.backend_impl = engine::io::json::optional_string(root, "backend_impl", "");
+    const bool has_device = root.find("device") != nullptr;
+    const auto * device_name = root.find("device_name");
+    if (has_device && device_name != nullptr) {
+        throw std::runtime_error("server config cannot specify both device and device_name");
+    }
+    if (device_name != nullptr) {
+        if (!device_name->is_string()) {
+            throw std::runtime_error("server device_name must be a string");
+        }
+        config.device_name = device_name->as_string();
+    }
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);
     config.lazy_load = engine::io::json::optional_bool(root, "lazy_load", config.lazy_load);
@@ -356,12 +364,23 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
-        if (item.find("device") != nullptr) {
+        const bool has_model_device = item.find("device") != nullptr;
+        const auto * model_device_name = item.find("device_name");
+        if (has_model_device && model_device_name != nullptr) {
+            throw std::runtime_error("model " + model.id + " cannot specify both device and device_name");
+        }
+        if (has_model_device) {
             const int device = engine::io::json::optional_i32(item, "device", config.device);
             if (device < 0) {
                 throw std::runtime_error("device for model " + model.id + " must be >= 0");
             }
             model.device = device;
+        }
+        if (model_device_name != nullptr) {
+            if (!model_device_name->is_string()) {
+                throw std::runtime_error("device_name for model " + model.id + " must be a string");
+            }
+            model.device_name = model_device_name->as_string();
         }
         if (!parallel_jobs && item.find("slots") != nullptr) {
             throw std::runtime_error("slots requires --parallel-jobs at server startup");
@@ -444,6 +463,75 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     for (auto & model : config.models) {
         apply_default_session_options(config, model);
     }
+    return config;
+}
+
+void resolve_model_device(
+    engine::core::BackendType server_backend,
+    ServerModelConfig & model,
+    const std::vector<engine::core::BackendDeviceInfo> & devices) {
+    if (!model.device_name.has_value()) {
+        return;
+    }
+    try {
+        const auto resolved = engine::core::resolve_backend_device(*model.device_name, server_backend, devices);
+        model.device = resolved.device;
+        model.device_name.reset();
+    } catch (const std::exception & error) {
+        throw std::runtime_error("device_name for model " + model.id + ": " + error.what());
+    }
+}
+
+void resolve_model_device(engine::core::BackendType server_backend, ServerModelConfig & model) {
+    if (!model.device_name.has_value()) {
+        return;
+    }
+    resolve_model_device(server_backend, model, engine::core::list_backend_devices(false));
+}
+
+void resolve_server_devices(
+    ServerConfig & config,
+    const std::vector<engine::core::BackendDeviceInfo> & devices) {
+    if (config.device_name.has_value()) {
+        const std::optional<engine::core::BackendType> filter =
+            config.backend_explicit ? std::optional<engine::core::BackendType>(config.backend) : std::nullopt;
+        const auto resolved = engine::core::resolve_backend_device(*config.device_name, filter, devices);
+        config.backend = resolved.type;
+        config.device = resolved.device;
+        config.device_name.reset();
+    }
+    for (auto & model : config.models) {
+        resolve_model_device(config.backend, model, devices);
+    }
+}
+
+void resolve_server_devices(ServerConfig & config) {
+    const bool needs_resolution = config.device_name.has_value() ||
+        std::any_of(config.models.begin(), config.models.end(), [](const ServerModelConfig & model) {
+            return model.device_name.has_value();
+        });
+    if (!needs_resolution) {
+        return;
+    }
+    resolve_server_devices(config, engine::core::list_backend_devices(false));
+}
+
+ServerConfig load_server_config(const std::filesystem::path & path) {
+    return load_server_config(path, false);
+}
+
+ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs) {
+    auto config = parse_server_config(path, parallel_jobs);
+    resolve_server_devices(config);
+    return config;
+}
+
+ServerConfig load_server_config(
+    const std::filesystem::path & path,
+    bool parallel_jobs,
+    const std::vector<engine::core::BackendDeviceInfo> & devices) {
+    auto config = parse_server_config(path, parallel_jobs);
+    resolve_server_devices(config, devices);
     return config;
 }
 

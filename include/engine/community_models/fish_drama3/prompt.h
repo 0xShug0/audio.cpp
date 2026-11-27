@@ -20,6 +20,6 @@ std::vector<Drama3Frame> build_drama3_prompt(const Drama3Assets & assets,
     const Drama3TextTokenizer & tokenizer, const std::string & text,
     const std::vector<Drama3Take> & references, const std::vector<Drama3Take> & history,
     const std::vector<Drama3Take> & generated_history = {},
-    size_t max_rows = std::numeric_limits<size_t>::max());
+    size_t max_rows = std::numeric_limits<size_t>::max(), size_t * reference_end = nullptr);
 
 }  // namespace engine::models::fish_drama3

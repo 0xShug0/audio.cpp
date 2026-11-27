@@ -83,7 +83,10 @@ public:
         virtual void reset(bool invalidate_experts = false) = 0;
         virtual Drama3BackboneDecoderForwardResult prefill_embeddings(
             const std::vector<float> & embeddings,
-            int64_t steps) = 0;
+            int64_t steps, int64_t prefix = 0) = 0;
+        virtual size_t prefill_snapshot_bytes() const = 0;
+        virtual std::vector<std::byte> capture_prefill() const = 0;
+        virtual void restore_prefill(const std::vector<std::byte> & snapshot, int64_t steps) = 0;
         virtual std::vector<float> run_embedding_step(const std::vector<float> & embedding) = 0;
         virtual int64_t valid_steps() const noexcept = 0;
     };

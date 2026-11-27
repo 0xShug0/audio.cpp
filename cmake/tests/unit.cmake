@@ -81,6 +81,9 @@ add_engine_test(convnext_modules_test
 # cpu_extra_buffers
 add_engine_test(cpu_extra_buffers_test tests/unittests/test_cpu_extra_buffers.cpp)
 
+# Filesystem byte cache (no model checkpoints).
+add_engine_test(disk_cache_test tests/unittests/test_disk_cache.cpp --log)
+
 # Transcript-to-word timestamp alignment (CrisperWhisper)
 if (crisperwhisper IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(crisperwhisper_transcript_alignment_test
@@ -152,7 +155,7 @@ if (firered_vad IN_LIST AUDIOCPP_LINKED_MODELS)
     add_test(NAME firered_vad_rules_test COMMAND firered_vad_rules_test)
 endif()
 
-# Expert quantization, reference-cache eviction and sampling (Drama3)
+# Expert quantization, reference caching and sampling (Drama3)
 if (fish_drama3 IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(fish_drama3_expert_quantization_test
         tests/fish_drama3/expert_quantization_test.cpp)
@@ -374,8 +377,12 @@ add_engine_test(partial_text_test tests/unittests/test_partial_text.cpp)
 # partial_text_render
 add_engine_test(partial_text_render_test tests/unittests/test_partial_text_render.cpp)
 
-# Text prompt preparation (PocketTTS)
+# Text chunking and prompt preparation (PocketTTS)
 if (pocket_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test(pocket_tts_text_chunking_test tests/pocket_tts/test_text_chunking.cpp)
+    target_compile_definitions(pocket_tts_text_chunking_test PRIVATE
+        ENGINE_TEST_ASSET_ROOT="${ENGINE_UNITTEST_ASSET_ROOT}"
+    )
     add_engine_test(pocket_tts_text_prompt_test tests/unittests/test_pocket_tts_text_prompt.cpp)
 endif()
 

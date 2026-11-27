@@ -4,6 +4,7 @@
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/errors.h"
 
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 
@@ -42,7 +43,19 @@ int main(int argc, char ** argv) {
         const drama::Drama3Take middle_take{"Middle chunk.", {std::vector<int32_t>(50, 4), 10, 5}};
         const drama::Drama3Take latest_take{"Latest chunk.", {std::vector<int32_t>(60, 5), 10, 6}};
         const std::string next_text = "The next chunk.";
-        const auto mandatory = drama::build_drama3_prompt(assets, tokenizer, next_text, {reference}, {explicit_take});
+        size_t reference_end = 0;
+        const auto mandatory = drama::build_drama3_prompt(assets, tokenizer, next_text, {reference}, {explicit_take},
+            {}, std::numeric_limits<size_t>::max(), &reference_end);
+        size_t changed_reference_end = 0;
+        const auto without_history = drama::build_drama3_prompt(assets, tokenizer, "Other text.", {reference}, {},
+            {}, std::numeric_limits<size_t>::max(), &changed_reference_end);
+        const auto start_user = tokenizer.encode("<|im_start|>user\n");
+        if (reference_end == 0 || reference_end != changed_reference_end ||
+            reference_end >= mandatory.size() || reference_end >= without_history.size() ||
+            !std::equal(mandatory.begin(), mandatory.begin() + reference_end, without_history.begin()) ||
+            mandatory[reference_end][0] != start_user.front()) {
+            throw std::runtime_error("the reference prefix must end before the first history or input turn");
+        }
         const auto anchor = drama::build_drama3_prompt(assets, tokenizer, next_text, {reference}, {explicit_take, first_take});
         const auto full = drama::build_drama3_prompt(assets, tokenizer, next_text, {reference}, {explicit_take, first_take, latest_take});
         const std::vector<drama::Drama3Take> generated{first_take, middle_take, latest_take};

@@ -38,7 +38,7 @@ export interface PanelRunOutcome {
   audio: Blob | null;
   text: string;
   json: string;
-  artifacts?: Array<{ id: string; url: string; extension: string; mime: string }>;
+  artifacts?: Array<{ id: string; url: string; extension: string; mime: string; blob?: Blob }>;
 }
 
 export type PanelRunner = (context: PanelRunContext) => Promise<PanelRunOutcome>;

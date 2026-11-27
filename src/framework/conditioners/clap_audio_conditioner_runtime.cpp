@@ -862,6 +862,10 @@ struct ClapAudioConditionerRuntime::Impl {
           weights(load_weights(*source, config, execution.backend(), execution.backend_type(), options)) {
     }
 
+    ~Impl() {
+        release_runtime_graphs();
+    }
+
     ClapAudioEmbedding encode_audio(
         const std::vector<float> & waveform,
         int64_t batch,

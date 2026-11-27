@@ -124,3 +124,26 @@ and generated WAVs. Use separate output directories for builds being compared.
 Keep model, expert placement, context length, thread count, and other workloads
 consistent. The documented comparison used Q4_K experts with a Q8_0 backbone,
 zero CPU expert layers, context length 2048, eight threads, and concurrency one.
+
+## Prompt Cache HTTP Probe
+
+Start an offline server with resident experts and model id `drama-3`. Use the
+same model, backend, device and thread count for each comparison. The probe uses
+the framework text chunker, an English LibriSpeech fixture and `previous_takes`
+WAVs from the baseline to keep conditioning fixed across runs. Run from the
+repository root on the server's machine using Python 3:
+
+```powershell
+$ref = 'assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001'
+python tests/fish_drama3/prompt_cache_probe.py --base-url http://127.0.0.1:8490 --reference "$ref.wav" --reference-text-file "$ref.txt" --output-directory build/prompt-cache/main
+python tests/fish_drama3/prompt_cache_probe.py --base-url http://127.0.0.1:8490 --reference "$ref.wav" --reference-text-file "$ref.txt" --output-directory build/prompt-cache/variant --history-directory build/prompt-cache/main
+```
+
+Restart the server before each run. Use the first command on the baseline and
+the second on each variant, with a distinct output directory. The default suite
+records repeated seeded takes, six narration turns, a repeated request after
+the narration, a long chunked request and prepared VQ hashes. `--suite takes`
+runs the three same-prompt takes only. `--suite prefix` runs the first request,
+one narration turn and the VQ check. Compare `results.json` for seconds, output
+lengths, PCM hashes and VQ hashes. With `--log`, the server records reused rows,
+disk hits and one `drama3.prompt_rows` event per generated chunk.
