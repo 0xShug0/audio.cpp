@@ -26,14 +26,11 @@ StableAudioConfig parse_config(const assets::ResourceBundle & resources) {
     config.downsampling_ratio = json::require_i64(pretransform_config, "downsampling_ratio");
     const auto & encoder_config = pretransform_config.require("encoder").require("config");
     const auto & decoder_config = pretransform_config.require("decoder").require("config");
-    const bool has_sa3_pretransform = pretransform_config.find("pretransform") != nullptr;
-    config.stable_audio_open_v1 = !has_sa3_pretransform;
-    if (has_sa3_pretransform) {
-        config.pretransform_patch_size =
-            json::require_i64(pretransform_config.require("pretransform").require("config"), "patch_size");
-    } else {
-        config.pretransform_patch_size = 1;
+    if (pretransform_config.find("pretransform") == nullptr) {
+        throw std::runtime_error("stable_audio supports Stable Audio 3; Foundation-1 / Open 1.0 support has been removed");
     }
+    config.pretransform_patch_size =
+        json::require_i64(pretransform_config.require("pretransform").require("config"), "patch_size");
     config.pretransform_encoder_chunk_size = json::optional_i64(encoder_config, "chunk_size", 32);
     const auto & encoder_strides = encoder_config.require("strides").as_array();
     if (encoder_strides.empty()) {
@@ -52,12 +49,8 @@ StableAudioConfig parse_config(const assets::ResourceBundle & resources) {
     }
     config.same_c_mults = json::require_i64_array(encoder_config, "c_mults");
     config.same_strides = json::require_i64_array(encoder_config, "strides");
-    config.same_encoder_transformer_depths = has_sa3_pretransform
-        ? json::require_i64_array(encoder_config, "transformer_depths")
-        : std::vector<int64_t>(config.same_c_mults.size(), 0);
-    config.same_decoder_transformer_depths = has_sa3_pretransform
-        ? json::require_i64_array(decoder_config, "transformer_depths")
-        : std::vector<int64_t>(config.same_c_mults.size(), 0);
+    config.same_encoder_transformer_depths = json::require_i64_array(encoder_config, "transformer_depths");
+    config.same_decoder_transformer_depths = json::require_i64_array(decoder_config, "transformer_depths");
     config.same_decoder_sinusoidal_blocks = json::optional_i64_array(decoder_config, "sinusoidal_blocks", std::vector<int64_t>(config.same_decoder_transformer_depths.size(), 0));
     config.same_sliding_window = json::optional_i64_array(encoder_config, "sliding_window");
     config.same_differential = json::optional_bool(encoder_config, "differential", true);
@@ -99,7 +92,7 @@ StableAudioConfig parse_config(const assets::ResourceBundle & resources) {
     if (config.prompt_conditioner_type.empty()) {
         throw std::runtime_error("Stable Audio config is missing prompt conditioner");
     }
-    if (config.prompt_conditioner_type != "t5gemma" && config.prompt_conditioner_type != "t5") {
+    if (config.prompt_conditioner_type != "t5gemma") {
         throw std::runtime_error("Stable Audio unsupported prompt conditioner type: " + config.prompt_conditioner_type);
     }
 
@@ -152,19 +145,6 @@ void parse_t5gemma_config(const assets::ResourceBundle & resources, StableAudioC
     config.t5_pad_token_id = json::require_i64(root, "pad_token_id");
 }
 
-void parse_t5_base_config(const assets::ResourceBundle & resources, StableAudioConfig & config) {
-    const auto root = resources.parse_json("t5_config");
-    config.t5_hidden_size = json::require_i64(root, "d_model");
-    config.t5_layers = json::require_i64(root, "num_layers");
-    config.t5_attention_heads = json::require_i64(root, "num_heads");
-    config.t5_kv_heads = config.t5_attention_heads;
-    config.t5_head_dim = json::require_i64(root, "d_kv");
-    config.t5_intermediate_size = json::require_i64(root, "d_ff");
-    config.t5_vocab_size = json::require_i64(root, "vocab_size");
-    config.t5_rms_norm_eps = json::require_f32(root, "layer_norm_epsilon");
-    config.t5_pad_token_id = json::require_i64(root, "pad_token_id");
-}
-
 }  // namespace
 
 std::shared_ptr<const StableAudioAssets> load_stable_audio_assets(const std::filesystem::path & model_path) {
@@ -174,11 +154,7 @@ std::shared_ptr<const StableAudioAssets> load_stable_audio_assets(const std::fil
         engine::model_spec::default_spec_path("stable_audio"));
     assets->t5_tokenizer_model_path = assets->resources.require_file("t5_tokenizer_model");
     assets->config = parse_config(assets->resources);
-    if (assets->config.prompt_conditioner_type == "t5gemma") {
-        parse_t5gemma_config(assets->resources, assets->config);
-    } else {
-        parse_t5_base_config(assets->resources, assets->config);
-    }
+    parse_t5gemma_config(assets->resources, assets->config);
     assets->model_weights = assets->resources.open_tensor_source("model_weights");
     assets->t5_weights = assets->resources.open_tensor_source("t5_weights");
     return assets;

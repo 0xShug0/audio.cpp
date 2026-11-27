@@ -2492,10 +2492,6 @@ audiocpp_add_model(stable_audio
         src/models/stable_audio/assets.cpp
         src/models/stable_audio/conditioner.cpp
         src/models/stable_audio/conditioner_runtime.cpp
-        src/models/stable_audio/foundation/conditioner.cpp
-        src/models/stable_audio/foundation/oobleck_autoencoder.cpp
-        src/models/stable_audio/foundation/rf_dit.cpp
-        src/models/stable_audio/foundation/session.cpp
         src/models/stable_audio/loader.cpp
         src/models/stable_audio/request.cpp
         src/models/stable_audio/rf_dit.cpp

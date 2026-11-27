@@ -1,7 +1,6 @@
 #include "engine/models/stable_audio/loader.h"
 
 #include "engine/framework/model_spec/package.h"
-#include "engine/models/stable_audio/foundation/session.h"
 #include "engine/models/stable_audio/session.h"
 
 #include <stdexcept>
@@ -13,9 +12,6 @@ namespace {
 
 std::string variant(const StableAudioAssets & assets) {
     const auto name = assets.resources.model_root().filename().string();
-    if (assets.config.stable_audio_open_v1) {
-        return name.empty() ? "foundation-1" : name;
-    }
     if (name.rfind("stable-audio-3-", 0) == 0) {
         return name.substr(std::string("stable-audio-3-").size());
     }
@@ -26,9 +22,7 @@ runtime::ModelMetadata metadata(const StableAudioAssets & assets) {
     runtime::ModelMetadata out;
     out.family = "stable_audio";
     out.variant = variant(assets);
-    out.description = assets.config.stable_audio_open_v1
-        ? "Stable Audio Foundation loaded from local safetensors and config-declared T5Base prompt encoder assets."
-        : "Stable Audio 3 loaded from local safetensors and config-declared prompt encoder assets.";
+    out.description = "Stable Audio 3 loaded from local safetensors and config-declared prompt encoder assets.";
     return out;
 }
 
@@ -41,7 +35,7 @@ runtime::CapabilitySet capabilities(const StableAudioAssets &) {
     return capabilities;
 }
 
-runtime::ModelCliInterface cli(const StableAudioAssets & assets) {
+runtime::ModelCliInterface cli(const StableAudioAssets &) {
     runtime::ModelCliInterface out;
     out.request_options = {
         {"duration_sec", "float", "Positive duration in seconds; batch requests also accept a comma-separated string matching the prompt count, not a JSON array. Default: 120.", false, "120"},
@@ -65,10 +59,6 @@ runtime::ModelCliInterface cli(const StableAudioAssets & assets) {
         {"stable_audio.weight_type", "native|f32|f16|bf16|q8_0", "Weight storage type; defaults to native."},
         {"stable_audio.mem_saver", "bool", "Release staged runtime graphs after each request. Default: false.", false, "false"},
     };
-    if (assets.config.stable_audio_open_v1) {
-        out.session_options.insert(out.session_options.begin(),
-            {"stable_audio.max_batch", "int", "Maximum prompt batch size. Default: 1.", false, "1", "1"});
-    }
     return out;
 }
 
@@ -149,9 +139,6 @@ std::unique_ptr<runtime::IVoiceTaskSession> StableAudioLoadedModel::create_task_
     }
     if (task.task != runtime::VoiceTaskKind::AudioGeneration) {
         throw std::runtime_error("Stable Audio supports only the gen task");
-    }
-    if (assets_->config.stable_audio_open_v1) {
-        return std::make_unique<foundation::FoundationSession>(task, options, assets_);
     }
     return std::make_unique<StableAudioSession>(task, options, assets_);
 }
