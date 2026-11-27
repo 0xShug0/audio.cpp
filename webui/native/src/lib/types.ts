@@ -90,4 +90,5 @@ export interface ServerHealth {
 export interface AudioOutput {
   id: string;
   url: string;
+  blob?: Blob;
 }

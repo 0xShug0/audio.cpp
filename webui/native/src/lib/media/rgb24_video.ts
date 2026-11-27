@@ -22,6 +22,7 @@ export interface VideoOutputArtifact {
   url: string;
   extension: string;
   mime: string;
+  blob?: Blob;
 }
 
 interface VideoTaskArtifact {
@@ -179,11 +180,13 @@ export async function prepareRgb24Output(
   idPrefix: string,
   audioCodec: 'aac' | 'opus' = 'aac'
 ): Promise<PreparedVideoOutput> {
+  const resultBlob = new Blob([JSON.stringify(result)], { type: 'application/json' });
   const artifacts: VideoOutputArtifact[] = [{
     id: `${idPrefix}_result`,
     extension: 'json',
     mime: 'application/json',
-    url: URL.createObjectURL(new Blob([JSON.stringify(result)], { type: 'application/json' }))
+    url: URL.createObjectURL(resultBlob),
+    blob: resultBlob
   }];
   const videoArtifact = Array.isArray(result.artifacts)
     ? (result.artifacts as VideoTaskArtifact[]).find((entry) =>
@@ -208,7 +211,8 @@ export async function prepareRgb24Output(
       id: `${idPrefix}_video`,
       extension: 'mp4',
       mime: 'video/mp4',
-      url: URL.createObjectURL(video.blob)
+      url: URL.createObjectURL(video.blob),
+      blob: video.blob
     });
     return {
       artifacts,
