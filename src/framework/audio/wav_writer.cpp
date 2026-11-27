@@ -283,7 +283,27 @@ void write_wav(
     std::vector<char> block(kBlockBytes + sizeof(float));
     size_t used = 0;
 
-    for (float sample : source) {
+    // The common case, 16-bit without dither, converts a block at a time in a
+    // loop the compiler can vectorize. nearbyint rounds like lrint, and the
+    // clamp keeps the result inside int16.
+    size_t converted = 0;
+    if (options.format == WavSampleFormat::Pcm16 && !dither) {
+        std::vector<int16_t> pcm(kBlockBytes / sizeof(int16_t));
+        while (converted < source.size()) {
+            const size_t count = std::min(pcm.size(), source.size() - converted);
+            const float * in = source.data() + converted;
+            for (size_t i = 0; i < count; ++i) {
+                const float sample = std::max(-1.0F, std::min(1.0F, in[i]));
+                pcm[i] = static_cast<int16_t>(static_cast<int32_t>(std::nearbyint(sample * 32767.0F)));
+            }
+            out.write(reinterpret_cast<const char *>(pcm.data()),
+                      static_cast<std::streamsize>(count * sizeof(int16_t)));
+            converted += count;
+        }
+    }
+
+    for (size_t index = converted; index < source.size(); ++index) {
+        float sample = source[index];
         if (clamp_to_unit) {
             sample = std::max(-1.0F, std::min(1.0F, sample));
         }
