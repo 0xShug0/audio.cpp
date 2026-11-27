@@ -106,11 +106,14 @@ struct DitWeightNames {
     std::vector<DitLinearNames> input_embedding{}, output_embedding{}, frame_embedding{};
     // Optional learned Fourier frequencies [time_features/2, 1].
     std::string time_frequencies;
+    // Optional checkpoint inverse RoPE frequencies [self_attention.rotary.dimensions/2].
+    std::string rotary_inv_frequencies;
 };
 
 struct DitAttentionWeights {
     LinearWeights query, key, value, output, qkv, kv;
     NormWeights query_norm, key_norm;
+    core::TensorValue rope_frequency_factors{};
 };
 struct DitLayerWeights {
     NormWeights self_norm, cross_norm, feed_forward_norm;

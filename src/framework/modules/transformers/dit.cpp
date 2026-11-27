@@ -174,7 +174,8 @@ TensorValue attention(core::ModuleBuildContext & ctx, const TensorValue & input,
     // The ordinary flash and explicit paths retain canonical projected heads.
     const bool preserve_views = c.lowering == ScaledDotProductAttentionLowering::FlashPreserveViews;
     const bool self = !context.valid() && cache == nullptr;
-    if (self && !prefix && !current && !attention_mask.valid() && !c.differential && c.lowering != ScaledDotProductAttentionLowering::Explicit && weights.query.weight.valid() && c.qk_norm == DitQKNorm::None && c.rotary.dimensions == c.head_dim) {
+    const auto * rope_factors = weights.rope_frequency_factors.valid() ? &weights.rope_frequency_factors : nullptr;
+    if (self && !prefix && !current && !attention_mask.valid() && !rope_factors && !c.differential && c.lowering != ScaledDotProductAttentionLowering::Explicit && weights.query.weight.valid() && c.qk_norm == DitQKNorm::None && c.rotary.dimensions == c.head_dim) {
         ProjectedGroupedSelfAttentionConfig a;
         a.hidden_size = config.hidden_size; a.attention_heads = c.heads; a.kv_heads = c.kv_heads;
         a.head_dim = c.head_dim; a.use_bias = weights.query.bias.has_value();
@@ -224,14 +225,14 @@ TensorValue attention(core::ModuleBuildContext & ctx, const TensorValue & input,
     };
     q = normalize(q, weights.query_norm, c.heads);
     q = heads(ctx, q, c.heads, c.head_dim, preserve_views);
-    if (self && c.rotary.dimensions > 0) q = RoPEModule(c.rotary).build(ctx, q, positions);
+    if (self && c.rotary.dimensions > 0) q = RoPEModule(c.rotary).build(ctx, q, positions, rope_factors);
     q = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, q);
     if (cache) { k = cache->key; v = cache->value; k_diff = cache->differential_key; }
     else {
         k = normalize(k, weights.key_norm, c.kv_heads);
         k = heads(ctx, k, c.kv_heads, c.head_dim, preserve_views);
         v = heads(ctx, v, c.kv_heads, c.head_dim, preserve_views);
-        if (self && c.rotary.dimensions > 0) k = RoPEModule(c.rotary).build(ctx, k, positions);
+        if (self && c.rotary.dimensions > 0) k = RoPEModule(c.rotary).build(ctx, k, positions, rope_factors);
         k = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, k);
         v = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, v);
     }
@@ -258,11 +259,11 @@ TensorValue attention(core::ModuleBuildContext & ctx, const TensorValue & input,
         attention_mask.valid() ? std::optional<TensorValue>(attention_mask) : std::nullopt);
     if (c.differential) {
         q_diff = heads(ctx, normalize(q_diff, weights.query_norm, c.heads), c.heads, c.head_dim, preserve_views);
-        if (self && c.rotary.dimensions > 0) q_diff = RoPEModule(c.rotary).build(ctx, q_diff, positions);
+        if (self && c.rotary.dimensions > 0) q_diff = RoPEModule(c.rotary).build(ctx, q_diff, positions, rope_factors);
         q_diff = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, q_diff);
         if (!cache) {
             k_diff = heads(ctx, normalize(k_diff, weights.key_norm, c.kv_heads), c.kv_heads, c.head_dim, preserve_views);
-            if (self && c.rotary.dimensions > 0) k_diff = RoPEModule(c.rotary).build(ctx, k_diff, positions);
+            if (self && c.rotary.dimensions > 0) k_diff = RoPEModule(c.rotary).build(ctx, k_diff, positions, rope_factors);
             k_diff = TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, k_diff);
         }
         if (self && cache_type && k_diff.type != *cache_type)
@@ -309,6 +310,15 @@ DitWeights load_dit_weights(core::BackendWeightStore & store, const assets::Tens
     const bool autocast = config.projection_type == DitProjectionType::Bf16Autocast;
     const auto scalar_storage = autocast ? assets::TensorStorageType::F32 : storage;
     DitWeights out;
+    TensorValue rope_factors;
+    if (!names.rotary_inv_frequencies.empty()) {
+        const auto & rotary = config.self_attention.rotary;
+        auto frequencies = source.require_f32(names.rotary_inv_frequencies, {rotary.dimensions / 2});
+        // GGML divides its generated inverse frequencies by these factors.
+        for (size_t i = 0; i < frequencies.size(); ++i)
+            frequencies[i] = std::pow(rotary.theta, -static_cast<float>(2 * i) / rotary.dimensions) / frequencies[i];
+        rope_factors = store.make_f32(TensorShape::from_dims({rotary.dimensions / 2}), std::move(frequencies));
+    }
     for (const auto & name : names.input_embedding) out.input_embedding.push_back(load_projection(store, source, name, storage, 0, autocast, backend));
     for (const auto & name : names.output_embedding) out.output_embedding.push_back(load_projection(store, source, name, storage, 0, autocast, backend));
     for (const auto & name : names.frame_embedding) out.frame_embedding.push_back(load_projection(store, source, name, storage, 0, autocast, backend));
@@ -344,6 +354,7 @@ DitWeights load_dit_weights(core::BackendWeightStore & store, const assets::Tens
         else w.cross_norm = load_norm(store, source, names.layer.cross_norm, layer);
         w.feed_forward_norm = load_norm(store, source, names.layer.feed_forward_norm, layer);
         w.self_attention = load_attention(store, source, names.layer.self_attention, storage, layer, autocast, backend, true);
+        w.self_attention.rope_frequency_factors = rope_factors;
         w.cross_attention = load_attention(store, source, cross_names, storage, layer, autocast, backend, false);
         // Normalize a fixed affine norm into its sole autocast query projection.
         // The operation is load-time and preserves the established BF16 binding.

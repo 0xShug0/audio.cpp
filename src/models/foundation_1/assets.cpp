@@ -118,6 +118,7 @@ std::shared_ptr<const FoundationAssets> load_foundation_assets(const std::filesy
     n.preprocess = {"model.model.preprocess_conv.weight", ""};
     n.postprocess = {"model.model.postprocess_conv.weight", ""};
     n.time_frequencies = "model.model.timestep_features.weight";
+    n.rotary_inv_frequencies = "model.model.transformer.rotary_pos_emb.inv_freq";
     n.time_embedding = {{"model.model.to_timestep_embed.0.weight", "model.model.to_timestep_embed.0.bias"},
                         {"model.model.to_timestep_embed.2.weight", "model.model.to_timestep_embed.2.bias"}};
     n.context_embedding = {{"model.model.to_cond_embed.0.weight", ""}, {"model.model.to_cond_embed.2.weight", ""}};
