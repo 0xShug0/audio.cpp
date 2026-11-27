@@ -4,6 +4,8 @@
 #include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/codecs/qwen3_audio_tokenizer_runtime.h"
 #include "engine/framework/conditioners/musicgen_style_conditioner_runtime.h"
+#include "engine/framework/conditioners/clap_audio_conditioner_runtime.h"
+#include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/speech_encoders/s3_tokenizer.h"
 
@@ -11,6 +13,8 @@
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <limits>
+#include <ggml-cpu.h>
 
 int main(int argc, char ** argv) {
     const auto started = std::chrono::steady_clock::now();
@@ -72,6 +76,39 @@ int main(int argc, char ** argv) {
                 return runtime.encode(input.samples, 1, static_cast<int64_t>(input.samples.size())).hidden_states;
             };
             check_runtime_lifecycle(make, encode, audio, b, c, [](auto & runtime) { runtime.release_runtime_graph(); });
+        } else if (component == "clap") {
+            // CLAP pads every waveform to the same length. Vary batch instead
+            // to exercise actual graph replacement rather than only padding.
+            c = audio;
+            c.channels = 2;
+            c.samples.insert(c.samples.end(), b.samples.begin(), b.samples.end());
+            const auto make = [&] {
+                return std::make_unique<engine::conditioners::ClapAudioConditionerRuntime>(source, execution);
+            };
+            const auto encode = [](auto & runtime, const auto & input) {
+                return runtime.encode_audio(input.samples, input.channels,
+                    static_cast<int64_t>(input.samples.size() / input.channels)).values;
+            };
+            if (minitts::cli::has_arg(argc, argv, "--memory-cycles")) {
+                for (int cycle = 0; cycle < 4; ++cycle) {
+                    auto runtime = make();
+                    (void)encode(*runtime, audio);
+                    // The first encoder build releases the frontend; a second
+                    // call leaves both graph allocators owned by the runtime.
+                    (void)encode(*runtime, audio);
+                    ggml_backend_synchronize(execution.backend());
+                    const auto loaded = engine::core::query_backend_memory(execution.backend(), 0);
+                    runtime.reset();
+                    ggml_backend_synchronize(execution.backend());
+                    const auto released = engine::core::query_backend_memory(execution.backend(), 0);
+                    if (!loaded.available || !released.available)
+                        throw std::runtime_error("backend memory reporting unavailable");
+                    std::cout << "destroy_cycle=" << cycle << " loaded_bytes=" << loaded.used_bytes
+                              << " released_bytes=" << released.used_bytes << std::endl;
+                }
+            } else {
+                check_runtime_lifecycle(make, encode, audio, b, c, [](auto & runtime) { runtime.release_runtime_graphs(); });
+            }
         } else if (component == "musicgen_style") {
             const auto auxiliary = engine::assets::open_tensor_source(
                 std::filesystem::path(find_arg(argc, argv, "--model").value()),
@@ -82,9 +119,43 @@ int main(int argc, char ** argv) {
             const auto encode = [](auto & runtime, const auto & input) {
                 return runtime.encode_audio(input.samples, 1, static_cast<int64_t>(input.samples.size())).values;
             };
-            check_runtime_lifecycle(make, encode, audio, b, c, [](auto & runtime) { runtime.release_runtime_graphs(); });
+            if (minitts::cli::has_arg(argc, argv, "--abort-retry")) {
+                if (execution.backend_type() != engine::core::BackendType::Cpu)
+                    throw std::runtime_error("--abort-retry requires CPU");
+                std::pair<size_t, size_t> calls{0, std::numeric_limits<size_t>::max()};
+                const auto callback = [](void * data) {
+                    auto & state = *static_cast<std::pair<size_t, size_t> *>(data);
+                    return ++state.first >= state.second;
+                };
+                ggml_backend_cpu_set_abort_callback(execution.backend(), callback, &calls);
+                const auto expected = encode(*make(), audio);
+                const size_t complete_calls = calls.first;
+                calls = {0, std::max(size_t{1}, complete_calls / 2)};
+                auto runtime = make();
+                bool aborted = false;
+                try { (void)encode(*runtime, audio); }
+                catch (const std::runtime_error & error) {
+                    if (std::string(error.what()) != "MusicGen style graph compute failed") throw;
+                    aborted = true;
+                }
+                ggml_backend_cpu_set_abort_callback(execution.backend(), nullptr, nullptr);
+                if (!aborted) throw std::runtime_error("style abort was not reached");
+                const auto actual = encode(*runtime, audio);
+                size_t different = 0;
+                double max_abs = 0;
+                for (size_t i = 0; i < std::min(actual.size(), expected.size()); ++i) {
+                    different += actual[i] != expected[i];
+                    max_abs = std::max(max_abs, std::abs(double(actual[i]) - expected[i]));
+                }
+                std::cout << "abort_retry_A exact=" << (actual == expected)
+                          << " different=" << different << " max_abs=" << max_abs
+                          << " full_callbacks=" << complete_calls << " abort_at=" << calls.second << std::endl;
+                if (actual != expected) throw std::runtime_error("MusicGen abort/retry output changed");
+            } else {
+                check_runtime_lifecycle(make, encode, audio, b, c, [](auto & runtime) { runtime.release_runtime_graphs(); });
+            }
         } else {
-            throw std::runtime_error("expected component qwen3, s3, wav2vec2 or musicgen_style");
+            throw std::runtime_error("expected component qwen3, s3, wav2vec2, clap or musicgen_style");
         }
         engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         return 0;
