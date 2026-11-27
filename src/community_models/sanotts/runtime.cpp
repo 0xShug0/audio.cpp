@@ -581,6 +581,23 @@ SanoTtsNativeRuntime::SanoTtsNativeRuntime(
                 "sanoTTS NEON decoder self-check failed (max difference " + std::to_string(max_diff) +
                 " from the GGML decoder graph); use --session-option 'sanotts.exec_plan={\"decoder\":{\"impl\":\"ggml\"}}'");
         }
+#ifndef ENGINE_HAVE_NEON
+        if (state_->neon_decoder != nullptr &&
+            state_->duration_backend_type() == core::BackendType::Cpu &&
+            state_->backend_type == core::BackendType::Cpu) {
+            const auto & dur_w = state_->duration_weights_ref();
+            const auto & aco_w = *state_->weights;
+            state_->neon_decoder->init_frontend(
+                config,
+                [&dur_w, &aco_w](const std::string & name) {
+                    const auto & store = (name.rfind("duration.", 0) == 0) ? dur_w : aco_w;
+                    ggml_tensor * tensor = weight(store, name).tensor;
+                    std::vector<float> values(static_cast<size_t>(ggml_nelements(tensor)));
+                    ggml_backend_tensor_get(tensor, values.data(), 0, ggml_nbytes(tensor));
+                    return values;
+                });
+        }
+#endif
     }
 }
 
@@ -599,32 +616,43 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- durations ---------------------------------------------------------
     const auto duration_start = std::chrono::steady_clock::now();
-    auto & duration = cached_graph(
-        state_->duration_graphs,
-        token_count,
-        "sanotts.duration_graph.cache_hit",
-        [&] {
-            return build_front_graph(
-                state_->duration_weights_ref(),
-                duration_stage_spec(
-                    config.vocab_size,
-                    config.duration_hidden,
-                    config.duration_depth,
-                    config.duration_kernel),
-                state_->duration_backend_value(),
-                state_->duration_backend_type(),
-                token_count,
-                kIoArenaBytes,
-                kGraphArenaBytes);
-        });
-    write_i32_input(
-        duration.tokens, core::TensorShape::from_dims({1, token_count}), token_ids);
-    write_f32_input(
-        duration.feats,
-        core::TensorShape::from_dims({1, 3, token_count}),
-        duration_features(token_count, config.duration_max_tokens));
-    compute_graph(duration, "sanoTTS duration");
-    const auto log_duration = core::read_tensor_f32(duration.output);
+    std::vector<float> log_duration;
+#ifndef ENGINE_HAVE_NEON
+    if (state_->neon_decoder != nullptr && state_->neon_decoder->has_frontend()) {
+        log_duration = state_->neon_decoder->predict_duration(
+            token_ids,
+            duration_features(token_count, config.duration_max_tokens),
+            state_->threads);
+    } else
+#endif
+    {
+        auto & duration = cached_graph(
+            state_->duration_graphs,
+            token_count,
+            "sanotts.duration_graph.cache_hit",
+            [&] {
+                return build_front_graph(
+                    state_->duration_weights_ref(),
+                    duration_stage_spec(
+                        config.vocab_size,
+                        config.duration_hidden,
+                        config.duration_depth,
+                        config.duration_kernel),
+                    state_->duration_backend_value(),
+                    state_->duration_backend_type(),
+                    token_count,
+                    kIoArenaBytes,
+                    kGraphArenaBytes);
+            });
+        write_i32_input(
+            duration.tokens, core::TensorShape::from_dims({1, token_count}), token_ids);
+        write_f32_input(
+            duration.feats,
+            core::TensorShape::from_dims({1, 3, token_count}),
+            duration_features(token_count, config.duration_max_tokens));
+        compute_graph(duration, "sanoTTS duration");
+        log_duration = core::read_tensor_f32(duration.output);
+    }
     if (static_cast<int64_t>(log_duration.size()) != token_count) {
         throw std::runtime_error("sanoTTS duration graph returned invalid output");
     }
@@ -647,32 +675,43 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- token-stage acoustic context --------------------------------------
     const auto acoustic_start = std::chrono::steady_clock::now();
-    auto & token_graph = cached_graph(
-        state_->token_graphs,
-        token_count,
-        "sanotts.token_graph.cache_hit",
-        [&] {
-            return build_front_graph(
-                *state_->weights,
-                token_stage_spec(
-                    config.vocab_size,
-                    config.acoustic_hidden,
-                    config.acoustic_token_depth,
-                    config.acoustic_kernel),
-                state_->backend.value,
-                state_->backend_type,
-                token_count,
-                kIoArenaBytes,
-                kGraphArenaBytes);
-        });
-    write_i32_input(
-        token_graph.tokens, core::TensorShape::from_dims({1, token_count}), token_ids);
-    write_f32_input(
-        token_graph.feats,
-        core::TensorShape::from_dims({1, 2, token_count}),
-        token_features(token_count, durations));
-    compute_graph(token_graph, "sanoTTS token context");
-    const auto token_context = core::read_tensor_f32(token_graph.output);
+    std::vector<float> token_context;
+#ifndef ENGINE_HAVE_NEON
+    if (state_->neon_decoder != nullptr && state_->neon_decoder->has_frontend()) {
+        token_context = state_->neon_decoder->predict_acoustic(
+            token_ids,
+            token_features(token_count, durations),
+            state_->threads);
+    } else
+#endif
+    {
+        auto & token_graph = cached_graph(
+            state_->token_graphs,
+            token_count,
+            "sanotts.token_graph.cache_hit",
+            [&] {
+                return build_front_graph(
+                    *state_->weights,
+                    token_stage_spec(
+                        config.vocab_size,
+                        config.acoustic_hidden,
+                        config.acoustic_token_depth,
+                        config.acoustic_kernel),
+                    state_->backend.value,
+                    state_->backend_type,
+                    token_count,
+                    kIoArenaBytes,
+                    kGraphArenaBytes);
+            });
+        write_i32_input(
+            token_graph.tokens, core::TensorShape::from_dims({1, token_count}), token_ids);
+        write_f32_input(
+            token_graph.feats,
+            core::TensorShape::from_dims({1, 2, token_count}),
+            token_features(token_count, durations));
+        compute_graph(token_graph, "sanoTTS token context");
+        token_context = core::read_tensor_f32(token_graph.output);
+    }
     if (static_cast<int64_t>(token_context.size()) !=
         config.acoustic_hidden * token_count) {
         throw std::runtime_error("sanoTTS token graph returned invalid output");
@@ -682,10 +721,29 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
         "sanotts.acoustic_ms",
         engine::debug::elapsed_ms(acoustic_start));
 
-    // -- frame stage + decoder ---------------------------------------------
+    // -- frame stage + decoder (+ optional fused iSTFT + DC) ---------------
     const auto decoder_start = std::chrono::steady_clock::now();
     const int64_t out_dim = config.n_fft + 2;
+    std::vector<float> samples;
+    bool did_fused_audio = false;
+#ifndef ENGINE_HAVE_NEON
+    if (state_->neon_decoder != nullptr && state_->neon_istft != nullptr &&
+        state_->neon_decoder->can_decode_audio()) {
+        samples = state_->neon_decoder->decode_audio(
+            expand_context(token_context, durations, config.acoustic_hidden, token_count, frames),
+            frame_features(token_count, durations, frames),
+            noise,
+            frames,
+            state_->threads);
+        did_fused_audio = true;
+        engine::debug::timing_log_scalar(
+            "sanotts.decoder_ms",
+            engine::debug::elapsed_ms(decoder_start));
+        engine::debug::timing_log_scalar("sanotts.istft_ms", 0.0);
+    }
+#endif
     std::vector<float> spectrum;
+    if (!did_fused_audio) {
     if (state_->neon_decoder != nullptr) {
         spectrum = state_->neon_decoder->decode(
             expand_context(token_context, durations, config.acoustic_hidden, token_count, frames),
@@ -730,7 +788,6 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
 
     // -- iSTFT + DC block ---------------------------------------------------
     const auto istft_start = std::chrono::steady_clock::now();
-    std::vector<float> samples;
     if (state_->neon_istft != nullptr) {
         samples = state_->neon_istft->compute(
             spectrum, frames, periodic_hann_window(config.n_fft), state_->threads);
@@ -768,6 +825,7 @@ runtime::AudioBuffer SanoTtsNativeRuntime::synthesize(
     engine::debug::timing_log_scalar(
         "sanotts.istft_ms",
         engine::debug::elapsed_ms(istft_start));
+    }
 
     runtime::AudioBuffer out;
     out.sample_rate = static_cast<int>(config.sample_rate);
