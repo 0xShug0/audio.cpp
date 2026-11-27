@@ -187,7 +187,7 @@ jobs:
     name: Ubuntu x64 (CPU)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -233,7 +233,7 @@ jobs:
     name: Ubuntu x64 (CPU portable)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -281,7 +281,7 @@ jobs:
     name: Ubuntu x64 (Vulkan)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -327,7 +327,7 @@ jobs:
     name: Ubuntu x64 (Vulkan portable)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
