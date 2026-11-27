@@ -161,7 +161,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **edda_asr** (C)<br>Lars Karlslund [@lkarlslund](https://github.com/lkarlslund) | ASR | da | [Edda v0.2 large](docs/models/edda_asr.md) | Safetensors, GGUF 16/Q8, Stream |
 | **firered_vad** | VAD | lang agnostic | [FireRed VAD / Stream-VAD](docs/models/firered_vad.md) | GGUF F32/F16/Q8, Stream |
 | **fun_asr_nano**<br>[@LauraGPT](https://github.com/LauraGPT) (FunASR team) | ASR | auto, zh, en, ja | [Fun-ASR-Nano-2512](docs/models/fun_asr_nano.md) | GGUF 16/Q8 |
-| **gigaam_asr** | ASR | ru, kk, ky, uz, en | [GigaAM v3 CTC](docs/models/gigaam_asr.md)<br>GigaAM v3 RNN-T<br>GigaAM v3 E2E CTC<br>GigaAM v3 E2E RNN-T<br>GigaAM Multilingual CTC<br>GigaAM Multilingual Large CTC | GGUF F16/F32 |
+| **gigaam_asr** | ASR | ru, kk, ky, uz, en | [GigaAM v3 CTC](docs/models/gigaam_asr.md)<br>GigaAM v3 RNN-T<br>GigaAM v3 E2E CTC<br>GigaAM v3 E2E RNN-T<br>GigaAM Multilingual CTC<br>GigaAM Multilingual Large CTC<br>GigaAM-v4 RNN-T (e2e/raw, local conversion) | GGUF F16/F32, Q8 (v4) |
 | **granite5asr** (C)<br>[@ampersandru](https://github.com/ampersandru) | ASR | en, fr, de, es, pt, it, ja | [IBM Granite Speech 5.0 470M TurboCTC](docs/models/granite5asr.md) | GGUF Q8 |
 | **granite_speech5** (C) | ASR | en, fr, de, es, pt, ja | [IBM Granite Speech 5.0 2B](docs/models/granite_speech5.md) | Safetensors, GGUF orig/Q8 |
 | **haas_asr** (C)<br>Third Intelligence | ASR | ja | [Haas-ja-v1.0](docs/models/haas.md) | GGUF F16/Q8, Stream |

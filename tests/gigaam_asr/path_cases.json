@@ -11,6 +11,31 @@
         {"id": "cold", "audio": "assets/resources/sample_16k.wav"},
         {"id": "warm1", "audio": "assets/resources/sample_16k.wav"}
       ]
+    },
+    {
+      "id": "gigaam_v4_e2e_repeat",
+      "coverage": "GigaAM-v4 Zapformer encoder with the default e2e head (punctuation and case); repeated requests in one session.",
+      "family": "gigaam_asr",
+      "model": "GigaAM-ASR-GGUF/gigaam-v4-rnnt-f16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "cold", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "warm1", "audio": "assets/resources/sample_16k.wav"}
+      ]
+    },
+    {
+      "id": "gigaam_v4_raw_repeat",
+      "coverage": "GigaAM-v4 raw head and tokenizer selected by session option; repeated requests in one session.",
+      "family": "gigaam_asr",
+      "model": "GigaAM-ASR-GGUF/gigaam-v4-rnnt-f16.gguf",
+      "task": "asr",
+      "outputs": ["text"],
+      "session_options": {"gigaam_asr.head": "raw"},
+      "requests": [
+        {"id": "cold", "audio": "assets/resources/sample_16k.wav"},
+        {"id": "warm1", "audio": "assets/resources/sample_16k.wav"}
+      ]
     }
   ]
 }
