@@ -943,7 +943,7 @@ IrodoriTTSSession::synthesize(const runtime::TaskRequest &request, bool streamin
     const auto caption_start = Clock::now();
     const std::string caption_text = trim_ascii(first_request.caption);
     auto tokenized_caption =
-        tokenizer_.encode_padded(caption_text, assets_->config.max_caption_len);
+        tokenizer_.encode_caption_padded(caption_text, assets_->config.max_caption_len);
     caption.token_ids = std::move(tokenized_caption.token_ids);
     caption.mask = std::move(tokenized_caption.mask);
     caption.has_caption = !caption_text.empty();

@@ -44,6 +44,9 @@ struct IrodoriModelConfig {
     float dropout = 0.0F;
     int64_t text_vocab_size = 99574;
     std::string text_encoder_type = "scratch";
+    // Python's ModelConfig default. The v4 Small checkpoints set
+    // "sbintuitions/modernbert-ja-310m".
+    std::string text_tokenizer_repo = "sbintuitions/sarashina2.2-0.5b";
     bool text_add_bos = true;
     int64_t text_dim = 512;
     int64_t text_layers = 10;

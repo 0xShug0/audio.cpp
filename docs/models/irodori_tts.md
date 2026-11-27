@@ -20,6 +20,8 @@ v4 GGUF packages are published in both `q8_0` and `f16`. v3 GGUF packages are al
 
 **Input text** is normalized as in Python Irodori-TTS (`normalize_text`): symbol cleanup, wave dashes (`〜`, `～`) to `ー`, removal of brackets that enclose the whole text, NFKC (half-width katakana to full width, full-width Latin letters and digits to ASCII), and `...` to `…`.
 
+**Rare long tokens** of the v4 Small tokenizer (`sbintuitions/modernbert-ja-310m`) are not used for the input text, as in Python Irodori-TTS (`token_split.py`): words such as `浦和レッズ` are encoded with shorter pieces (`浦和`, `レッ`, `ズ`), which upstream found the model misreads less often. The instruction keeps the full vocabulary, as in Python.
+
 > **v4 reference-conditioning note:** Fresh v4 voice-clone or reference+instruction generations may occasionally add a short extra phrase near the end of the clip. This behavior is also reproducible in the upstream Python path with the same reference/text/seed, so it is treated as a current v4 model/runtime limitation rather than a GGUF-only issue. No-reference and instruction-only paths are usually cleaner; for reference-conditioned use, try a different seed, instruction, or explicit `duration_sec` if the tail matters.
 
 ## Quick Start

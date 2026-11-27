@@ -188,6 +188,11 @@ if (index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(index_tts2_request_test tests/index_tts2/request_test.cpp)
 endif()
 
+# Text tokenization (Irodori-TTS)
+if (irodori_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test(irodori_text_tokenizer_test tests/irodori_tts/test_text_tokenizer.cpp)
+endif()
+
 # kaldi_fbank_sparse
 add_engine_test(kaldi_fbank_sparse_test tests/unittests/test_kaldi_fbank_sparse.cpp)
 
