@@ -73,11 +73,14 @@ std::string encode_utf8(uint32_t value) {
 
 // The reference works on Python str, where "é".isalnum() is true. Testing the last BYTE of
 // a UTF-8 string instead left every sentence ending in an accented letter without its
-// final period ("C'est réglé"). Covers ASCII plus the Latin-1 Supplement and Latin
-// Extended-A/B letters used by every Pocket TTS language; other scripts keep the byte rule.
+// final period ("C'est réglé"). Covers ASCII plus the Latin-1 Supplement, Latin Extended-A/B
+// and modern Greek letters used by every Pocket TTS language; other scripts keep the byte rule.
 bool is_letter_or_digit(uint32_t value) {
     if (value < 0x80) {
         return std::isalnum(static_cast<int>(value)) != 0;
+    }
+    if (value >= 0x0386 && value <= 0x03CE) {
+        return value != 0x0387;
     }
     return value >= 0x00C0 && value <= 0x024F && value != 0x00D7 && value != 0x00F7;
 }
@@ -108,6 +111,36 @@ uint32_t latin_uppercase(uint32_t value) {
         return value - 1;
     }
     return 0;
+}
+
+// str.upper() of a lowercase modern (monotonic) Greek letter as UTF-8, or "" when it has none.
+// ΐ and ΰ have no precomposed capital: Python spells them as three code points.
+std::string greek_uppercase(uint32_t value) {
+    if (value == 0x0390) {
+        return encode_utf8(0x0399) + encode_utf8(0x0308) + encode_utf8(0x0301);
+    }
+    if (value == 0x03B0) {
+        return encode_utf8(0x03A5) + encode_utf8(0x0308) + encode_utf8(0x0301);
+    }
+    if (value == 0x03C2) {
+        return encode_utf8(0x03A3);
+    }
+    if ((value >= 0x03B1 && value <= 0x03C1) || (value >= 0x03C3 && value <= 0x03CB)) {
+        return encode_utf8(value - 0x20);
+    }
+    if (value == 0x03AC) {
+        return encode_utf8(0x0386);
+    }
+    if (value >= 0x03AD && value <= 0x03AF) {
+        return encode_utf8(value - 0x25);
+    }
+    if (value == 0x03CC) {
+        return encode_utf8(0x038C);
+    }
+    if (value == 0x03CD || value == 0x03CE) {
+        return encode_utf8(value - 0x3F);
+    }
+    return {};
 }
 
 std::string strip_ascii_whitespace(std::string text) {
@@ -240,21 +273,20 @@ void end_like_pocket_tts(std::string & text) {
     }
 }
 
-std::string prepare_pocket_tts_text(
+}  // namespace
+
+std::string prepare_prompt_text(
+    const PocketTTSModelConfig & config,
     std::string text,
-    bool pad_with_spaces_for_short_inputs,
-    bool remove_semicolons,
-    bool capitalize_first_letter = true,
-    const std::vector<std::pair<std::string, std::string>> & replace_characters = {},
-    PromptPunctuation punctuation = PromptPunctuation::PocketTTS) {
+    PromptPunctuation punctuation) {
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) {
         text.erase(text.begin());
     }
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back()))) {
         text.pop_back();
     }
-    if (!replace_characters.empty()) {
-        text = translate_replace_characters(text, replace_characters);
+    if (!config.replace_characters.empty()) {
+        text = translate_replace_characters(text, config.replace_characters);
     }
     if (text.empty()) {
         throw std::runtime_error("PocketTTS text prompt cannot be empty");
@@ -272,10 +304,10 @@ std::string prepare_pocket_tts_text(
             ++i;
         }
     }
-    if (remove_semicolons) {
+    if (config.remove_semicolons) {
         std::replace(text.begin(), text.end(), ';', ',');
     }
-    if (capitalize_first_letter) {
+    if (config.capitalize_first_letter) {
         // pocket-tts skips any opening quotes or brackets first ('"hello," she said').
         size_t start = 0;
         CodePoint first = decode_utf8_at(text, start);
@@ -287,14 +319,18 @@ std::string prepare_pocket_tts_text(
         }
         if (const uint32_t upper = latin_uppercase(first.value); upper != 0) {
             text.replace(start, first.length, encode_utf8(upper));
+        } else if (const std::string greek = greek_uppercase(first.value); !greek.empty()) {
+            text.replace(start, first.length, greek);
         }
     }
-    if (punctuation == PromptPunctuation::PocketTTS) {
-        end_like_pocket_tts(text);
-    } else {
-        end_after_letter_or_digit(text);
+    if (config.append_terminal_punctuation) {
+        if (punctuation == PromptPunctuation::PocketTTS) {
+            end_like_pocket_tts(text);
+        } else {
+            end_after_letter_or_digit(text);
+        }
     }
-    if (pad_with_spaces_for_short_inputs) {
+    if (config.pad_with_spaces_for_short_inputs) {
         int words = 0;
         bool in_word = false;
         for (const char ch : text) {
@@ -316,6 +352,8 @@ std::string prepare_pocket_tts_text(
     }
     return text;
 }
+
+namespace {
 
 std::vector<float> gather_token_embeddings(
     const assets::TensorDataF32 & embedding_table,
@@ -487,13 +525,7 @@ TextConditioningResult TextConditioner::prepare(
     const std::string & text) const {
     TextConditioningResult result;
     const double prepare_ms = engine::debug::measure_ms([&]() {
-        result.prepared_text = prepare_pocket_tts_text(
-            text,
-            manifest.model_config.pad_with_spaces_for_short_inputs,
-            manifest.model_config.remove_semicolons,
-            manifest.model_config.capitalize_first_letter,
-            manifest.model_config.replace_characters,
-            prompt_punctuation(manifest));
+        result.prepared_text = prepare_prompt_text(manifest.model_config, text, prompt_punctuation(manifest));
         if (manifest.tokenizer_pieces.empty()) {
             throw std::runtime_error("PocketTTS tokenizer pieces are not loaded");
         }
@@ -525,13 +557,8 @@ std::vector<std::string> TextConditioner::split_into_sentence_chunks(
     const auto & pieces = manifest.tokenizer_pieces;
     // Same normalization as the prompt the model will see, then stripped: the reference drops
     // the short-input padding here and adds it back chunk by chunk in prepare().
-    const std::string prepared = strip_ascii_whitespace(prepare_pocket_tts_text(
-        text,
-        manifest.model_config.pad_with_spaces_for_short_inputs,
-        manifest.model_config.remove_semicolons,
-        manifest.model_config.capitalize_first_letter,
-        manifest.model_config.replace_characters,
-        prompt_punctuation(manifest)));
+    const std::string prepared =
+        strip_ascii_whitespace(prepare_prompt_text(manifest.model_config, text, prompt_punctuation(manifest)));
     const bool closers_stay = prompt_punctuation(manifest) == PromptPunctuation::PocketTTS;
     const std::vector<int32_t> tokens = tokenizers::tokenize_sentencepiece(pieces, prepared);
     const std::vector<TextSegment> sentences = segments_from_boundaries(

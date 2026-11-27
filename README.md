@@ -125,7 +125,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **personaplex** | Dialogue, S2S · Conversation | en | [PersonaPlex 7B v1](docs/models/personaplex.md) | GGUF Q4/Q8, Stream |
 | **piper_tts** (C)<br>Community | TTS | en | [Piper TTS](docs/models/piper_tts.md) | GGUF FP32 |
 | **plapre** | TTS, Clone, Ctrl, Edit | da | [Plapre 3](docs/models/plapre.md) | GGUF F32/BF16, Stream |
-| **pocket_tts** | TTS, Clone | en, fr, de, it, pt, es | [PocketTTS 100M](docs/tts.md#pockettts) | GGUF 16/Q8, Stream |
+| **pocket_tts** | TTS, Clone | en, fr, de, it, pt, es, el | [PocketTTS 100M](docs/tts.md#pockettts) | GGUF 16/Q8, Stream |
 | **pocket_tts_small** | TTS, Clone | en | [PocketTTS Small 18M / 7M / 2M](docs/models/pocket_tts_small.md)<br>Base / ReFL | GGUF F32, Stream |
 | **qwen3_tts** | TTS, Clone, Design, Ctrl | zh, en, fr, de, it, ja, ko, pt, ru, es | [Qwen3-TTS 0.6B Base](docs/models/qwen3_tts.md)<br>1.7B Base / CustomVoice / VoiceDesign | GGUF 16/Q8, Stream, LoRA |
 | **sanotts** (C)<br>Ashish [@voidash](https://github.com/voidash) | TTS | en, vi, id, cs, de, es, fr, it, pt, ro, ru, tr, ne, hi | [sanoTTS voice family](docs/models/sanotts.md) | GGUF FP32 |

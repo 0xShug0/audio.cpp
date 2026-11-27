@@ -19,6 +19,7 @@ struct PocketTTSDescriptor {
     bool pad_with_spaces_for_short_inputs = false;
     bool remove_semicolons = false;
     bool capitalize_first_letter = true;
+    bool append_terminal_punctuation = true;
     std::vector<std::pair<std::string, std::string>> replace_characters;
     bool insert_bos_before_voice = false;
     std::optional<int> model_recommended_frames_after_eos;
@@ -54,6 +55,7 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
         io::yaml::optional_bool(parsed, "pad_with_spaces_for_short_inputs", false);
     descriptor.remove_semicolons = io::yaml::optional_bool(parsed, "remove_semicolons", false);
     descriptor.capitalize_first_letter = io::yaml::optional_bool(parsed, "capitalize_first_letter", true);
+    descriptor.append_terminal_punctuation = io::yaml::optional_bool(parsed, "append_terminal_punctuation", true);
     // The reference builds str.maketrans(replace_characters), which takes single characters only.
     const std::string replace_prefix = "replace_characters.";
     for (const auto & [key, value] : parsed.scalars) {
@@ -137,10 +139,14 @@ std::vector<std::pair<std::string, std::string>> builtin_replace_characters(cons
 PocketTTSDescriptor descriptor_from_builtin_defaults(const std::string & language) {
     PocketTTSDescriptor descriptor;
     // Upstream pocket-tts defaults the english and english_2026-04 models to
-    // temperature 0.3 (human evals preferred it at equal WER/similarity).
-    if (language == "english" || language == "english_2026-04") {
+    // temperature 0.3 (human evals preferred it at equal WER/similarity), and the
+    // greek.yaml of the community Greek model (myned-ai/pocket-tts-greek) does too.
+    if (language == "english" || language == "english_2026-04" || starts_with(language, "greek")) {
         descriptor.default_temperature = 0.3F;
     }
+    // greek.yaml: ";" is the Greek question mark, which the reference's terminal punctuation
+    // step treats as weak punctuation and replaces with "." ("Τι κάνεις;" -> "Τι κάνεις.").
+    descriptor.append_terminal_punctuation = !starts_with(language, "greek");
     descriptor.pad_with_spaces_for_short_inputs = (language == "english_2026-01");
     descriptor.insert_bos_before_voice = (language != "english_2026-01");
     if (language.find("french_24l") != std::string::npos) {
@@ -190,6 +196,7 @@ PocketTTSModelConfig make_model_config(const PocketTTSDescriptor & descriptor) {
     config.pad_with_spaces_for_short_inputs = descriptor.pad_with_spaces_for_short_inputs;
     config.remove_semicolons = descriptor.remove_semicolons;
     config.capitalize_first_letter = descriptor.capitalize_first_letter;
+    config.append_terminal_punctuation = descriptor.append_terminal_punctuation;
     config.replace_characters = descriptor.replace_characters;
     config.insert_bos_before_voice = descriptor.insert_bos_before_voice;
     config.model_recommended_frames_after_eos = descriptor.model_recommended_frames_after_eos;

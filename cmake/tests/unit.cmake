@@ -374,6 +374,11 @@ add_engine_test(partial_text_test tests/unittests/test_partial_text.cpp)
 # partial_text_render
 add_engine_test(partial_text_render_test tests/unittests/test_partial_text_render.cpp)
 
+# Text prompt preparation (PocketTTS)
+if (pocket_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test(pocket_tts_text_prompt_test tests/unittests/test_pocket_tts_text_prompt.cpp)
+endif()
+
 # prepared_graph
 add_engine_test(prepared_graph_test
     tests/unittests/test_prepared_graph.cpp

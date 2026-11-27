@@ -648,13 +648,15 @@ PocketTTS supports built-in voices, voice cloning from reference WAVs, and expor
 
 Use the GGUF package for the desired language. French is available as a distilled six-layer model in BF16 and Q8_0, with packaged voice states such as `cosette`. The `_24l` variants are larger 24-layer, undistilled preview models; French no longer requires the `french_24l` variant.
 
+Greek, including Cypriot Greek, comes from the community fine-tune [myned-ai/pocket-tts-greek](https://huggingface.co/myned-ai/pocket-tts-greek) (CC-BY-4.0), packaged as `pocket_tts_greek_q8_0` and `pocket_tts_greek_bf16` with voice states for its eight curated voices (`athina`, `eleni`, `giorgos`, `katerina`, `kostas`, `nikos`, `sophia`, `spyros`; `giorgos` and `sophia` are Cypriot). The GGUFs embed the model's `config.yaml`, which keeps `;`, the Greek question mark, at the end of a prompt instead of replacing it with a period. A Greek GGUF without that config needs `--load-option pocket_tts.language=greek` for the same text handling. The English voice states do not work with this model; clone any other clean recording instead.
+
 | Field | Value |
 |---|---|
 | Family | `pocket_tts` |
 | Model directory | `models/pocket-tts` |
 | Tasks | `tts`, `clon` |
 | Modes | `offline`, `streaming` |
-| Languages | `english`, `french`, `german`, `italian`, `portuguese`, `spanish` |
+| Languages | `english`, `french`, `german`, `italian`, `portuguese`, `spanish`, `greek` (community) |
 | Voice input | Built-in voice id or reference WAV |
 | Built-in voices | Voice ids depend on the downloaded language package; `alba` is used by the examples |
 
@@ -671,6 +673,15 @@ audiocpp_cli --task tts --family pocket_tts \
   --model models/PocketTTS-GGUF/french/pocket-tts-french-q8_0.gguf \
   --backend cuda --text "Bonjour, bienvenue dans notre bibliotheque." \
   --voice-id cosette --out french.wav
+```
+
+Greek preset voice:
+
+```bash
+audiocpp_cli --task tts --family pocket_tts \
+  --model models/PocketTTS-GGUF/greek/pocket-tts-greek-q8_0.gguf \
+  --backend cuda --text "Καλημέρα σας! Θέλετε να κλείσουμε ένα ραντεβού για αύριο;" \
+  --voice-id eleni --out greek.wav
 ```
 
 Voice clone:

@@ -8,6 +8,14 @@ namespace engine::models::pocket_tts {
 
 struct PocketTTSAssets;
 struct PocketTTSHostWeights;
+struct PocketTTSModelConfig;
+enum class PromptPunctuation;
+
+// The reference's prepare_text_prompt under the model's text settings: the prompt the tokenizer sees.
+std::string prepare_prompt_text(
+    const PocketTTSModelConfig & config,
+    std::string text,
+    PromptPunctuation punctuation);
 
 struct TextConditionerConfig {
     int64_t hidden_size = 1024;
