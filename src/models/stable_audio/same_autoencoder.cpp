@@ -236,7 +236,10 @@ core::TensorValue same_self_attention(
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
     const modules::ScaledDotProductAttentionModule attention({config.same_dim_heads,
-        modules::ScaledDotProductAttentionLowering::FlashPreserveViews, GGML_PREC_F32});
+        ctx.backend_type == core::BackendType::Metal
+            ? modules::ScaledDotProductAttentionLowering::Flash
+            : modules::ScaledDotProductAttentionLowering::FlashPreserveViews,
+        GGML_PREC_F32});
     const auto mask = attention_mask ? std::optional<core::TensorValue>(*attention_mask) : std::nullopt;
     auto context = attention.build(ctx, q_heads, k_heads, v_heads, mask);
     if (config.same_differential) {
