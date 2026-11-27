@@ -1,6 +1,16 @@
 # Checkpoint-dependent model tests and manual model parity probes.
 # Included only when ENGINE_BUILD_MODEL_TESTS is enabled.
 
+# Checkpoint-dependent framework runtimes; invokes no model session.
+add_engine_test_target(framework_encoder_lifecycle_test tests/codecs/encoder_lifecycle.cpp)
+target_sources(framework_encoder_lifecycle_test PRIVATE app/cli/args.cpp)
+target_include_directories(framework_encoder_lifecycle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+if (neutts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test_target(fsq_codec_lifecycle_test tests/neutts/codec_lifecycle.cpp)
+    target_sources(fsq_codec_lifecycle_test PRIVATE app/cli/args.cpp)
+    target_include_directories(fsq_codec_lifecycle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
 # ace_step
 if (ace_step IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(ace_step_reference_audio_test tests/ace_step/reference_audio.cpp --log)
