@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <stdexcept>
 #include <utility>
@@ -196,6 +197,16 @@ StableAudioSession::StableAudioSession(
         mem_saver_ = runtime::parse_bool_option(*mem_saver, "stable_audio.mem_saver");
     }
     for (const auto & [key, value] : this->options().options) {
+        if (key == "stable_audio.max_batch") {
+            constexpr const char * warning =
+                "stable_audio.max_batch is deprecated and ignored; batch size is determined by the request.";
+            if (engine::debug::log_enabled()) {
+                engine::debug::log_message(engine::debug::LogLevel::Warning, "stable_audio", warning);
+            } else {
+                std::fprintf(stderr, "[warning][stable_audio] %s\n", warning);
+            }
+            continue;
+        }
         if (key == "stable_audio.weight_type" || key == "stable_audio.mem_saver") {
             (void) value;
             continue;

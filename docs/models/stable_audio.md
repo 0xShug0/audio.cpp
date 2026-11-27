@@ -111,6 +111,7 @@ one name for each control in a request.
 |---|---|---:|---|
 | `stable_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; defaults to native. |
 | `stable_audio.mem_saver` | bool | `false` | Release staged graph/cache state after conditioner, diffusion, and autoencoder phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `stable_audio.max_batch` | int | not set | Deprecated compatibility option. Accepted but ignored with a warning; batch size is determined by the request. |
 
 Stable Audio 3 uses the request's `batch_size` directly. No batch-capacity session
 option is needed; the encoder graph is reused until the batch size changes.
