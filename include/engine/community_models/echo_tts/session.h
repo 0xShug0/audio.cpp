@@ -7,6 +7,7 @@
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/codecs/fish_dac_codec_runtime.h"
+#include "engine/framework/io/disk_cache.h"
 
 #include <memory>
 #include <optional>
@@ -94,6 +95,8 @@ private:
     int64_t speaker_frames_ = 0;
     runtime::CacheSlots<EchoReferenceIdentity, EchoPreparedSpeaker, EchoReferenceIdentityEqual>
         reference_cache_;
+    std::unique_ptr<io::DiskCache> reference_disk_cache_;
+    std::optional<uint64_t> reference_encoder_identity_;
 };
 
 }  // namespace engine::models::echo_tts

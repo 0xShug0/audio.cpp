@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -104,6 +105,42 @@ constexpr int64_t kMinWindowFrames = 128;
 // so estimates are snapped to a coarse grid: consecutive chunks of similar
 // length then reuse the same graph and the same gallocr reservation.
 constexpr int64_t kWindowQuantum = 64;
+
+// Model payload: versioned by the cache key, followed by encoder identity,
+// frame count and contiguous PCA-projected float latents. DiskCache owns the
+// file envelope, checksum, locking, publication and eviction.
+uint64_t reference_encoder_identity(const EchoTtsAssets & assets, const core::BackendConfig & backend) {
+    uint64_t hash = 14695981039346656037ULL;
+    auto mix = [&hash](const void * data, size_t size) {
+        const auto * bytes = static_cast<const unsigned char *>(data);
+        for (size_t i = 0; i < size; ++i) {
+            hash ^= bytes[i];
+            hash *= 1099511628211ULL;
+        }
+    };
+    auto tensors = assets.codec_weights->tensors();
+    std::sort(tensors.begin(), tensors.end(), [](const auto & a, const auto & b) {
+        return a.name < b.name;
+    });
+    for (const auto & metadata : tensors) {
+        if (metadata.name.compare(0, 8, "encoder.") != 0 &&
+            metadata.name.compare(0, 10, "quantizer.") != 0) {
+            continue;
+        }
+        const auto tensor = assets.codec_weights->require_tensor_data(metadata.name);
+        mix(metadata.name.data(), metadata.name.size());
+        mix(metadata.dtype.data(), metadata.dtype.size());
+        mix(metadata.shape.data(), metadata.shape.size() * sizeof(int64_t));
+        mix(tensor.bytes.data(), tensor.bytes.size());
+    }
+    mix(assets.pca.components.data(), assets.pca.components.size() * sizeof(float));
+    mix(assets.pca.mean.data(), assets.pca.mean.size() * sizeof(float));
+    mix(&assets.pca.latent_scale, sizeof(float));
+    mix(&backend.type, sizeof(backend.type));
+    mix(&backend.device, sizeof(backend.device));
+    mix(backend.impl.data(), backend.impl.size());
+    return hash;
+}
 
 // Opt-in, not opt-out. See the comment at the adaptive-window call site for why
 // the default is the full trained window.
@@ -218,7 +255,7 @@ runtime::SessionOptions require_supported_session_options(
   // echo_tts.mem_saver + options; keep them usable while still validating
   // the value below.
   auto validation_options = options;
-  for (auto key : {"echo_tts.mem_saver", "echo_tts.cfg_mode"}) {
+  for (auto key : {"echo_tts.mem_saver", "echo_tts.cfg_mode", "echo_tts.reference_cache_dir"}) {
       if (contract->session_option_keys.find(key) ==
           contract->session_option_keys.end()) {
         validation_options.options.erase(key);
@@ -284,6 +321,14 @@ EchoTtsSession::EchoTtsSession(
         reference_cache_.set_capacity(static_cast<std::size_t>(*slots));
     } else {
         reference_cache_.set_capacity(kDefaultReferenceCacheSlots);
+    }
+    if (const auto dir = runtime::find_option(
+        RuntimeSessionBase::options().options, {"echo_tts.reference_cache_dir"})) {
+        if (!dir->empty()) {
+            io::DiskCacheConfig cache;
+            cache.directory = *dir;
+            reference_disk_cache_ = std::make_unique<io::DiskCache>(std::move(cache));
+        }
     }
     if (assets_ == nullptr) {
         throw std::runtime_error("Echo-TTS session requires loaded assets");
@@ -482,6 +527,7 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
     const auto & config = assets_->config;
 
     const EchoReferenceIdentity identity{reference_identity(audio), reference_max_samples_};
+    // In-memory cache first
     if (const auto * cached = reference_cache_.find(identity)) {
         speaker_latent_ = cached->latent;
         speaker_frames_ = cached->frames;
@@ -490,6 +536,45 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
                          static_cast<long long>(speaker_frames_));
         }
         return;
+    }
+    std::string disk_key;
+    if (reference_disk_cache_) {
+        disk_key = "echo-reference/v2/" + identity.id + "/" + std::to_string(identity.max_samples);
+        if (!reference_encoder_identity_) {
+            reference_encoder_identity_ = reference_encoder_identity(*assets_, options().backend);
+        }
+        try {
+            if (const auto payload = reference_disk_cache_->get(disk_key)) {
+                constexpr size_t header_size = 2 * sizeof(uint64_t);
+                if (payload->size() < header_size) {
+                    throw std::runtime_error("truncated Echo reference cache payload");
+                }
+                uint64_t encoder = 0, frames = 0;
+                std::memcpy(&encoder, payload->data(), sizeof(encoder));
+                std::memcpy(&frames, payload->data() + sizeof(encoder), sizeof(frames));
+                const size_t frame_bytes = static_cast<size_t>(config.latent_size) * sizeof(float);
+                const size_t data_bytes = payload->size() - header_size;
+                if (frames == 0 || frames > static_cast<uint64_t>(config.max_speaker_latent_length) ||
+                    frames % static_cast<uint64_t>(config.speaker_patch_size) != 0 ||
+                    data_bytes % frame_bytes != 0 || frames != data_bytes / frame_bytes) {
+                    throw std::runtime_error("invalid Echo reference cache dimensions");
+                }
+                std::vector<float> latent(data_bytes / sizeof(float));
+                std::memcpy(latent.data(), payload->data() + header_size, data_bytes);
+                if (!std::all_of(latent.begin(), latent.end(), [](float x) { return std::isfinite(x); })) {
+                    throw std::runtime_error("non-finite Echo reference cache latents");
+                }
+                if (encoder != *reference_encoder_identity_) {
+                    std::fprintf(stderr, "[warning][echo_tts] Reference cache encoder/PCA or backend differs; reusing cached conditioning may change output.\n");
+                }
+                reference_cache_.put(identity, EchoPreparedSpeaker{latent, static_cast<int64_t>(frames)});
+                speaker_latent_ = std::move(latent);
+                speaker_frames_ = static_cast<int64_t>(frames);
+                return;
+            }
+        } catch (const std::exception & error) {
+            std::fprintf(stderr, "[warning][echo_tts] Reference cache read failed; recomputing: %s\n", error.what());
+        }
     }
 
     if (mem_saver_) {
@@ -549,6 +634,18 @@ void EchoTtsSession::encode_speaker(const runtime::AudioBuffer & audio) {
     speaker_latent_ = std::move(latents);
     speaker_frames_ = frames;
     reference_cache_.put(identity, EchoPreparedSpeaker{speaker_latent_, speaker_frames_});
+    if (reference_disk_cache_) {
+        const uint64_t frames = static_cast<uint64_t>(speaker_frames_);
+        std::vector<std::byte> payload(2 * sizeof(uint64_t) + speaker_latent_.size() * sizeof(float));
+        std::memcpy(payload.data(), &*reference_encoder_identity_, sizeof(uint64_t));
+        std::memcpy(payload.data() + sizeof(uint64_t), &frames, sizeof(frames));
+        std::memcpy(payload.data() + 2 * sizeof(uint64_t), speaker_latent_.data(), speaker_latent_.size() * sizeof(float));
+        try {
+            reference_disk_cache_->put(disk_key, payload);
+        } catch (const std::exception & error) {
+            std::fprintf(stderr, "[warning][echo_tts] Reference cache write failed: %s\n", error.what());
+        }
+    }
     if (mem_saver_) {
         codec_->release_encode_graph();
     }

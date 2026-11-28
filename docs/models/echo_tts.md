@@ -78,6 +78,7 @@ checkpoint or session setting, or leaves the optional value unset as described.
 |---|---|---|---|
 | `echo_tts.reference_duration_sec` | `float` | `15` | Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config. Must be positive. |
 | `echo_tts.reference_cache_slots` | `int` | Model/session default | How many encoded speaker references to keep. Encoding is linear in reference length, so reusing a voice across requests avoids repeating it. 0 disables caching; default 4. |
+| `echo_tts.reference_cache_dir` | `string` | Unset | Directory for encoded reference speakers retained across restarts. Unset: use only the existing in-memory cache. See [Reference disk cache](#reference-disk-cache). |
 | `echo_tts.mem_saver` | `bool` | `false` | Release Fish S1-DAC decode graph space before encoding reference speaker audio and encode graph space after. Avoids having both allocations resident simulaneously at the cost of rebuilding the graphs when a speaker cache-miss occurs. |
 | `echo_tts.cfg_mode` | `independent`, `joint` | `independent` | Type of classifier free guidance used. |
 
@@ -214,3 +215,18 @@ Default 4; `0` disables it. Each slot holds only the projected latent, at most
 2 MB. The cache lives with the session, so it helps a running server and not a
 one-shot CLI invocation. Beyond caching, the levers are `reference_duration_sec`
 and shorter references generally -- around 10 s is one chunk, the floor.
+
+## Reference disk cache
+
+Set `echo_tts.reference_cache_dir` to retain encoded reference speakers across restarts. Unset, only the existing in-memory cache is used.
+
+The optional cache uses the framework [disk cache](../framework/disk_cache.md),
+with a dedicated directory, at most 128 entries and a 1 GiB size limit. Disk hits
+also populate the session's memory cache. Corrupt entries or I/O failures emit a
+warning; synthesis recomputes the reference if a cached entry cannot be read.
+
+Entries record the encoder/downsampling weights, PCA state and backend settings.
+A changed identity emits a warning but permits reuse, allowing conditioning to
+be transferred between installations; output need not be byte-identical.
+Malformed dimensions and non-finite latents are rejected. The earlier experimental
+`.bin` cache format is not imported; those references are encoded again.
