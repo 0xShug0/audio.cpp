@@ -957,7 +957,7 @@ The Python-reference side of these tests usually requires more time-consuming se
 Last update: 2026-09-23
 
 Have a project using audio.cpp? Submit a PR or let me know, and I’ll be happy to add it here.
-
+- [Ebook2Audiobook](https://github.com/DrewThomasson/ebook2audiobook): Generate audiobooks from e-books, 50+ TTS engines with voice cloning and 1696+ languages!
 - [AIRI Audio Server](https://github.com/dasilva333/airi-audio-server): A lightweight, zero-Python Node.js microservice wrapper providing OpenAI-compatible `/v1/audio/speech` (with real-time SSE streaming), `/v1/audio/transcriptions` (Citrinet/Whisper), dynamic voice catalog discovery, and serialized GPU queueing for `audio.cpp`.
 - [Project AIRI](https://github.com/moeru-ai/airi): An open-source, next-generation AI companion and desktop frontend featuring interactive Voice Studio curation, zero-shot voice cloning dropzones, and real-time audio pipeline integration powered by `airi-audio-server` and `audio.cpp`.
 - [TranscrIA](https://github.com/Martossien/transcria) is a self-hosted meeting transcription platform with diarization and local LLM correction. audio.cpp is integrated as a first-class STT engine in the product.
