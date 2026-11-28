@@ -139,14 +139,10 @@ std::vector<std::pair<std::string, std::string>> builtin_replace_characters(cons
 PocketTTSDescriptor descriptor_from_builtin_defaults(const std::string & language) {
     PocketTTSDescriptor descriptor;
     // Upstream pocket-tts defaults the english and english_2026-04 models to
-    // temperature 0.3 (human evals preferred it at equal WER/similarity), and the
-    // greek.yaml of the community Greek model (myned-ai/pocket-tts-greek) does too.
-    if (language == "english" || language == "english_2026-04" || starts_with(language, "greek")) {
+    // temperature 0.3 (human evals preferred it at equal WER/similarity).
+    if (language == "english" || language == "english_2026-04") {
         descriptor.default_temperature = 0.3F;
     }
-    // greek.yaml: ";" is the Greek question mark, which the reference's terminal punctuation
-    // step treats as weak punctuation and replaces with "." ("Τι κάνεις;" -> "Τι κάνεις.").
-    descriptor.append_terminal_punctuation = !starts_with(language, "greek");
     descriptor.pad_with_spaces_for_short_inputs = (language == "english_2026-01");
     descriptor.insert_bos_before_voice = (language != "english_2026-01");
     if (language.find("french_24l") != std::string::npos) {

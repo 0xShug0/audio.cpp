@@ -76,14 +76,11 @@ std::string encode_utf8(uint32_t value) {
 
 // The reference works on Python str, where "é".isalnum() is true. Testing the last BYTE of
 // a UTF-8 string instead left every sentence ending in an accented letter without its
-// final period ("C'est réglé"). Covers ASCII plus the Latin-1 Supplement, Latin Extended-A/B
-// and modern Greek letters used by every Pocket TTS language; other scripts keep the byte rule.
+// final period ("C'est réglé"). Covers ASCII plus the Latin-1 Supplement and Latin
+// Extended-A/B letters used by every Pocket TTS language; other scripts keep the byte rule.
 bool is_letter_or_digit(uint32_t value) {
     if (value < 0x80) {
         return std::isalnum(static_cast<int>(value)) != 0;
-    }
-    if (value >= 0x0386 && value <= 0x03CE) {
-        return value != 0x0387;
     }
     return value >= 0x00C0 && value <= 0x024F && value != 0x00D7 && value != 0x00F7;
 }
