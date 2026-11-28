@@ -1096,6 +1096,46 @@
       ]
     },
     {
+      "id": "qwen3_tts_0_6b_custom_voice",
+      "coverage": "Qwen3 TTS 0.6B CustomVoice variant: smaller talker with the same packaged speakers, instruction path, and talker reuse across requests",
+      "family": "qwen3_tts",
+      "model": "models/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+      "task": "tts",
+      "mode": "offline",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "custom",
+          "text": "The custom voice request should remain stable for a medium length sentence.",
+          "language": "English",
+          "speaker": "Vivian",
+          "seed": 1234,
+          "max_tokens": 192,
+          "do_sample": false
+        },
+        {
+          "id": "custom_instruct_reuse",
+          "text": "This shorter custom voice request should keep Ryan consistent.",
+          "language": "English",
+          "speaker": "Ryan",
+          "instruct": "Very happy.",
+          "seed": 1234,
+          "max_tokens": 96,
+          "do_sample": false
+        },
+        {
+          "id": "custom_dialect_speaker",
+          "text": "这个自定义声音应该保持清晰, 语气自然, 并且在短句中稳定。",
+          "language": "Chinese",
+          "speaker": "Dylan",
+          "seed": 1234,
+          "max_tokens": 160
+        }
+      ]
+    },
+    {
       "id": "chatterbox_en_long_cfg",
       "coverage": "Chatterbox English voice clone, T3, S3 tokenizer, CFM/HiFT, CFG two-batch path, long text",
       "family": "chatterbox",

@@ -39,10 +39,17 @@ audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-Ba
 
 Qwen3 CustomVoice uses speaker ids packaged with the model. Use `--request-option voice_id=Vivian` to select one; legacy `--speaker Vivian` remains accepted. Examples use `Vivian` and `Ryan`.
 
+CustomVoice ships in two sizes, `Qwen3-TTS-12Hz-1.7B-CustomVoice` and
+`Qwen3-TTS-12Hz-0.6B-CustomVoice`. Both package the same nine speakers
+(`aiden`, `dylan`, `eric`, `ono_anna`, `ryan`, `serena`, `sohee`, `uncle_fu`,
+`vivian`) and accept the same options; the 0.6B checkpoint only shrinks the
+talker. The variant is read from the checkpoint `config.json`, so the commands
+below work unchanged after swapping the model directory.
+
 | Field | Value |
 |---|---|
 | Family | `qwen3_tts` |
-| Model directory | `models/Qwen3-TTS-12Hz-1.7B-CustomVoice` |
+| Model directory | `models/Qwen3-TTS-12Hz-1.7B-CustomVoice` or `models/Qwen3-TTS-12Hz-0.6B-CustomVoice` |
 | Task | `tts` |
 | Modes | `offline`, `streaming` |
 | Voice input | Built-in speaker id through `--speaker` |
@@ -51,6 +58,15 @@ Qwen3 CustomVoice uses speaker ids packaged with the model. Use `--request-optio
 
 ```bash
 audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-1.7B-CustomVoice --backend cuda --text "Hello from a custom voice." --speaker Vivian --instruct "Very happy." --out out.wav
+```
+
+The 0.6B checkpoint installs as a standalone GGUF (`qwen3_tts_0_6b_customvoice_q8_0`
+or `qwen3_tts_0_6b_customvoice_bf16`) or as the original safetensors
+(`qwen3_tts_0_6b_customvoice_safetensors`) and runs through the same command:
+
+```bash
+python3 tools/model_manager_v2.py install qwen3_tts_0_6b_customvoice_q8_0 --models-root models
+audiocpp_cli --task tts --family qwen3_tts --model models/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf --backend cuda --text "Hello from a custom voice." --speaker Ryan --out out.wav
 ```
 
 ### Common Options (use directly)
