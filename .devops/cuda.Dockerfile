@@ -50,14 +50,12 @@ RUN if [ "${CUDA_DOCKER_ARCH}" != "default" ]; then \
         -DAUDIOCPP_VERSION="${AUDIOCPP_VERSION}" \
         -DENGINE_BUILD_EXAMPLES=OFF \
         -DENGINE_BUILD_TESTS=OFF \
-        -DENGINE_BUILD_WARMBENCH=OFF \
         ${ADDITIONAL_CMAKE_ARGS} \
         -DCMAKE_EXE_LINKER_FLAGS=-Wl,--allow-shlib-undefined && \
     cmake --build build --parallel $(nproc) \
         --target audiocpp_cli \
         --target audiocpp_server \
-        --target audiocpp_model_manager \
-        --target model_perf
+        --target audiocpp_model_manager
 
 # Collect shared libraries
 RUN mkdir -p /app/lib && \
@@ -65,8 +63,7 @@ RUN mkdir -p /app/lib && \
 
 # Collect binaries + multiplexer into /app/full
 RUN mkdir -p /app/full && \
-    cp build/bin/audiocpp_cli build/bin/audiocpp_server build/bin/audiocpp_model_manager \
-       build/bin/model_perf /app/full/ && \
+    cp build/bin/audiocpp_cli build/bin/audiocpp_server build/bin/audiocpp_model_manager /app/full/ && \
     cp .devops/entrypoint.sh /app/full/entrypoint.sh && \
     chmod +x /app/full/entrypoint.sh
 

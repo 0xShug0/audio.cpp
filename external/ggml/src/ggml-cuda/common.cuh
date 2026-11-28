@@ -4,6 +4,10 @@
 #include "ggml-impl.h"
 #include "ggml-cuda.h"
 
+#ifdef GGML_CUDA_CUDNN_CONV3D
+#include <cudnn.h>
+#endif
+
 #include <cstdint>
 #include <memory>
 
@@ -1386,12 +1390,22 @@ struct ggml_backend_cuda_context {
     int device;
     std::string name;
     cudaEvent_t copy_event = nullptr;
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    std::unordered_map<const ggml_cgraph *, uint32_t> graph_fusions;
+    uint32_t active_graph_fusions = 0;
+#endif
+
 #ifdef GGML_USE_HIP
     const ggml_hip_impl * impl = nullptr;
 #endif
 
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };
     cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
+
+#ifdef GGML_CUDA_CUDNN_CONV3D
+    // One handle per backend/device, shared by sequential convolution launches.
+    cudnnHandle_t conv3d_cudnn_handle = nullptr;
+#endif
 
     int curr_stream_no = 0;
 

@@ -13,12 +13,6 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=soprano_tts \
   -DENGINE_ENABLE_VULKAN=ON
 cmake --build build --target audiocpp_cli --parallel
-
-# Build warmbench (the target is gated behind ENGINE_BUILD_WARMBENCH)
-cmake -B build -DCMAKE_BUILD_TYPE=Release \
-  -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=soprano_tts \
-  -DENGINE_BUILD_WARMBENCH=ON
-cmake --build build --target soprano_warm_bench --parallel
 ```
 
 ## Convert the checkpoint
@@ -30,24 +24,9 @@ git clone https://huggingface.co/ekwek/Soprano-1.1-80M models/Soprano-1.1-80M
 
 # Convert the decoder (folds weight-norm from decoder.pth)
 pip install torch numpy safetensors
-python3 tools/community_models/soprano_tts/convert_soprano.py \
+python3 tools/gguf/soprano_tts_convert.py \
   --input-dir models/Soprano-1.1-80M \
   --output-dir models/soprano_pkg
-```
-
-## Run warmbench
-
-```bash
-build/bin/soprano_warm_bench --model models/soprano_pkg --output-dir build/logs/warmbench/soprano_tts
-```
-
-## Python reference warmbench
-
-```bash
-pip install soprano torch numpy
-python3 tests/soprano_tts/soprano_python_warm_bench.py \
-  --model models/Soprano-1.1-80M \
-  --out-dir build/logs/warmbench/soprano_tts_py
 ```
 
 ## CLI examples
@@ -74,6 +53,13 @@ build/bin/audiocpp_cli --task tts --family soprano_tts \
 ```
 
 ## Performance results
+
+These are historical measurements, unchanged by harness removal. The original
+[commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/community_models/soprano_validation.md) and independent
+[C++ harness](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/soprano_tts/soprano_warm_bench.cpp) /
+[Python reference runner](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/soprano_tts/soprano_python_warm_bench.py)
+are preserved at the pre-cleanup backup tag. The CLI examples above are normal
+inference commands; no replacement performance results are claimed.
 
 ### CPU (compared against Python `soprano` package, transformers backend, temp=0.3, top_p=0.95)
 

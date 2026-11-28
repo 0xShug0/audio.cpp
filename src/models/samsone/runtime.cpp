@@ -204,11 +204,7 @@ public:
             audio::SoxrResampleOptions options;
             options.output_length_policy = audio::SoxrOutputLengthPolicy::ExactExpected;
             options.require_full_input = true;
-            const auto converted = audio::try_resample_mono_soxr(mono, audio.sample_rate, kSampleRate, options);
-            if (!converted.has_value()) {
-                throw std::runtime_error("SAMSONE requires SOXR for non-16-kHz audio");
-            }
-            mono = *converted;
+            mono = audio::resample_mono_soxr_or_sinc(mono, audio.sample_rate, kSampleRate, options);
         }
         mono.resize(std::min<size_t>(mono.size(), kMaxSamples));
         mono.resize(kMaxSamples, 0.0F);

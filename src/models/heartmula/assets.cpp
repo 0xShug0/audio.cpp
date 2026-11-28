@@ -96,38 +96,38 @@ HeartMuLaGenerationConfig parse_generation_config(const assets::ResourceBundle &
     return config;
 }
 
-HeartCodecConfig parse_codec_config(const assets::ResourceBundle & resources) {
+codecs::HeartCodecConfig parse_codec_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("codec_config");
-    HeartCodecConfig config;
-    config.model_type = json::optional_string(root, "model_type", "");
-    if (config.model_type != "heartcodec") {
+    codecs::HeartCodecConfig config;
+    const auto model_type = json::optional_string(root, "model_type", "");
+    if (model_type != "heartcodec") {
         throw std::runtime_error("HeartCodec config model_type must be heartcodec");
     }
-    config.torch_dtype = json::optional_string(root, "torch_dtype", config.torch_dtype);
-    if (config.torch_dtype != "float32") {
+    const auto torch_dtype = json::optional_string(root, "torch_dtype", "");
+    if (torch_dtype != "float32") {
         throw std::runtime_error("HeartCodec config torch_dtype must be float32");
     }
     config.dim = json::require_i64(root, "dim");
     config.codebook_size = json::require_i64(root, "codebook_size");
-    config.decay = json::optional_f32(root, "decay", config.decay);
-    config.commitment_weight = json::optional_f32(root, "commitment_weight", config.commitment_weight);
-    config.threshold_ema_dead_code = json::require_i64(root, "threshold_ema_dead_code");
-    config.use_cosine_sim = json::optional_bool(root, "use_cosine_sim", config.use_cosine_sim);
+    const auto decay = json::optional_f32(root, "decay", 0.0F);
+    const auto commitment_weight = json::optional_f32(root, "commitment_weight", 0.0F);
+    const auto threshold_ema_dead_code = json::require_i64(root, "threshold_ema_dead_code");
+    (void) json::optional_bool(root, "use_cosine_sim", false);
     config.codebook_dim = json::require_i64(root, "codebook_dim");
     config.num_quantizers = json::require_i64(root, "num_quantizers");
     config.attention_head_dim = json::require_i64(root, "attention_head_dim");
     config.in_channels = json::require_i64(root, "in_channels");
-    config.norm_type = json::require_string(root, "norm_type");
+    const auto norm_type = json::require_string(root, "norm_type");
     config.num_attention_heads = json::require_i64(root, "num_attention_heads");
     config.num_layers = json::require_i64(root, "num_layers");
     config.num_layers_2 = json::require_i64(root, "num_layers_2");
     config.out_channels = json::require_i64(root, "out_channels");
     config.num_bands = json::require_i64(root, "num_bands");
     config.sample_rate = static_cast<int>(json::require_i64(root, "sample_rate"));
-    config.causal = json::optional_bool(root, "causal", config.causal);
+    const auto causal = json::optional_bool(root, "causal", true);
     config.num_samples = json::require_i64(root, "num_samples");
-    config.downsample_factors = json::require_i64_array(root, "downsample_factors");
-    config.downsample_kernel_sizes = json::require_i64_array(root, "downsample_kernel_sizes");
+    const auto downsample_factors = json::require_i64_array(root, "downsample_factors");
+    const auto downsample_kernel_sizes = json::require_i64_array(root, "downsample_kernel_sizes");
     config.upsample_factors = json::require_i64_array(root, "upsample_factors");
     config.upsample_kernel_sizes = json::require_i64_array(root, "upsample_kernel_sizes");
     config.latent_hidden_dim = json::require_i64(root, "latent_hidden_dim");
@@ -138,9 +138,9 @@ HeartCodecConfig parse_codec_config(const assets::ResourceBundle & resources) {
 
     engine::io::require_positive(config.dim, "codec dim");
     engine::io::require_positive(config.codebook_size, "codec codebook_size");
-    engine::io::require_positive(config.decay, "codec decay");
-    engine::io::require_positive(config.commitment_weight, "codec commitment_weight");
-    engine::io::require_positive(config.threshold_ema_dead_code, "codec threshold_ema_dead_code");
+    engine::io::require_positive(decay, "codec decay");
+    engine::io::require_positive(commitment_weight, "codec commitment_weight");
+    engine::io::require_positive(threshold_ema_dead_code, "codec threshold_ema_dead_code");
     engine::io::require_positive(config.codebook_dim, "codec codebook_dim");
     engine::io::require_positive(config.num_quantizers, "codec num_quantizers");
     engine::io::require_positive(config.attention_head_dim, "codec attention_head_dim");
@@ -157,24 +157,24 @@ HeartCodecConfig parse_codec_config(const assets::ResourceBundle & resources) {
     engine::io::require_positive(config.delay_kernel_size, "codec delay_kernel_size");
     engine::io::require_positive(config.init_channel, "codec init_channel");
     engine::io::require_positive(config.res_kernel_size, "codec res_kernel_size");
-    if (config.downsample_factors.empty() ||
-        config.downsample_kernel_sizes.empty() ||
+    if (downsample_factors.empty() ||
+        downsample_kernel_sizes.empty() ||
         config.upsample_factors.empty() ||
         config.upsample_kernel_sizes.empty()) {
         throw std::runtime_error("HeartCodec config contains empty sampling factors or kernels");
     }
-    engine::io::require_all_positive(config.downsample_factors, "downsample_factors");
-    engine::io::require_all_positive(config.downsample_kernel_sizes, "downsample_kernel_sizes");
+    engine::io::require_all_positive(downsample_factors, "downsample_factors");
+    engine::io::require_all_positive(downsample_kernel_sizes, "downsample_kernel_sizes");
     engine::io::require_all_positive(config.upsample_factors, "upsample_factors");
     engine::io::require_all_positive(config.upsample_kernel_sizes, "upsample_kernel_sizes");
-    if (config.downsample_factors.size() != config.downsample_kernel_sizes.size() ||
+    if (downsample_factors.size() != downsample_kernel_sizes.size() ||
         config.upsample_factors.size() != config.upsample_kernel_sizes.size()) {
         throw std::runtime_error("HeartCodec config sampling factor/kernel counts must match");
     }
-    if (config.norm_type != "ada_norm_single") {
+    if (norm_type != "ada_norm_single") {
         throw std::runtime_error("HeartCodec config norm_type must be ada_norm_single");
     }
-    if (!config.causal) {
+    if (!causal) {
         throw std::runtime_error("HeartCodec config must be causal");
     }
     return config;

@@ -4,7 +4,7 @@
 #include "engine/framework/runtime/cache_slots.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/pocket_tts/acoustic_model.h"
-#include "engine/models/pocket_tts/audio_decoder.h"
+#include "engine/framework/codecs/mimi_codec_runtime.h"
 #include "engine/models/pocket_tts/flow_lm.h"
 #include "engine/models/pocket_tts/text_conditioner.h"
 #include "engine/models/pocket_tts/voice_conditioner.h"
@@ -102,7 +102,7 @@ private:
     TextConditioner text_conditioner_;
     VoiceConditioner voice_conditioner_;
     AcousticModel acoustic_model_;
-    AudioDecoder audio_decoder_;
+    codecs::MimiLatentDecoderRuntime audio_decoder_;
     runtime::CacheSlots<std::string, FlowLMState> cached_voice_states_;
     GenerationRequest prepared_session_request_;
     runtime::GraphCapacityController prompt_capacity_controller_;

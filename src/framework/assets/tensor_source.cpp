@@ -20,6 +20,7 @@
 #include <limits>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -39,6 +40,26 @@ constexpr std::pair<std::string_view, TensorContainer> kTensorContainers[] = {
     {".ckpt", TensorContainer::Torch},
     {".gguf", TensorContainer::Gguf},
 };
+
+// Identifies a tensor container from its leading bytes. Returns nullopt when the file is unreadable or
+// matches no known container. Torch checkpoints are not sniffed: they are ZIP or pickle streams that
+// cannot be told apart reliably from other files.
+std::optional<TensorContainer> sniff_tensor_container(const std::filesystem::path & path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::nullopt;
+    char head[9] = {};
+    in.read(head, sizeof(head));
+    const auto count = in.gcount();
+    if (count >= 4 && std::memcmp(head, "GGUF", 4) == 0) return TensorContainer::Gguf;
+    // Safetensors: little-endian u64 header size, followed by a JSON object.
+    if (count == 9 && head[8] == '{') {
+        uint64_t header_size = 0;
+        for (int i = 7; i >= 0; --i) header_size = (header_size << 8) | static_cast<unsigned char>(head[i]);
+        constexpr uint64_t kMaxHeaderBytes = 100ull * 1000 * 1000;
+        if (header_size > 0 && header_size <= kMaxHeaderBytes) return TensorContainer::Safetensors;
+    }
+    return std::nullopt;
+}
 
 constexpr int64_t kParallelF32ConvertElements = 1ll << 20;
 constexpr int64_t kF32ConvertChunkElements = 1ll << 16;
@@ -1707,10 +1728,20 @@ std::shared_ptr<const TensorSource> open_tensor_source(
         file_name.compare(file_name.size() - kIndexSuffix.size(), kIndexSuffix.size(), kIndexSuffix) == 0) {
         return open_indexed_tensor_source(path, path.parent_path(), options);
     }
+    // The extension is authoritative when it is recognised. Otherwise (for example a content-addressed
+    // blob such as a Hugging Face cache entry, or any symlink target after canonicalisation) fall back
+    // to the file's leading bytes.
     const std::string extension = lower_ascii(path.extension().string());
+    std::optional<TensorContainer> container;
     for (const auto & entry : kTensorContainers) {
-        if (extension != entry.first) continue;
-        switch (entry.second) {
+        if (extension == entry.first) {
+            container = entry.second;
+            break;
+        }
+    }
+    if (!container) container = sniff_tensor_container(path);
+    if (container) {
+        switch (*container) {
             case TensorContainer::Safetensors: return std::make_shared<SafeTensorSource>(path, options);
             case TensorContainer::Torch: return open_torch_bin_tensor_source(path);
             case TensorContainer::Gguf: return std::make_shared<GgufTensorSource>(path, options);

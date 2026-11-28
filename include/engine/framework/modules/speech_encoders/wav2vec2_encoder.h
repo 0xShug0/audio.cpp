@@ -48,6 +48,10 @@ struct Wav2Vec2EncoderConfig {
     Wav2Vec2FeatureExtractorNorm feature_extractor_norm = Wav2Vec2FeatureExtractorNorm::LayerNormEveryLayer;
     Wav2Vec2EncoderLayerNormOrder encoder_layer_norm_order = Wav2Vec2EncoderLayerNormOrder::PreNorm;
     bool record_final_layer_after_final_norm = false;
+    // Optional feature-extractor resampling before projection and attention.
+    int64_t feature_output_frames = 0;
+    // Optional immutable K/V prefix stored per encoder layer in the checkpoint.
+    int64_t attention_prefix_tokens = 0;
 };
 
 struct Wav2Vec2EncoderLayerWeightNames {
@@ -57,6 +61,8 @@ struct Wav2Vec2EncoderLayerWeightNames {
     std::string feed_forward_intermediate = "feed_forward.intermediate_dense";
     std::string feed_forward_output = "feed_forward.output_dense";
     std::string final_layer_norm = "final_layer_norm";
+    std::string prefix_key = "prefix_key";
+    std::string prefix_value = "prefix_value";
 };
 
 struct Wav2Vec2EncoderWeightBinding {

@@ -2464,7 +2464,8 @@ kernel void kernel_ssm_scan_f32(
         float sumf = 0.0f;
         if (i2 + sgitg < n_t) {
             for (int g = 0; g < sgptg; g++) {
-                sumf += shared_sums[(i2 + sgitg)*NW + g];
+                // Shared slots are local to this token block, not the sequence.
+                sumf += shared_sums[sgitg*NW + g];
             }
         }
 
@@ -2476,6 +2477,225 @@ kernel void kernel_ssm_scan_f32(
     }
 
     s_buff[i] = s;
+}
+
+// Neighboring threads own neighboring channels; the complete recurrence stays in registers.
+kernel void kernel_ssm_scan_f32_register16(
+        constant ggml_metal_kargs_ssm_scan & args,
+        device const char * src0,
+        device const char * src1,
+        device const char * src2,
+        device const char * src3,
+        device const char * src4,
+        device const char * src5,
+        device const int32_t * ids,
+        device float * dst,
+        uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= uint(args.d_inner*args.n_head)) return;
+    const int dim = gid.x % args.d_inner, head = gid.x / args.d_inner, seq = gid.y;
+    const int g = head / (args.n_head / args.n_group);
+    device const packed_float4 * initial = (device const packed_float4 *)(src0 + head*args.nb02 + ids[seq]*args.nb03 + dim*16*sizeof(float));
+    device const float * ap = (device const float *)(src3 + head*args.nb31);
+    float4 state[4], a[4];
+    for (int j = 0; j < 4; ++j) {
+        state[j] = initial[j];
+        a[j] = args.ne30 == 1 ? float4(ap[0]) : float4(((device const packed_float4 *)ap)[j]);
+    }
+    device const char * x = src1 + dim*args.nb10 + head*args.nb11 + seq*args.nb13;
+    device const char * dt = src2 + head*args.nb20 + seq*args.nb22;
+    device const char * b = src4 + g*args.nb41 + seq*args.nb43;
+    device const char * c = src5 + g*args.nb51 + seq*args.nb53;
+    for (int t = 0; t < args.n_seq_tokens; ++t) {
+        const float value = *(device const float *)dt;
+        const float delta = value <= 20.0f ? log(1.0f + exp(value)) : value;
+        const float x_dt = *(device const float *)x * delta;
+        float4 sum = 0;
+        for (int j = 0; j < 4; ++j) {
+            state[j] = state[j]*exp(delta*a[j]) + float4(((device const packed_float4 *)b)[j])*x_dt;
+            sum += state[j]*float4(((device const packed_float4 *)c)[j]);
+        }
+        dst[dim + head*args.d_inner + (seq*args.n_seq_tokens + t)*args.n_head*args.d_inner] = sum.x+sum.y+sum.z+sum.w;
+        x += args.nb12;
+        dt += args.nb21;
+        b += args.nb42;
+        c += args.nb52;
+    }
+    device packed_float4 * final_state = (device packed_float4 *)((device char *)dst + args.s_off + head*args.nb02 + seq*args.nb03 + dim*16*sizeof(float));
+    for (int j = 0; j < 4; ++j) final_state[j] = packed_float4(state[j]);
+}
+
+constant int c2_iw [[function_constant(FC_CONV_2D_IMPLICIT + 0)]];
+constant int c2_ih [[function_constant(FC_CONV_2D_IMPLICIT + 1)]];
+constant int c2_kw [[function_constant(FC_CONV_2D_IMPLICIT + 2)]];
+constant int c2_kh [[function_constant(FC_CONV_2D_IMPLICIT + 3)]];
+constant int c2_ow [[function_constant(FC_CONV_2D_IMPLICIT + 4)]];
+constant int c2_oh [[function_constant(FC_CONV_2D_IMPLICIT + 5)]];
+constant int c2_sw [[function_constant(FC_CONV_2D_IMPLICIT + 6)]];
+constant int c2_sh [[function_constant(FC_CONV_2D_IMPLICIT + 7)]];
+constant int c2_pw [[function_constant(FC_CONV_2D_IMPLICIT + 8)]];
+constant int c2_ph [[function_constant(FC_CONV_2D_IMPLICIT + 9)]];
+constant int c2_dw [[function_constant(FC_CONV_2D_IMPLICIT + 10)]];
+constant int c2_dh [[function_constant(FC_CONV_2D_IMPLICIT + 11)]];
+constant int c2_k [[function_constant(FC_CONV_2D_IMPLICIT + 12)]];
+constant int c2_oc [[function_constant(FC_CONV_2D_IMPLICIT + 13)]];
+
+// The full-F32 64x32x32 MMA tile, with patches loaded from compact NHWC input.
+// Channel-fast K order makes each vector load contiguous without an im2col buffer.
+kernel void kernel_conv_2d_implicit_f32(
+        device const float * input,
+        device const float * weights,
+        device float * output,
+        threadgroup float * shared [[threadgroup(0)]],
+        uint3 group [[threadgroup_position_in_grid]],
+        ushort tid [[thread_index_in_threadgroup]],
+        ushort sg [[simdgroup_index_in_threadgroup]]) {
+    const int channels = c2_k/(c2_kh*c2_kw);
+    const int positions = c2_ow*c2_oh;
+    input += ulong(group.z)*c2_iw*c2_ih*channels;
+    output += ulong(group.z)*positions*c2_oc;
+    threadgroup float * sa = shared, * sb = shared + 2048;
+    const int r0 = group.y*64, r1 = group.x*32;
+    const int n0 = min(64, positions - r0), n1 = min(32, c2_oc - r1);
+    const int row = r0 + min(int(tid/2), n0 - 1);
+    const int oy = row/c2_ow, ox = row%c2_ow;
+    const int weight_row = r1 + min(int(tid/4), n1 - 1);
+    simdgroup_float8x8 ma[4], mb[2], mc[8];
+    for (short i = 0; i < 8; ++i) mc[i] = make_filled_simdgroup_matrix<float, 8>(0.0f);
+    for (int base = 0; base < c2_k; base += 32) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const int k0 = base + 16*(tid%2), channel = k0%channels, tap = k0/channels;
+        const int ix = ox*c2_sw + (tap%c2_kw)*c2_dw - c2_pw;
+        const int iy = oy*c2_sh + (tap/c2_kw)*c2_dh - c2_ph;
+        float4 values[4];
+        if (ix >= 0 && ix < c2_iw && iy >= 0 && iy < c2_ih) {
+            device const float4 * data = (device const float4 *)(input + (iy*c2_iw + ix)*channels + channel);
+            for (short j = 0; j < 4; ++j) values[j] = data[j];
+        } else {
+            for (short j = 0; j < 4; ++j) values[j] = 0;
+        }
+        for (short i = 0; i < 16; ++i) {
+            const short sx = 2*(tid%2) + i/8, sy = (tid/2)/8;
+            sa[64*(8*sx + sy) + 8*(i%8) + (tid/2)%8] = values[i/4][i%4];
+        }
+        for (short i = 0; i < 8; ++i) {
+            const short sx = tid%4, sy = (tid/4)/8;
+            sb[64*(4*sx + sy) + 8*((tid/4)%8) + i] = weights[weight_row*c2_k + base + 8*(tid%4) + i];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        threadgroup const float * a = sa + 4*64*(sg%2), * b = sb + 2*64*(sg/2);
+        for (short k = 0; k < 4; ++k) {
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 4; ++i) simdgroup_load(ma[i], a + 64*i, 8, 0, false);
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 2; ++i) simdgroup_load(mb[i], b + 64*i, 8, 0, false);
+            simdgroup_barrier(mem_flags::mem_none);
+            for (short i = 0; i < 8; ++i) simdgroup_multiply_accumulate(mc[i], mb[i/4], ma[i%4], mc[i]);
+            a += 8*64; b += 4*64;
+        }
+    }
+    if (n0 == 64 && n1 == 32) {
+        device float * dst = output + r0 + 32*(sg&1) + (r1 + 16*(sg>>1))*positions;
+        for (short i = 0; i < 8; ++i) simdgroup_store(mc[i], dst + 8*(i%4) + 8*positions*(i/4), positions, 0, false);
+    } else {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        threadgroup float * temp = shared + 32*(sg&1) + 16*(sg>>1)*64;
+        for (short i = 0; i < 8; ++i) simdgroup_store(mc[i], temp + 8*(i%4) + 8*64*(i/4), 64, 0, false);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (int i = tid; i < n0*n1; i += 128) output[r0 + i%n0 + (r1 + i/n0)*positions] = shared[(i/n0)*64 + i%n0];
+    }
+}
+
+// Keep the four causal taps in registers instead of materializing left padding.
+kernel void kernel_ssm_conv_causal_silu_f32(
+        constant ggml_metal_kargs_ssm_conv_causal_silu & args,
+        device const char * x,
+        device const float * w,
+        device const float * bias,
+        device float * dst,
+        uint2 gid [[thread_position_in_grid]]) {
+    const uint channel = gid.x, seq = gid.y;
+    if (channel >= uint(args.channels)) return;
+    const float4 weights = float4(w[4*channel], w[4*channel+1], w[4*channel+2], w[4*channel+3]);
+    float p0 = 0, p1 = 0, p2 = 0;
+    x += channel*args.nb1 + seq*args.nb2;
+    dst += seq*args.channels*args.tokens + channel;
+    for (int t = 0; t < args.tokens; ++t) {
+        const float current = *(device const float *)x;
+        float value = fma(p0, weights.x, 0.0f);
+        value = fma(p1, weights.y, value);
+        value = fma(p2, weights.z, value);
+        value = fma(current, weights.w, value) + bias[channel];
+        *dst = value / (1.0f + exp(-value));
+        p0 = p1; p1 = p2; p2 = current;
+        x += args.nb0;
+        dst += args.channels;
+    }
+}
+
+// Consume compact DT/B/C directly; export only gated Y and the complete final state.
+constant int mamba1_rank [[function_constant(FC_SSM_SCAN_MAMBA1)]];
+
+kernel void kernel_ssm_scan_mamba1_f32(
+        constant ggml_metal_kargs_ssm_scan_mamba1 & args,
+        device const char * initial,
+        device const char * x,
+        device const char * projected,
+        device const float * A,
+        device const int32_t * ids,
+        device const float * dt_w,
+        device const float * dt_bias,
+        device const float * D,
+        device const char * gate,
+        device float * dst,
+        uint2 gid [[thread_position_in_grid]]) {
+    const uint channel = gid.x, seq = gid.y;
+    if (channel >= uint(args.channels)) return;
+    device const packed_float4 * start = (device const packed_float4 *)
+        (initial + channel*args.state_nb2 + ids[seq]*args.state_nb3);
+    float4 state[4], decay[4];
+    for (int j = 0; j < 4; ++j) {
+        state[j] = start[j];
+        decay[j] = args.a_size == 1 ? float4(A[channel]) :
+            float4(((device const packed_float4 *)(A + 16*channel))[j]);
+    }
+    dt_w += channel*args.rank;
+    x += channel*sizeof(float) + seq*args.x_nb3;
+    projected += seq*args.p_nb2;
+    gate += channel*sizeof(float) + seq*args.gate_nb2;
+    for (int t = 0; t < args.tokens; ++t) {
+        device const float * p = (device const float *)projected;
+        float delta = 0;
+        if (mamba1_rank == 4) {
+            delta = fma(dt_w[0], p[0], delta);
+            delta = fma(dt_w[1], p[1], delta);
+            delta = fma(dt_w[2], p[2], delta);
+            delta = fma(dt_w[3], p[3], delta);
+        } else {
+            for (int k = 0; k < mamba1_rank; ++k) delta = fma(dt_w[k], p[k], delta);
+        }
+        delta += dt_bias[channel];
+        delta = delta <= 20.0f ? log(1.0f + exp(delta)) : delta;
+        const float sample = *(device const float *)x;
+        const float injection = sample*delta;
+        device const packed_float4 * b = (device const packed_float4 *)(p + mamba1_rank);
+        device const packed_float4 * c = (device const packed_float4 *)(p + mamba1_rank + 16);
+        float4 sum = 0;
+        for (int j = 0; j < 4; ++j) {
+            state[j] = state[j]*exp(delta*decay[j]) + float4(b[j])*injection;
+            sum += state[j]*float4(c[j]);
+        }
+        const float raw = sum.x + sum.y + sum.z + sum.w;
+        // Match the separate MUL and ADD rounding of the unfused graph.
+        const float added = fma(1.0f, raw, fma(sample, D[channel], 0.0f));
+        const float z = *(device const float *)gate;
+        dst[channel + (seq*args.tokens + t)*args.channels] = (z/(1.0f + exp(-z)))*added;
+        x += args.x_nb2;
+        projected += args.p_nb1;
+        gate += args.gate_nb1;
+    }
+    device packed_float4 * final_state = (device packed_float4 *)
+        (dst + args.channels*args.tokens*args.sequences + (seq*args.channels + channel)*16);
+    for (int j = 0; j < 4; ++j) final_state[j] = packed_float4(state[j]);
 }
 
 kernel void kernel_rwkv_wkv6_f32(
@@ -4759,6 +4979,51 @@ template [[host_name("kernel_rope_multi_f16")]] kernel kernel_rope_multi_t kerne
 template [[host_name("kernel_rope_vision_f32")]] kernel kernel_rope_vision_t kernel_rope_vision<float>;
 template [[host_name("kernel_rope_vision_f16")]] kernel kernel_rope_vision_t kernel_rope_vision<half>;
 
+typedef void (im2col_3d_t)(
+        constant ggml_metal_kargs_im2col_3d & args,
+        device const char * src,
+        device char * dst,
+        uint tid [[thread_position_in_grid]],
+        uint groups [[threadgroups_per_grid]],
+        uint threads [[threads_per_threadgroup]]);
+
+template <typename T, typename Index>
+kernel void kernel_im2col_3d(
+        constant ggml_metal_kargs_im2col_3d & args,
+        device const char * src,
+        device char * dst,
+        uint tid [[thread_position_in_grid]],
+        uint groups [[threadgroups_per_grid]],
+        uint threads [[threads_per_threadgroup]]) {
+    // Adjacent threads write adjacent patch elements. A bounded grid and 64-bit
+    // offsets also cover patch buffers larger than 2^32 elements.
+    for (ulong i = tid; i < args.n; i += ulong(groups) * threads) {
+        Index q = Index(i);
+        const int kw = q % args.KW; q /= args.KW;
+        const int kh = q % args.KH; q /= args.KH;
+        const int kd = q % args.KD; q /= args.KD;
+        const int ic = q % args.IC; q /= args.IC;
+        const int ow = q % args.OW; q /= args.OW;
+        const int oh = q % args.OH; q /= args.OH;
+        const int od = q % args.OD; q /= args.OD;
+        const long iw = long(ow) * args.s0 + long(kw) * args.d0 - args.p0;
+        const long ih = long(oh) * args.s1 + long(kh) * args.d1 - args.p1;
+        const long id = long(od) * args.s2 + long(kd) * args.d2 - args.p2;
+        float value = 0.0f;
+        if (iw >= 0 && iw < args.IW && ih >= 0 && ih < args.IH && id >= 0 && id < args.ID) {
+            const ulong offset = (q * args.IC + ic) * args.nb13 + ulong(id) * args.nb12 +
+                                  ulong(ih) * args.nb11 + ulong(iw) * sizeof(float);
+            value = *(device const float *)(src + offset);
+        }
+        ((device T *) dst)[i] = T(value);
+    }
+}
+
+template [[host_name("kernel_im2col_3d_f32_i32")]] kernel im2col_3d_t kernel_im2col_3d<float, uint>;
+template [[host_name("kernel_im2col_3d_f16_i32")]] kernel im2col_3d_t kernel_im2col_3d<half, uint>;
+template [[host_name("kernel_im2col_3d_f32_i64")]] kernel im2col_3d_t kernel_im2col_3d<float, ulong>;
+template [[host_name("kernel_im2col_3d_f16_i64")]] kernel im2col_3d_t kernel_im2col_3d<half, ulong>;
+
 typedef void (im2col_t)(
         constant ggml_metal_kargs_im2col & args,
         device const float * x,
@@ -4822,6 +5087,55 @@ kernel void kernel_im2col(
 
 template [[host_name("kernel_im2col_f32")]] kernel im2col_t kernel_im2col<float>;
 template [[host_name("kernel_im2col_f16")]] kernel im2col_t kernel_im2col<half>;
+
+typedef void (im2col_tiled_t)(
+        constant ggml_metal_kargs_im2col & args,
+        device const float * x,
+        device char * dst,
+        constant int2 & size,
+        uint3 tgpig [[threadgroup_position_in_grid]],
+        uint3 tpitg [[thread_position_in_threadgroup]],
+        uint3 ntg [[threads_per_threadgroup]]);
+
+template<typename T, typename Index>
+kernel void kernel_im2col_tiled(
+        constant ggml_metal_kargs_im2col & args,
+        device const float * x,
+        device char * dst,
+        constant int2 & size,
+        uint3 group [[threadgroup_position_in_grid]],
+        uint3 tid [[thread_position_in_threadgroup]],
+        uint3 threads [[threads_per_threadgroup]]) {
+    // Spatial lanes coalesce source reads; transpose the tile for patch-contiguous stores.
+    threadgroup T tile[32*33];
+    const int lane = tid.x % 32;
+    const int row = tid.x / 32;
+    const Index spatial = Index(group.x)*32 + lane;
+    const Index pixels = Index(size.x)*size.y;
+    const long ox = spatial % size.x, oy = spatial / size.x;
+    for (int column = row; column < 32; column += threads.x/32) {
+        const uint patch = group.y*32 + column;
+        const int channel = patch / args.KHW;
+        const int tap = patch % args.KHW;
+        const long ix = ox*args.s0 + (tap % args.KW)*args.d0 - args.p0;
+        const long iy = oy*args.s1 + (tap / args.KW)*args.d1 - args.p1;
+        tile[lane*33 + column] = spatial < pixels && patch < args.CHW && ix >= 0 && ix < args.IW && iy >= 0 && iy < args.IH
+            ? T(x[ulong(group.z)*args.ofs0 + ulong(channel)*args.ofs1 + ulong(iy)*args.IW + ix]) : T(0);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (int index = tid.x; index < 32*32; index += threads.x) {
+        const Index pixel = Index(group.x)*32 + index/32;
+        const uint patch = group.y*32 + index%32;
+        if (pixel < pixels && patch < args.CHW) {
+            ((device T *)dst)[(ulong(group.z)*pixels + pixel)*args.CHW + patch] = tile[(index/32)*33 + index%32];
+        }
+    }
+}
+
+template [[host_name("kernel_im2col_tiled_f32_i32")]] kernel im2col_tiled_t kernel_im2col_tiled<float, uint>;
+template [[host_name("kernel_im2col_tiled_f16_i32")]] kernel im2col_tiled_t kernel_im2col_tiled<half, uint>;
+template [[host_name("kernel_im2col_tiled_f32_i64")]] kernel im2col_tiled_t kernel_im2col_tiled<float, ulong>;
+template [[host_name("kernel_im2col_tiled_f16_i64")]] kernel im2col_tiled_t kernel_im2col_tiled<half, ulong>;
 
 typedef void (im2col_1d_t)(
         constant ggml_metal_kargs_im2col & args,

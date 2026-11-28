@@ -82,11 +82,16 @@ audiocpp_cli \
 | `top_k` | integer > 0 | `25` | AR speech-token top-k sampling limit. |
 | `num_inference_steps` | integer > 0 | `10` | Flow decoder Euler steps. |
 | `seed` | integer >= 0 | `1986` | Generation seed. |
+| `speed` | finite number > 0 | `1.0` | Speech speed multiplier: above 1 is faster, below 1 is slower. Resizes mel before HiFT, matching upstream offline inference. |
+
+For example, add `--request-option speed=1.2` for faster speech. Speed does not set an exact target duration or change AR sampling.
 
 ## Session Options (use with `--session-option`)
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
+| `cosyvoice3.graph_arena_mb` | integer > 0 | `64` | Host metadata budget per AR/flow graph; not a VRAM limit. |
+| `cosyvoice3.weight_context_mb` | integer > 0 | `4` | Host metadata budget per AR/flow weight context; tensor storage is separate. |
 | `cosyvoice3.reference_cache_slots` | integer >= 0 | `4` | Prepared reference-audio cache slots. |
 | `cosyvoice3.lora` | adapter directory or file | not set | PEFT LoRA, or a native checkpoint containing `lora_weights.pt`, `config.json`, `speech_embedding.pt`, and `llm_decoder.pt`. Only LLM weights are adapted. |
 | `cosyvoice3.lora_scale` | finite float | `1` | Multiplier for alpha/r. Full embedding/head replacements are not scaled. |

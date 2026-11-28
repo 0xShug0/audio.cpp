@@ -1,6 +1,6 @@
 #include "engine/models/qwen3_tts/assets.h"
 #include "engine/models/qwen3_tts/prompt_tts_custom_voice.h"
-#include "engine/models/qwen3_tts/tokenizer_speech_decoder.h"
+#include "engine/framework/codecs/qwen3_audio_tokenizer_runtime.h"
 #include "engine/framework/debug/profiler.h"
 
 #include <algorithm>
@@ -18,7 +18,7 @@ int main(int argc, char ** argv) {
         bool native = false;
         auto conv_storage = engine::assets::TensorStorageType::F32;
         engine::core::BackendConfig backend;
-        backend.threads = 4;
+        backend.threads = 8;
         engine::debug::LoggingConfig logging;
         for (int i = 1; i < argc; ++i) {
             const std::string arg(argv[i]);
@@ -80,9 +80,10 @@ int main(int argc, char ** argv) {
             codes = step->generate(prompt_builder.build_prefill(request), request.generation).generated_codes;
             if (codes.frames <= 23) throw std::runtime_error("test text generated too few speech frames");
         }
-        qwen::Qwen3SpeechTokenizerDecoderRuntime decoder(
-            assets, execution, arena, arena, storage, conv_storage,
-            qwen::Qwen3TTSPerfMode::Standard, {}, true);
+        engine::codecs::Qwen3SpeechTokenizerDecoderRuntime decoder(
+            assets->speech_tokenizer_weights,
+            engine::codecs::parse_qwen3_audio_tokenizer_decoder_config(assets->resources.parse_json("speech_tokenizer_config")),
+            execution, arena, arena, storage, conv_storage, false, true);
         const auto reference = decoder.decode(codes);
         const size_t samples_per_frame = reference.samples.size() / static_cast<size_t>(codes.frames);
         if (samples_per_frame * codes.frames != reference.samples.size()) {

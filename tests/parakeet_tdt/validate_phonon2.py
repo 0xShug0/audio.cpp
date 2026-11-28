@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("convert_phonon2", REPO / "tools/community_models/convert_phonon2.py")
+spec = importlib.util.spec_from_file_location("convert_phonon2", REPO / "tools/gguf/phonon2_asr_convert.py")
 converter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(converter)
 REFERENCE_FILES = {

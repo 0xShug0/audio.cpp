@@ -148,18 +148,18 @@
       {
         "name": "generator_weight_context_mb",
         "type": "int",
-        "description": "MuLa music-token generator weight descriptor context size in MiB; default 32.",
+        "description": "MuLa music-token generator weight descriptor context size in MiB; default 8.",
         "required": false,
         "min": 1,
-        "default": 32
+        "default": 8
       },
       {
         "name": "codec_weight_context_mb",
         "type": "int",
-        "description": "Codec weight descriptor context size in MiB; default 32.",
+        "description": "Codec weight descriptor context size in MiB; default 8.",
         "required": false,
         "min": 1,
-        "default": 32
+        "default": 8
       },
       {
         "name": "generator_constant_context_mb",
@@ -212,26 +212,26 @@
       {
         "name": "flow_estimator_graph_arena_mb",
         "type": "int",
-        "description": "Codec flow-estimator graph arena size in MiB; default 2048.",
+        "description": "Codec flow-estimator graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 2048
+        "default": 32
       },
       {
         "name": "conditioning_graph_arena_mb",
         "type": "int",
-        "description": "Codec conditioning graph arena size in MiB; default 512.",
+        "description": "Codec conditioning graph arena size in MiB; default 16.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 16
       },
       {
         "name": "scalar_decoder_graph_arena_mb",
         "type": "int",
-        "description": "Codec scalar-decoder graph arena size in MiB; default 1536.",
+        "description": "Codec scalar-decoder graph arena size in MiB; default 32.",
         "required": false,
         "min": 1,
-        "default": 1536
+        "default": 32
       },
       {
         "name": "mem_saver",

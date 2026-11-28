@@ -1,5 +1,6 @@
 #include "engine/models/pocket_tts/assets.h"
 #include "engine/models/pocket_tts/loader.h"
+#include "engine/models/pocket_tts/routing.h"
 #include "engine/models/pocket_tts/session.h"
 
 #include "engine/framework/io/json.h"
@@ -175,6 +176,7 @@ PocketTTSModelConfig model_config_from_json(const json::Value & config) {
     out.frame_rate = json::require_f32(mimi, "frame_rate");
     out.mimi_frame_rate = out.frame_rate;
     out.flow_dim = json::require_i64(flow, "d_model");
+    out.flow_condition_dim = out.flow_dim;
     out.flow_heads = json::require_i64(flow, "num_heads");
     out.flow_layers = json::require_i64(flow, "num_layers");
     out.flow_intermediate_size = json::require_i64(flow, "dim_feedforward");
@@ -249,7 +251,7 @@ std::shared_ptr<const PocketTTSAssets> load_gradium_phonon_assets(const std::fil
     const auto tensor_source = resources.open_tensor_source("weights");
 
     auto manifest = std::make_shared<PocketTTSAssets>();
-    manifest->family = kFamily;
+    manifest->impl = &implementation_for_family(kFamily);
     manifest->model_config = model_config_from_json(config);
     manifest->language = language_list(config);
     manifest->model_weights = tensor_source;
@@ -270,24 +272,45 @@ std::shared_ptr<const PocketTTSAssets> load_gradium_phonon_assets(const std::fil
     return manifest;
 }
 
-std::shared_ptr<runtime::IVoiceModelLoader> make_gradium_phonon_loader() {
-    runtime::SpecBackedVoiceModelConfig<PocketTTSAssets> config;
-    config.family = kFamily;
-    config.load_assets = load_gradium_phonon_assets;
-    config.create_session = [](const runtime::TaskSpec & task,
-                                const runtime::SessionOptions & options,
-                                std::shared_ptr<const PocketTTSAssets> assets,
-                                std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+const PocketTTSImplementation kGradiumPhononImplementation{
+    kFamily,
+    [](const runtime::ModelLoadRequest & request) {
+        return load_gradium_phonon_assets(request.model_path);
+    },
+    [](const runtime::TaskSpec & task,
+       const runtime::SessionOptions & options,
+       std::shared_ptr<const PocketTTSAssets> assets, const std::filesystem::path & voice_root,
+       std::shared_ptr<const engine::model_spec::ModelContract> contract) -> std::unique_ptr<runtime::IVoiceTaskSession> {
         if (task.task != runtime::VoiceTaskKind::Tts) {
             throw std::runtime_error(std::string(kModelName) + " supports only tts: its checkpoints have no encoder to clone a voice");
         }
-        auto voice_root = assets->voice_asset_root;
         return std::make_unique<PocketTTSSession>(
             task,
             as_pocket_tts_session_options(options, *contract),
             std::move(assets),
-            std::move(voice_root),
+            voice_root,
             contract);
+    },
+    PromptPunctuation::LetterOrDigit,
+};
+
+std::shared_ptr<runtime::IVoiceModelLoader> make_gradium_phonon_loader() {
+    const auto & impl = implementation_for_family(kFamily);
+    runtime::SpecBackedVoiceModelConfig<PocketTTSAssets> config;
+    config.family = kFamily;
+    // The spec-backed loader exposes a path-only asset callback; retain its contract.
+    config.load_assets = [&impl](const std::filesystem::path & path) {
+        runtime::ModelLoadRequest request;
+        request.model_path = path;
+        return impl.load_assets(request);
+    };
+    config.create_session = [](
+        const runtime::TaskSpec & task, const runtime::SessionOptions & options,
+        std::shared_ptr<const PocketTTSAssets> assets,
+        std::shared_ptr<const engine::model_spec::ModelContract> contract) {
+        const auto & impl = *assets->impl;
+        const auto voice_root = assets->voice_asset_root;
+        return impl.create_session(task, options, std::move(assets), voice_root, std::move(contract));
     };
     return runtime::make_spec_backed_voice_loader(std::move(config));
 }

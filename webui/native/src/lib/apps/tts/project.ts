@@ -1,3 +1,4 @@
+import { randomUUID } from '../../uuid.js';
 import type { ModelSettings } from '$lib/model-settings/types';
 
 export interface ReferenceVoice {
@@ -74,7 +75,7 @@ export interface TtsProject {
 export function newProject(): TtsProject {
   return {
     version: 2,
-    id: crypto.randomUUID(),
+    id: randomUUID(),
     title: 'Untitled narration',
     updatedAt: Date.now(),
     speakers: [],
@@ -95,7 +96,7 @@ export function newProject(): TtsProject {
   };
 }
 export function newChunk(text: string, override: ModelSettings | null = null): Chunk {
-  return { id: crypto.randomUUID(), text, speakerId: null, takes: [], takeId: '', override, pauseAfter: null };
+  return { id: randomUUID(), text, speakerId: null, takes: [], takeId: '', override, pauseAfter: null };
 }
 export function selectedTake(chunk: Chunk) {
   return chunk.takes.find((take) => take.id === chunk.takeId);
@@ -185,7 +186,7 @@ export function ensureSpeakers(project: TtsProject): boolean {
     const found = identities.get(identity);
     if (found) return found;
     const speaker: Speaker = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       name,
       configuration: structuredClone(configuration),
       voice: structuredClone(voice)

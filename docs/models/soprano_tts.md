@@ -36,7 +36,7 @@ git clone https://huggingface.co/ekwek/Soprano-1.1-80M models/Soprano-1.1-80M
 
 # Convert (folds weight-norm from decoder.pth, emits combined.safetensors)
 pip install torch numpy safetensors
-python3 tools/community_models/soprano_tts/convert_soprano.py \
+python3 tools/gguf/soprano_tts_convert.py \
   --input-dir models/Soprano-1.1-80M \
   --output-dir models/Soprano-1.1-80M-converted
 ```

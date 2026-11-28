@@ -8,6 +8,8 @@
 | MiDashengLM-Gen | `midashenglm_gen` | speech, music, SFX, ambience prompt generation | [MiDashengLM-Gen](#midashenglm-gen) |
 | MiniMax-H3 | `minimax_h3` | text-to-audio, dialogue, video | [MiniMax-H3](#minimax-h3) |
 | MiniMax Music 3 | `minimax_music3` | text-to-music, lyrics conditioning | [MiniMax Music 3](#minimax-music-3) |
+| MOSS-SoundEffect v2 | `moss_soundeffect` | English/Chinese text to sound effects | [MOSS-SoundEffect v2](models/moss_soundeffect.md) |
+| MuLaCover | `mulacover` | reference audio or melody/chord MIDI to a cover song | [MuLaCover](models/mulacover.md) |
 | Stable Audio | `stable_audio` | music, SFX, init-audio, inpaint | [Stable Audio](#stable-audio) |
 | YuE2 | `yue2` | lyrics/style to music, optional ABC score conditioning | [YuE2](models/yue2.md) |
 

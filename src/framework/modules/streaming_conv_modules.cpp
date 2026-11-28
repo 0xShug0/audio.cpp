@@ -115,6 +115,41 @@ DepthwiseConv1dModule::DepthwiseConv1dModule(DepthwiseConv1dConfig config) : con
     }
 }
 
+core::TensorValue DepthwiseConv1dModule::build_time_major(
+    core::ModuleBuildContext & ctx, const core::TensorValue & input,
+    const DepthwiseConv1dWeights & weights) const {
+    if (config_.stride != 1 || config_.padding != 0 || config_.dilation != 1 || config_.use_bias || weights.bias) {
+        throw std::invalid_argument("Time-major depthwise convolution requires unit stride/dilation, no padding and no bias");
+    }
+    core::validate_rank_between(input, 3, 3, "time-major input");
+    const int64_t steps = input.shape.dims[1] - config_.kernel_size + 1;
+    core::validate_shape(input, core::TensorShape::from_dims({1, input.shape.dims[1], config_.channels}), "time-major input");
+    core::validate_shape(weights.weight, core::TensorShape::from_dims({config_.channels, 1, config_.kernel_size}), "weight");
+    if (steps <= 0 || input.type != GGML_TYPE_F32 || weights.weight.type != GGML_TYPE_F32 ||
+        !ggml_is_contiguous(input.tensor) || !ggml_is_contiguous(weights.weight.tensor)) {
+        throw std::invalid_argument("Time-major depthwise convolution requires contiguous F32 tensors and at least one output frame");
+    }
+    auto * g = ctx.ggml;
+    auto * p = input.tensor;
+    const int64_t width = config_.channels, taps = config_.kernel_size;
+    const bool ssm = ctx.backend_type == core::BackendType::Cpu || ctx.backend_type == core::BackendType::Metal;
+    if (ssm || steps == 1) {
+        auto * x = ggml_cont(g, ggml_transpose(g, p));
+        auto * c = ggml_reshape_2d(g, weights.weight.tensor, taps, width);
+        auto * y = ssm ? ggml_ssm_conv(g, x, c) : ggml_sum_rows(g, ggml_mul(g, x, c));
+        return core::wrap_tensor(ggml_reshape_3d(g, y, width, steps, 1), core::TensorShape::from_dims({1, steps, width}));
+    }
+    auto * kt = ggml_cont(g, ggml_transpose(g, ggml_reshape_2d(g, weights.weight.tensor, taps, width)));
+    ggml_tensor * output = nullptr;
+    for (int64_t i = 0; i < taps; ++i) {
+        auto * rows = ggml_view_2d(g, p, width, steps, p->nb[1], static_cast<size_t>(i) * p->nb[1]);
+        auto * tap = ggml_view_1d(g, kt, width, static_cast<size_t>(i) * kt->nb[1]);
+        auto * term = ggml_mul(g, rows, tap);
+        output = output == nullptr ? term : ggml_add(g, output, term);
+    }
+    return core::wrap_tensor(output, core::TensorShape::from_dims({1, steps, width}));
+}
+
 core::TensorValue DepthwiseConv1dModule::build(
     core::ModuleBuildContext & ctx,
     const core::TensorValue & input,
@@ -133,6 +168,30 @@ core::TensorValue DepthwiseConv1dModule::build(
         "weight");
     const auto input_contiguous = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, input));
     const auto weight_contiguous = regular_conv_weight(ctx, weights.weight, "DepthwiseConv1dModule");
+    // SYCL has no CONV_2D_DW kernel. A pre-padded stride-1 depthwise conv is exactly SSM_CONV
+    // (per-channel correlation over a [frames, channels, batch] window), which SYCL implements.
+    if (ctx.backend_type == core::BackendType::Sycl && config_.stride == 1 && config_.dilation == 1 &&
+        config_.padding == 0 && input.shape.dims[2] >= config_.kernel_size) {
+        auto weight_2d = ggml_reshape_2d(ctx.ggml, ensure_f32(ctx, weight_contiguous).tensor, config_.kernel_size, config_.channels);
+        if (!ggml_is_contiguous(weight_2d)) weight_2d = ggml_cont(ctx.ggml, weight_2d);
+        auto y = ggml_ssm_conv(ctx.ggml, input_contiguous.tensor, weight_2d);  // [channels, frames, batch]
+        y = ggml_cont(ctx.ggml, ggml_transpose(ctx.ggml, y));                   // [frames, channels, batch]
+        if (config_.use_bias) {
+            if (!weights.bias.has_value()) {
+                throw std::runtime_error("bias is required when DepthwiseConv1dConfig.use_bias is true");
+            }
+            auto bias = ensure_f32(ctx, tensor_layout::ensure_contiguous_layout_if_needed(ctx, *weights.bias));
+            y = ggml_add(ctx.ggml, y, ggml_reshape_2d(ctx.ggml, bias.tensor, 1, config_.channels));
+        }
+        return core::wrap_tensor(
+            y,
+            core::TensorShape::from_dims({
+                input.shape.dims[0],
+                config_.channels,
+                depthwise_conv1d_output_frames(config_, input.shape.dims[2]),
+            }),
+            GGML_TYPE_F32);
+    }
     auto input_4d = core::reshape_tensor(
         ctx,
         input_contiguous,

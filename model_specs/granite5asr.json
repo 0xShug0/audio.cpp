@@ -70,10 +70,10 @@
       {
         "name": "encoder_graph_arena_mb",
         "type": "int",
-        "description": "Encoder graph arena size in MB. Positive MiB allocation; invalid/nonpositive values resolve to 1024 MiB.",
+        "description": "Minimum encoder graph metadata arena in MiB; grows with graph size. Invalid/nonpositive values resolve to 16 MiB.",
         "required": false,
         "min": 1,
-        "default": 1024
+        "default": 16
       },
       {
         "name": "vad_model_path",

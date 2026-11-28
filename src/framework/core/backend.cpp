@@ -43,6 +43,8 @@ constexpr BackendRegNames k_backend_reg_names[] = {
     {BackendType::Hip,    "hip",    {"ROCm", nullptr, nullptr}},
     {BackendType::Vulkan, "vulkan", {"Vulkan", nullptr, nullptr}},
     {BackendType::Metal,  "metal",  {"MTL", nullptr, nullptr}},
+    {BackendType::WebGPU, "webgpu", {"WebGPU", nullptr, nullptr}},
+    {BackendType::Sycl,   "sycl",   {"SYCL", nullptr, nullptr}},
 };
 
 bool reg_name_matches(BackendType type, const char * reg_name) {
@@ -78,6 +80,73 @@ std::string backend_option_for_reg(const char * reg_name) {
         }
     }
     return {};
+}
+
+std::optional<BackendType> backend_type_for_option(const std::string & option) {
+    if (option == "cpu") {
+        return BackendType::Cpu;
+    }
+    for (const BackendRegNames & entry : k_backend_reg_names) {
+        if (option == entry.option) {
+            return entry.type;
+        }
+    }
+    return std::nullopt;
+}
+
+const char * backend_option_label(BackendType type) {
+    if (type == BackendType::Cpu) {
+        return "cpu";
+    }
+    if (type == BackendType::BestAvailable) {
+        return "best";
+    }
+    for (const BackendRegNames & entry : k_backend_reg_names) {
+        if (entry.type == type) {
+            return entry.option;
+        }
+    }
+    return "unknown";
+}
+
+std::string trim_ascii(const std::string & value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])) != 0) {
+        ++start;
+    }
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+        --end;
+    }
+    return value.substr(start, end - start);
+}
+
+std::string to_lower_ascii(const std::string & value) {
+    std::string out = value;
+    for (char & ch : out) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return out;
+}
+
+std::string format_selectable_devices(const std::vector<BackendDeviceInfo> & devices) {
+    std::string out;
+    for (const auto & device : devices) {
+        if (!out.empty()) {
+            out += ", ";
+        }
+        const std::string & prefix = !device.backend_option.empty() ? device.backend_option : device.backend;
+        out += prefix + ":" + std::to_string(device.index);
+        const std::string & desc = !device.description.empty() ? device.description : device.name;
+        if (!device.device_name.empty() && !desc.empty() && desc != device.device_name) {
+            out += " (" + device.device_name + ": \"" + desc + "\")";
+        } else if (!device.device_name.empty()) {
+            out += " (" + device.device_name + ")";
+        } else if (!desc.empty()) {
+            out += " (\"" + desc + "\")";
+        }
+    }
+    return out.empty() ? "none" : out;
 }
 
 bool backend_handle_matches(ggml_backend_t backend, BackendType type) {
@@ -299,6 +368,99 @@ std::vector<BackendDeviceInfo> list_backend_devices(bool query_properties) {
     return devices;
 }
 
+ResolvedBackendDevice resolve_backend_device(
+    const std::string & query,
+    std::optional<BackendType> backend_filter,
+    const std::vector<BackendDeviceInfo> & devices) {
+    const std::string trimmed = trim_ascii(query);
+    if (trimmed.empty()) {
+        throw std::runtime_error("device name must not be empty");
+    }
+    if (backend_filter.has_value() && *backend_filter == BackendType::BestAvailable) {
+        throw std::runtime_error("device name selection cannot be combined with backend 'best'");
+    }
+
+    std::vector<BackendDeviceInfo> selectable;
+    std::vector<BackendDeviceInfo> candidates;
+    for (const auto & device : devices) {
+        const auto type = backend_type_for_option(device.backend_option);
+        if (!type.has_value()) {
+            continue;
+        }
+        selectable.push_back(device);
+        if (!backend_filter.has_value() || *type == *backend_filter) {
+            candidates.push_back(device);
+        }
+    }
+
+    const std::string lower_query = to_lower_ascii(trimmed);
+    const auto match_description = [](const BackendDeviceInfo & device) -> const std::string & {
+        return !device.description.empty() ? device.description : device.name;
+    };
+
+    // Tier 1: exact case-insensitive match on ggml device name (e.g. "CUDA0", "Vulkan1", "CPU").
+    std::vector<BackendDeviceInfo> matches;
+    for (const auto & device : candidates) {
+        if (!device.device_name.empty() && to_lower_ascii(device.device_name) == lower_query) {
+            matches.push_back(device);
+        }
+    }
+    // Tier 2: exact case-insensitive match on description (prevents "RTX 4090" colliding with "RTX 4090 D").
+    if (matches.empty()) {
+        for (const auto & device : candidates) {
+            const std::string & desc = match_description(device);
+            if (!desc.empty() && to_lower_ascii(desc) == lower_query) {
+                matches.push_back(device);
+            }
+        }
+    }
+    // Tier 3: case-insensitive substring match on description.
+    if (matches.empty()) {
+        for (const auto & device : candidates) {
+            const std::string & desc = match_description(device);
+            if (!desc.empty() && to_lower_ascii(desc).find(lower_query) != std::string::npos) {
+                matches.push_back(device);
+            }
+        }
+    }
+
+    if (matches.size() == 1) {
+        const auto & matched = matches.front();
+        const auto type = backend_type_for_option(matched.backend_option);
+        return ResolvedBackendDevice{*type, matched.index, matched};
+    }
+
+    if (matches.size() > 1) {
+        std::string message = "device name \"" + trimmed + "\" is ambiguous";
+        if (backend_filter.has_value()) {
+            message += " for backend '" + std::string(backend_option_label(*backend_filter)) + "'";
+        }
+        message += "; matches: " + format_selectable_devices(matches);
+        if (!backend_filter.has_value()) {
+            const std::string example = matches.front().device_name.empty()
+                ? "CUDA0"
+                : matches.front().device_name;
+            message += " (specify --backend or an exact device name such as " + example + ")";
+        } else {
+            message += " (specify an exact device name or --device <index>)";
+        }
+        throw std::runtime_error(message);
+    }
+
+    std::string message = "no ";
+    if (backend_filter.has_value()) {
+        message += std::string(backend_option_label(*backend_filter)) + " ";
+    }
+    message += "device matches \"" + trimmed + "\" (available: " + format_selectable_devices(selectable) + ")";
+    throw std::runtime_error(message);
+}
+
+ResolvedBackendDevice resolve_backend_device(
+    const std::string & query,
+    std::optional<BackendType> backend_filter) {
+    return resolve_backend_device(query, backend_filter, list_backend_devices(false));
+}
+
 void print_backend_devices(std::ostream & out) {
     const auto devices = list_backend_devices();
     out << "available_devices=" << devices.size() << "\n";
@@ -309,7 +471,7 @@ void print_backend_devices(std::ostream & out) {
         }
         out << " [" << device.type << "]\n";
     }
-    out << "select with: --backend <cuda|hip|vulkan|metal|cpu> --device <index>\n";
+    out << "select with: --backend <cuda|hip|vulkan|metal|webgpu|sycl|cpu> --device <index>\n";
 }
 
 void print_backend_devices_json(std::ostream & out) {
@@ -380,6 +542,10 @@ ggml_backend_t init_backend(const BackendConfig & config) {
             return init_device_backend(BackendType::Vulkan, "Vulkan", config);
         case BackendType::Metal:
             return init_device_backend(BackendType::Metal, "Metal", config);
+        case BackendType::WebGPU:
+            return init_device_backend(BackendType::WebGPU, "WebGPU", config);
+        case BackendType::Sycl:
+            return init_device_backend(BackendType::Sycl, "SYCL", config);
         case BackendType::BestAvailable: {
             if (!config.impl.empty() && config.impl != "default") {
                 throw std::runtime_error("A named backend implementation requires an explicit backend");
@@ -409,6 +575,21 @@ void set_backend_threads(ggml_backend_t backend, int threads) {
     if (fn != nullptr) {
         ((ggml_backend_set_n_threads_t)fn)(backend, threads);
     }
+}
+
+bool cpu_backend_has_feature(ggml_backend_t backend, const char * feature) {
+    if (!is_host_backend(backend)) {
+        return false;
+    }
+    // Through the proc address, like the thread count (works with GGML_BACKEND_DL)
+    ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(backend));
+    auto fn = (ggml_backend_get_features_t)ggml_backend_reg_get_proc_address(reg, "ggml_backend_get_features");
+    for (const auto * entry = fn != nullptr ? fn(reg) : nullptr; entry != nullptr && entry->name != nullptr; ++entry) {
+        if (std::strcmp(entry->name, feature) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool is_host_backend(ggml_backend_t backend) {
@@ -482,6 +663,12 @@ BackendType backend_type(ggml_backend_t backend) {
     }
     if (is_metal_backend_handle(backend)) {
         return BackendType::Metal;
+    }
+    if (backend_handle_matches(backend, BackendType::WebGPU)) {
+        return BackendType::WebGPU;
+    }
+    if (backend_handle_matches(backend, BackendType::Sycl)) {
+        return BackendType::Sycl;
     }
     return BackendType::BestAvailable;
 }

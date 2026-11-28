@@ -121,13 +121,13 @@ workspace. Native memory use must not be justified solely by fitting the GPU.
 
 ## GGUF
 
-`convert_gguf.py` calls the existing native converter with `--type orig`, embeds
+`tools/gguf/moss_transcribe_diarize_convert.py` calls the existing native converter with `--type orig`, embeds
 the model spec and tokenizer/configuration sidecars, and verifies all tensor
 shapes, BF16 types, and bytes. Only Whisper names change, to the existing OpenAI
 Whisper loader layout. No weights are quantized, folded, or numerically changed.
 
 ```bash
-conda run --no-capture-output -n qwen3-tts python tests/moss_transcribe_diarize/convert_gguf.py \
+conda run --no-capture-output -n qwen3-tts python tools/gguf/moss_transcribe_diarize_convert.py \
   --model /media/leo/Share/models/MOSS-Transcribe-Diarize \
   --output /media/leo/Share/models/audio.cpp-gguf/MOSS-Transcribe-Diarize-GGUF/moss-transcribe-diarize-bf16.gguf \
   --log build/logs/moss_transcribe_diarize/conversion.log

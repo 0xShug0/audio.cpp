@@ -5,7 +5,6 @@
 #include "engine/community_models/parakeet_tdt/frontend.h"
 
 #include <memory>
-#include <string_view>
 #include <vector>
 
 namespace engine::community_models::parakeet_tdt {
@@ -13,21 +12,17 @@ namespace engine::community_models::parakeet_tdt {
 // Model-local adaptation of the publisher's 250 ms input prefix. The ordinary
 // Parakeet and Phonon sessions keep their existing preprocessing and clocks.
 inline constexpr int64_t kBark3InputPrefixSamples = 4000;
-inline bool is_bark3_variant(std::string_view variant) {
-    return variant == "underdog_bark3_pro" || variant == "underdog_bark3_plus" ||
-           variant == "underdog_bark3_standard";
-}
 runtime::GraphOptimizationOptions bark3_encoder_graph_options(runtime::GraphOptimizationBackend backend);
 
 // Cache only unnormalized, context-independent log-mel frames. Each window
 // still recomputes its boundary frames and its whole-window normalization;
 // no encoder/attention state is reused.
 // Windows advance along one immutable waveform. Reset before another stream.
-class BarkStreamingFrontend {
+class BarkStreamingFrontend final : public WindowFrontend {
 public:
     explicit BarkStreamingFrontend(std::shared_ptr<const ParakeetTDTAssets> assets);
-    ParakeetFrontendFeatures extract(const runtime::AudioBuffer & window, int64_t start_sample);
-    void reset();
+    ParakeetFrontendFeatures extract(const runtime::AudioBuffer & window, int64_t start_sample) override;
+    void reset() override;
 
 private:
     engine::audio::NemoMelFrontend raw_frontend_;

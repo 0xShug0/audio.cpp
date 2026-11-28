@@ -140,7 +140,7 @@ jobs:
             defines: '-DGGML_METAL=ON -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF'
           - build: 'x64'
             arch: 'x64'
-            os: macos-15-intel
+            os: macos-26-intel
             # Metal disabled on x64 (GitHub Intel runners have no usable GPU)
             defines: '-DGGML_METAL=OFF -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3 -DENGINE_ENABLE_OPENMP=OFF -DGGML_OPENMP=OFF'
     steps:
@@ -187,7 +187,7 @@ jobs:
     name: Ubuntu x64 (CPU)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -233,7 +233,7 @@ jobs:
     name: Ubuntu x64 (CPU portable)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -281,7 +281,7 @@ jobs:
     name: Ubuntu x64 (Vulkan)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -327,7 +327,7 @@ jobs:
     name: Ubuntu x64 (Vulkan portable)
     needs: [check-release, get-version]
     if: ${{ needs.check-release.outputs.should_release == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -600,9 +600,9 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
-          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_cli -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_server -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-cpu-release -Target audiocpp_gguf -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
       - name: Bundle VC runtime
         shell: pwsh
         working-directory: build/windows-cpu-release/bin
@@ -757,10 +757,10 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -ConfigureOnly -DeploymentBuild -NativeModelManager -CpuArch baseline -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
+          .\scripts\build_windows.ps1 -Preset windows-vulkan-release -ConfigureOnly -DeploymentBuild -NativeModelManager -CpuArch all -Llamafile OFF -Version ${{ needs.get-version.outputs.version }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # The existing baseline preset disables AVX; also remove the remaining
-          # optional x86 extensions for this new portable target only.
+          # Keep the baseline backend portable; individual CPU variants select
+          # their own ISA flags.
           cmake -S . -B build/windows-vulkan-release -DGGML_SSE42=OFF -DGGML_BMI2=OFF
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/windows-vulkan-release --config Release --parallel $env:NUMBER_OF_PROCESSORS --target ($env:BUILD_TARGETS -split ' ')

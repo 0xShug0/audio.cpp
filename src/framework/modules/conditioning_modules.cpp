@@ -257,6 +257,7 @@ core::TensorValue TimestepEmbeddingModule::build(
     auto hidden = LinearModule({config_.frequency_embedding_size, config_.hidden_size, true}).build(ctx, embedding, weights.fc1);
     hidden = SiluModule().build(ctx, hidden);
     hidden = LinearModule({config_.hidden_size, config_.hidden_size, true}).build(ctx, hidden, weights.fc2);
+    if (config_.norm == TimestepEmbeddingNorm::None) return hidden;
     if (!weights.rms_weight.has_value()) {
         throw std::runtime_error("TimestepEmbeddingWeights.rms_weight is required");
     }
@@ -480,12 +481,6 @@ const core::ModuleSchema & FiLMModule::static_schema() noexcept {
 
 AdaptiveLayerNormModule::AdaptiveLayerNormModule(AdaptiveLayerNormConfig config) : config_(config) {
     require_positive(config_.hidden_size, "AdaptiveLayerNormConfig.hidden_size");
-    if (config_.scale_index < 0) {
-        throw std::runtime_error("AdaptiveLayerNormConfig.scale_index must be non-negative");
-    }
-    if (config_.mode != AdaptiveLayerNormMode::Scale && config_.shift_index < 0) {
-        throw std::runtime_error("AdaptiveLayerNormConfig.shift_index must be non-negative unless mode is Scale");
-    }
 }
 
 const AdaptiveLayerNormConfig & AdaptiveLayerNormModule::config() const noexcept {
@@ -501,6 +496,12 @@ core::TensorValue AdaptiveLayerNormModule::build(
     const core::TensorValue & input,
     const core::TensorValue & modulation,
     const AdaptiveLayerNormWeights & weights) const {
+    if (config_.scale_index < 0) {
+        throw std::runtime_error("AdaptiveLayerNormConfig.scale_index must be non-negative");
+    }
+    if (config_.mode != AdaptiveLayerNormMode::Scale && config_.shift_index < 0) {
+        throw std::runtime_error("AdaptiveLayerNormConfig.shift_index must be non-negative unless mode is Scale");
+    }
     core::validate_last_dim(input, config_.hidden_size, "input");
     if (modulation.shape.rank != input.shape.rank) {
         throw std::runtime_error("AdaptiveLayerNorm modulation rank must match input rank");
@@ -541,6 +542,9 @@ core::TensorValue AdaptiveLayerNormModule::build(
     shift_table = core::reshape_tensor(ctx, shift_table, table_shape);
     shift = add_tensors(ctx, shift, shift_table);
 
+    if (config_.mode == AdaptiveLayerNormMode::LayerAffine) {
+        return build(ctx, input, AdaptiveLayerNormParameters{shift, scale});
+    }
     const auto normalized = config_.mode == AdaptiveLayerNormMode::RmsAffine
         ? RMSNormModule({config_.hidden_size, config_.eps, false, false}).build(ctx, input, {})
         : input;
@@ -550,6 +554,28 @@ core::TensorValue AdaptiveLayerNormModule::build(
         GGML_TYPE_F32);
     auto scaled = mul(ctx, normalized, one_plus_scale);
     return add_tensors(ctx, scaled, shift);
+}
+
+core::TensorValue AdaptiveLayerNormModule::build(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const AdaptiveLayerNormParameters & parameters) const {
+    core::validate_last_dim(input, config_.hidden_size, "input");
+    core::validate_last_dim(parameters.scale, config_.hidden_size, "scale");
+    if (config_.mode == AdaptiveLayerNormMode::Scale) {
+        return MulModule(true).build(ctx, input, parameters.scale);
+    }
+    core::validate_last_dim(parameters.shift, config_.hidden_size, "shift");
+    auto normalized = input;
+    if (config_.mode == AdaptiveLayerNormMode::RmsAffine) {
+        normalized = RMSNormModule({config_.hidden_size, config_.eps, false, false}).build(ctx, input, {});
+    } else if (config_.mode == AdaptiveLayerNormMode::LayerAffine) {
+        normalized = LayerNormModule({config_.hidden_size, config_.eps, false, false}).build(ctx, input, {});
+    }
+    const auto scale = ScaleBiasModule({1.0F, 1.0F}).build(ctx,
+        core::ensure_backend_addressable_layout(ctx, parameters.scale));
+    return AddModule(false, true).build(ctx,
+        MulModule(true).build(ctx, normalized, scale), parameters.shift);
 }
 
 const core::ModuleSchema & AdaptiveLayerNormModule::static_schema() noexcept {

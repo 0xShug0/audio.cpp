@@ -2,7 +2,7 @@
 
 #include "engine/community_models/liveavatar/pipeline.h"
 
-#include "engine/framework/codecs/wan_video_vae_runtime.h"
+#include "engine/framework/vision/modules/wan_video_vae_modules.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
@@ -571,12 +571,12 @@ std::vector<float> unpatchify_head_tokens(
     int64_t latent_height,
     int64_t latent_width);
 
-LiveAvatarVideoResult generate_liveavatar_offline(
+engine::video::RgbVideoBuffer generate_liveavatar_offline(
     LiveAvatarPipelineState & state,
     engine::core::ExecutionContext & execution,
     const std::shared_ptr<const LiveAvatarAssets> & assets,
     LiveAvatarGenerateShared & shared);
-LiveAvatarVideoResult generate_liveavatar_blockwise(
+engine::video::RgbVideoBuffer generate_liveavatar_blockwise(
     LiveAvatarPipelineState & state,
     engine::core::ExecutionContext & execution,
     const std::shared_ptr<const LiveAvatarAssets> & assets,

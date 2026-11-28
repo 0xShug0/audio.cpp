@@ -87,9 +87,7 @@ public:
             audio::SoxrResampleOptions options;
             options.output_length_policy = audio::SoxrOutputLengthPolicy::ExactExpected;
             options.require_full_input = true;
-            auto resampled = audio::try_resample_mono_soxr(mono, audio.sample_rate, 16000, options);
-            if (!resampled) throw std::runtime_error("Hviske v6 needs SOXR for non-16-kHz input");
-            mono = std::move(*resampled);
+            mono = audio::resample_mono_soxr_or_sinc(mono, audio.sample_rate, 16000, options);
         }
         if (mono.empty()) mono.resize(8000, 0.0f);
         HviskeV6DecodingOptions options;

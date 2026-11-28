@@ -5,8 +5,8 @@
 #include "engine/framework/modules/conv_modules.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/modules/norm_modules.h"
-#include "engine/framework/modules/recurrent_modules.h"
 #include "engine/community_models/parakeet_tdt/assets.h"
+#include "engine/community_models/parakeet_tdt/predictor.h"
 
 #include <memory>
 #include <vector>
@@ -52,7 +52,7 @@ struct ParakeetFastConformerWeights {
 
 struct ParakeetTDTDecoderWeights {
     engine::core::TensorValue embedding;
-    std::vector<engine::modules::LSTMCellWeights> lstm_layers;
+    std::shared_ptr<const Predictor> predictor;
     engine::modules::LinearWeights decoder_projector;
     engine::modules::LinearWeights joint_enc;    // encoder_projector: 1024→640
     engine::modules::LinearWeights joint_head;   // 640→8198

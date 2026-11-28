@@ -1,5 +1,8 @@
 # Stable Audio
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 Stable Audio is wired as `--family stable_audio --task gen`. It generates music or sound effects from text, and the music model can condition generation on input audio for init-audio or inpainting workflows.
 
 ## Stable Audio 3 Medium
@@ -67,25 +70,6 @@ Use this package for short sound effects. It uses the same `gen` task but is int
 audiocpp_cli --task gen --family stable_audio --model models/stable-audio-3-small-sfx --backend cuda --text "footsteps on gravel, close perspective, crisp natural stone texture" --duration-seconds 8 --out sfx.wav
 ```
 
-## Stable Audio Foundation / Open v1
-
-The same family also loads Foundation checkpoints using the Stable Audio Open v1
-layout. Use `--task gen --mode offline` with the Foundation checkpoint path; the
-Stable Audio 3 packages above use a separate runtime path.
-
-Foundation accepts these additional request options through
-`--request-option key=value`:
-
-| Option | Values | Default | Meaning |
-|---|---|---:|---|
-| `sampler_mode` | `pingpong`, `euler`, `dpmpp-2m`, `dpmpp-3m-sde` | not set | Foundation sampler; legacy `sampler` remains accepted. |
-| `sigma_min` | float > 0 | `0.01` | Minimum noise level for the DPM++ samplers. |
-| `sigma_max` | float > `sigma_min` | `100` | Maximum noise level for the DPM++ samplers; init audio uses `init_noise_level` instead. |
-| `rho` | float > 0 | `1` | Noise-schedule parameter for the DPM++ samplers. |
-
-The following common/request tables describe Stable Audio 3. Foundation also
-accepts the shared request controls, with duration capped by its checkpoint limit.
-
 ## Common Options (use directly)
 
 | Option | Values | Default | Meaning |
@@ -125,8 +109,11 @@ one name for each control in a request.
 
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
-| `stable_audio.max_batch` | integer >= 1 | `1` | Maximum prompt batch size. |
 | `stable_audio.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; defaults to native. |
 | `stable_audio.mem_saver` | bool | `false` | Release staged graph/cache state after conditioner, diffusion, and autoencoder phases to reduce resident VRAM. Later requests may rebuild released graphs. |
+| `stable_audio.max_batch` | int | not set | Deprecated compatibility option. Accepted but ignored with a warning; batch size is determined by the request. |
+
+Stable Audio 3 uses the request's `batch_size` directly. No batch-capacity session
+option is needed; the encoder graph is reused until the batch size changes.
 
 For backend weight-type controls, use `audiocpp_cli --inspect --model <model-dir> --family stable_audio`.

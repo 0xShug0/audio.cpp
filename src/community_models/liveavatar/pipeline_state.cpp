@@ -1,8 +1,10 @@
+#include "engine/framework/vision/media/image.h"
+#include "engine/framework/vision/media/processing.h"
 #include "pipeline_internal.h"
 
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
-#include "engine/framework/codecs/wan_video_vae_runtime.h"
+#include "engine/framework/vision/modules/wan_video_vae_modules.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -20,17 +22,6 @@
 
 #include <ggml-alloc.h>
 #include <ggml.h>
-
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#include "../../../external/ggml/examples/stb_image.h"
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 #include <algorithm>
 #include <array>
@@ -139,33 +130,8 @@ std::vector<float> slice_audio_bucket_frames(
     return out;
 }
 
-struct RgbImage {
-    int64_t width = 0;
-    int64_t height = 0;
-    std::vector<uint8_t> pixels;
-};
-
-RgbImage load_rgb_image(const std::filesystem::path & path) {
-    int width = 0;
-    int height = 0;
-    int channels = 0;
-    unsigned char * data = stbi_load(path.string().c_str(), &width, &height, &channels, 3);
-    if (data == nullptr || width <= 0 || height <= 0) {
-        if (data != nullptr) {
-            stbi_image_free(data);
-        }
-        throw std::runtime_error("LiveAvatar failed to load reference image: " + path.string());
-    }
-    RgbImage image;
-    image.width = width;
-    image.height = height;
-    image.pixels.assign(data, data + static_cast<size_t>(width) * static_cast<size_t>(height) * 3);
-    stbi_image_free(data);
-    return image;
-}
-
 std::vector<float> resize_center_crop_bilinear_to_vae_input(
-    const RgbImage & source,
+    const engine::video::RgbImage & source,
     int64_t target_height,
     int64_t target_width) {
     if (target_height <= 0 || target_width <= 0) {
@@ -189,37 +155,9 @@ std::vector<float> resize_center_crop_bilinear_to_vae_input(
     if (crop_width <= 0 || crop_height <= 0) {
         throw std::runtime_error("LiveAvatar reference image crop is empty");
     }
-    std::vector<float> out(static_cast<size_t>(3 * target_height * target_width));
-    for (int64_t y = 0; y < target_height; ++y) {
-        const double src_y_f = (static_cast<double>(y) + 0.5) *
-            static_cast<double>(crop_height) / static_cast<double>(target_height) - 0.5;
-        const int64_t y0_raw = static_cast<int64_t>(std::floor(src_y_f));
-        const int64_t y1_raw = y0_raw + 1;
-        const double wy = src_y_f - static_cast<double>(y0_raw);
-        const int64_t y0 = crop_y + std::clamp<int64_t>(y0_raw, 0, crop_height - 1);
-        const int64_t y1 = crop_y + std::clamp<int64_t>(y1_raw, 0, crop_height - 1);
-        for (int64_t x = 0; x < target_width; ++x) {
-            const double src_x_f = (static_cast<double>(x) + 0.5) *
-                static_cast<double>(crop_width) / static_cast<double>(target_width) - 0.5;
-            const int64_t x0_raw = static_cast<int64_t>(std::floor(src_x_f));
-            const int64_t x1_raw = x0_raw + 1;
-            const double wx = src_x_f - static_cast<double>(x0_raw);
-            const int64_t x0 = crop_x + std::clamp<int64_t>(x0_raw, 0, crop_width - 1);
-            const int64_t x1 = crop_x + std::clamp<int64_t>(x1_raw, 0, crop_width - 1);
-            for (int64_t c = 0; c < 3; ++c) {
-                const auto at = [&](int64_t yy, int64_t xx) -> double {
-                    return static_cast<double>(
-                        source.pixels[static_cast<size_t>((yy * source.width + xx) * 3 + c)]);
-                };
-                const double top = at(y0, x0) * (1.0 - wx) + at(y0, x1) * wx;
-                const double bottom = at(y1, x0) * (1.0 - wx) + at(y1, x1) * wx;
-                const double value = top * (1.0 - wy) + bottom * wy;
-                const int64_t dst = (c * target_height + y) * target_width + x;
-                out[static_cast<size_t>(dst)] = static_cast<float>(value / 127.5 - 1.0);
-            }
-        }
-    }
-    return out;
+    return engine::video::BilinearRgbResizePlan(source.width, source.height,
+        {crop_x, crop_y, crop_width, crop_height}, target_width, target_height)
+        .planar_rgb(source.view(), [](double value) { return value / 127.5 - 1.0; });
 }
 
 std::vector<float> slice_video_frames(
@@ -557,21 +495,11 @@ std::vector<std::byte> video_to_rgb24(
         static_cast<int64_t>(values.size()) != channels * frames * height * width) {
         throw std::runtime_error("LiveAvatar decoded video shape mismatch");
     }
-    std::vector<std::byte> out(static_cast<size_t>(output_frames * height * width * 3));
-    for (int64_t t = 0; t < output_frames; ++t) {
-        for (int64_t y = 0; y < height; ++y) {
-            for (int64_t x = 0; x < width; ++x) {
-                const int64_t dst = ((t * height + y) * width + x) * 3;
-                for (int64_t c = 0; c < 3; ++c) {
-                    const int64_t src = ((c * frames + start_frame + t) * height + y) * width + x;
-                    const float normalized = std::clamp((values[static_cast<size_t>(src)] + 1.0F) * 0.5F, 0.0F, 1.0F);
-                    out[static_cast<size_t>(dst + c)] =
-                        static_cast<std::byte>(static_cast<uint8_t>(std::lround(normalized * 255.0F)));
-                }
-            }
-        }
-    }
-    return out;
+    return engine::video::pack_rgb24({values.data(), frames, height, width}, start_frame, output_frames,
+        [](float value, int64_t) {
+            const float normalized = std::clamp((value + 1.0F) * 0.5F, 0.0F, 1.0F);
+            return static_cast<uint8_t>(std::lround(normalized * 255.0F));
+        });
 }
 
 bool same_shape(const engine::core::TensorShape & lhs, const engine::core::TensorShape & rhs) noexcept {
@@ -894,7 +822,7 @@ LiveAvatarGenerateShared prepare_liveavatar_generate_shared(
 
     const auto image_start = Clock::now();
     const auto reference_image_input = resize_center_crop_bilinear_to_vae_input(
-        load_rgb_image(request.reference_image_path),
+        engine::video::load_rgb_image(request.reference_image_path),
         request.height,
         request.width);
     engine::debug::timing_log_scalar("liveavatar.reference_image_ms", engine::debug::elapsed_ms(image_start));

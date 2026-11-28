@@ -1,10 +1,12 @@
 # Drift-cancelling A/B benchmark harness
 
-Two scripts for comparing parakeet_tdt configurations when the difference you
-are looking for is a few percent and the machine is not thermally stable.
+Historical harness documentation: the removed runner and original commands
+are preserved in the [pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/bench/README.md).
+Reported measurements, hashes and limitations are unchanged. These recipes
+are not instructions for the current tree.
 
-- `ab.sh <binA> <binB> [passes] [threads]` — compares two builds
-- `abt.sh <bin> <threadsA> <threadsB> [passes]` — compares two thread counts
+The historical scripts compared parakeet_tdt builds and thread counts when
+the difference was a few percent and the machine was not thermally stable.
 
 ## Why not just time both and compare
 
@@ -34,25 +36,16 @@ mean-of-both-slots property.
 
 ## Usage
 
-```bash
-cmake --build build/<preset> --target parakeet_warm_bench
-cp build/<preset>/bin/parakeet_warm_bench /tmp/bench_baseline   # build the "before" binary first
-
-# after making a change and rebuilding:
-tests/parakeet_tdt/bench/ab.sh /tmp/bench_baseline build/<preset>/bin/parakeet_warm_bench 5 12
-
-# thread-count sweep on a single binary:
-tests/parakeet_tdt/bench/abt.sh build/<preset>/bin/parakeet_warm_bench 6 12 4
-```
+[Archived command](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/bench/README.md) (pre-cleanup backup).
 
 Both print a per-pass ratio plus the median across passes. A ratio below 1.0
 means the second config is faster. Treat a result as real only if the sign is
 consistent across passes — the per-pass spread tells you whether the machine
 was quiet enough to trust the number at all.
 
-Environment overrides: `PARAKEET_MODEL` (safetensors directory or standalone
-GGUF), `TIMING_LOG`.
+The pinned guide above preserves the original environment overrides.
 
 These compare *encoder graph compute* specifically, which is ~93-96% of wall
 time and the part almost every optimization targets. For end-to-end numbers,
-run `parakeet_warm_bench` directly.
+the old direct runner is preserved in the
+[pinned harness source](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/parakeet_tdt/parakeet_warm_bench.cpp).

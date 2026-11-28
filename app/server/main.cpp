@@ -88,11 +88,14 @@ std::filesystem::path executable_directory(const char * argv0) {
 
 void print_help() {
     std::cout
-        << "audiocpp_server [--config <server.json>] [--ui] [--host <ip>] [--port <port>] [--backend <backend>]\n"
-        << "                [--device <id>] [--list-devices [--json]] [--threads <n>] [--busy-timeout-ms <ms>]\n"
+        << "audiocpp_server [--config <server.json>] [--ui] [--host <ip|unix:path>] [--port <port>] [--backend <backend>]\n"
+        << "                [--device <id> | --device-name <name>] [--list-devices [--json]] [--threads <n>] [--busy-timeout-ms <ms>]\n"
         << "                [--max-loaded-models <n>] [--idle-unload-ms <ms>] [--min-free-memory-mb <mb>]\n"
         << "                [--model-spec-override <json-or-directory|embedded>] [--voice-dir <directory>]\n"
         << "                [--frontend-listener <name>] [--frontend-option key=value]\n"
+        << "                [--model <path> --family <family>] [--model-id <id>] [--task <task>] [--mode offline|streaming]\n"
+        << "                [--load-option key=value] [--session-option key=value] [--request-option key=value]\n"
+        << "                [--voice-ref <wav>] [--reference-text <text>] [--voice-id <id>]\n"
         << "                [--log] [--log-file <path>] [--load-progress 0|1]\n"
         << "                [--cors-origins <origins>] [--resample-kernel-cache-mb <mb>]\n"
         << "  --version                        print build version, commit, compiler, platform, and enabled backends\n"
@@ -101,10 +104,18 @@ void print_help() {
         << "  --no-ui                          disable the embedded WebUI\n"
         << "  --ui-management                  allow WebUI model management and downloads; requires\n"
         << "                                   AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON at build time\n"
-        << "  --host <ip>                      server bind address; default 127.0.0.1\n"
-        << "  --port <port>                    server listening port; default 8080\n"
-        << "  --backend cpu|cuda|hip|rocm|vulkan|metal  default cuda (rocm is an alias for hip)\n"
+        << "  --models-root <directory>         default WebUI models folder; overrides config models_root\n"
+        << "  --model <path> --family <family>  configure a model without a config file, or override its entry\n"
+        << "  --model-id <id>                  model id; required to override a multi-model config\n"
+        << "  --load-option/--session-option   merge model options by key; CLI values override config values\n"
+        << "  --request-option key=value      default request option; explicit HTTP request values override it\n"
+        << "                                   common CLI flags such as --seed and --temperature also set defaults\n"
+        << "  --voice-ref/--voice-id           default reference audio or voice; HTTP requests may override it\n"
+        << "  --host <ip|unix:path>            IPv4 address or POSIX Unix socket; default 127.0.0.1\n"
+        << "  --port <port>                    TCP listening port; ignored for unix:; default 8080\n"
+        << "  --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu|sycl  default cuda (rocm is an alias for hip)\n"
         << "  --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
+        << "  --device-name <name>             select backend device by ggml name (e.g. CUDA0) or unique description substring\n"
         << "  --list-devices                   list available backend devices and exit; add --json\n"
         << "                                   for PCI ids and free/total memory as JSON\n"
         << "  --busy-timeout-ms <ms>           fail a request with 503 when the model has been\n"
@@ -135,14 +146,15 @@ void print_help() {
         << "  GET  /health\n"
         << "  GET  /v1/models\n"
         << "  GET  /v1/recipes\n"
-        << "  POST /v1/models/load             available with --ui-management\n"
+        << "  POST /v1/models/load             available with --ui-management; path, or\n"
+        << "                                   package_id with the native model manager\n"
         << "  POST /v1/models/unload           available with --ui-management\n"
         << "  POST /v1/ui/upload               temporary browser upload for WebUI requests\n"
         << "  POST /v1/ui/models/install       background package download/preparation\n"
         << "  POST /v1/ui/models/install/stop  stop one active package download\n"
         << "  POST /v1/ui/models/clean-partial remove abandoned package staging files\n"
         << "  POST /v1/ui/models/delete        remove one installed package precision\n"
-        << "  GET  /v1/ui/models-root          current and binary-local default models folders\n"
+        << "  GET  /v1/ui/models-root          current and default models folders\n"
         << "  POST /v1/ui/models-root          select a models folder (empty path restores default)\n"
         << "  POST /v1/ui/browse-directories   list local folders for the native folder picker\n"
         << "  GET  /v1/ui/models/install-status[?id=<package>]\n"
@@ -193,8 +205,8 @@ int main(int argc, char ** argv) {
         if (parallel_jobs) { engine::io::json::enable_serialized_json_parsing(); }
         const auto config_path = arg_value(argc, argv, "--config");
         const bool ui_requested = has_arg(argc, argv, "--ui");
-        if (!config_path.has_value() && !ui_requested) {
-            throw std::runtime_error("missing required --config argument (or use --ui for the native WebUI)");
+        if (!config_path.has_value() && !ui_requested && !has_arg(argc, argv, "--model")) {
+            throw std::runtime_error("provide --config, --model with --family, or --ui for the native WebUI");
         }
         const auto log_file = arg_value(argc, argv, "--log-file");
         engine::debug::configure_logging(engine::debug::LoggingConfig{
@@ -222,9 +234,9 @@ int main(int argc, char ** argv) {
 #endif
 
         auto config = config_path.has_value()
-            ? minitts::server::load_server_config(*config_path, parallel_jobs)
+            ? minitts::server::parse_server_config(*config_path, parallel_jobs)
             : minitts::server::ServerConfig{};
-        if (!config_path.has_value()) {
+        if (!config_path.has_value() && !has_arg(argc, argv, "--model")) {
             config.lazy_load = true;
         }
         if (ui_requested) {
@@ -237,6 +249,13 @@ int main(int argc, char ** argv) {
         }
         if (has_arg(argc, argv, "--ui-management")) {
             config.ui_management = true;
+        }
+        if (has_arg(argc, argv, "--models-root")) {
+            const auto models_root = arg_value(argc, argv, "--models-root");
+            if (!models_root || models_root->empty() || models_root->rfind("--", 0) == 0) {
+                throw std::runtime_error("--models-root requires a non-empty directory");
+            }
+            config.models_root = std::filesystem::path(*models_root);
         }
 #if !defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
         if (config.ui_management) {
@@ -256,12 +275,26 @@ int main(int argc, char ** argv) {
         }
         if (const auto backend = arg_value(argc, argv, "--backend")) {
             config.backend = minitts::server::parse_server_backend(*backend);
+            config.backend_explicit = true;
         }
         if (const auto impl = arg_value(argc, argv, "--backend-impl")) {
             config.backend_impl = *impl;
         }
+        const bool cli_device = has_arg(argc, argv, "--device");
+        const bool cli_device_name = has_arg(argc, argv, "--device-name");
+        if (cli_device && cli_device_name) {
+            throw std::runtime_error("cannot specify both --device and --device-name");
+        }
         if (const auto device = arg_value(argc, argv, "--device")) {
             config.device = std::stoi(*device);
+            config.device_name.reset();
+        }
+        if (cli_device_name) {
+            const auto device_name = arg_value(argc, argv, "--device-name");
+            if (!device_name || device_name->empty() || device_name->rfind("--", 0) == 0) {
+                throw std::runtime_error("--device-name requires a non-empty device name");
+            }
+            config.device_name = *device_name;
         }
         if (const auto threads = arg_value(argc, argv, "--threads")) {
             config.threads = std::stoi(*threads);
@@ -295,6 +328,8 @@ int main(int argc, char ** argv) {
             auto [key, value] = parse_key_value_arg(option, "--frontend-option");
             config.frontend_options[std::move(key)] = std::move(value);
         }
+        minitts::server::apply_model_cli_options(config, argc, argv);
+        minitts::server::resolve_server_devices(config);
         if (config.frontend_listener.empty() && !config.frontend_options.empty()) {
             throw std::runtime_error("--frontend-option requires --frontend-listener");
         }

@@ -22,6 +22,23 @@ static void cpy_1_f32_f16(const char * cxi, char * cdsti) {
     *dsti = sycl::vec<float, 1>(*xi).convert<sycl::half, sycl::rounding_mode::automatic>()[0];
 }
 
+static inline float cpy_bf16_to_f32(const char * cxi) {
+    return sycl::bit_cast<float>(static_cast<uint32_t>(*reinterpret_cast<const uint16_t *>(cxi)) << 16);
+}
+
+static void cpy_1_bf16_f32(const char * cxi, char * cdsti) {
+    *reinterpret_cast<float *>(cdsti) = cpy_bf16_to_f32(cxi);
+}
+
+static void cpy_1_bf16_f16(const char * cxi, char * cdsti) {
+    *reinterpret_cast<sycl::half *>(cdsti) =
+        sycl::vec<float, 1>(cpy_bf16_to_f32(cxi)).convert<sycl::half, sycl::rounding_mode::automatic>()[0];
+}
+
+static void cpy_1_i32_f32(const char * cxi, char * cdsti) {
+    *reinterpret_cast<float *>(cdsti) = static_cast<float>(*reinterpret_cast<const int32_t *>(cxi));
+}
+
 static void cpy_1_f16_f16(const char * cxi, char * cdsti) {
     const sycl::half * xi   = (const sycl::half *) cxi;
     sycl::half *       dsti = (sycl::half *) cdsti;
@@ -445,6 +462,48 @@ static void ggml_cpy_i32_i32_sycl(const char * cx, char * cdst, const int ne, co
     }
 }
 
+static void ggml_cpy_bf16_f32_sycl(const char * cx, char * cdst, const int ne, const int ne00, const int ne01,
+                                  const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
+                                  const int ne10, const int ne11, const int ne12, const int nb10, const int nb11,
+                                  const int nb12, const int nb13, queue_ptr stream) {
+    const int num_blocks = (ne + SYCL_CPY_BLOCK_SIZE - 1) / SYCL_CPY_BLOCK_SIZE;
+    stream->parallel_for(
+        sycl::nd_range<3>(sycl::range<3>(1, 1, num_blocks) * sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE),
+                          sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE)),
+        [=](sycl::nd_item<3> item_ct1) {
+            cpy_f32_f16<cpy_1_bf16_f32>(cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12,
+                             nb10, nb11, nb12, nb13, item_ct1);
+        });
+}
+
+static void ggml_cpy_bf16_f16_sycl(const char * cx, char * cdst, const int ne, const int ne00, const int ne01,
+                                  const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
+                                  const int ne10, const int ne11, const int ne12, const int nb10, const int nb11,
+                                  const int nb12, const int nb13, queue_ptr stream) {
+    const int num_blocks = (ne + SYCL_CPY_BLOCK_SIZE - 1) / SYCL_CPY_BLOCK_SIZE;
+    stream->parallel_for(
+        sycl::nd_range<3>(sycl::range<3>(1, 1, num_blocks) * sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE),
+                          sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE)),
+        [=](sycl::nd_item<3> item_ct1) {
+            cpy_f32_f16<cpy_1_bf16_f16>(cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12,
+                             nb10, nb11, nb12, nb13, item_ct1);
+        });
+}
+
+static void ggml_cpy_i32_f32_sycl(const char * cx, char * cdst, const int ne, const int ne00, const int ne01,
+                                  const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
+                                  const int ne10, const int ne11, const int ne12, const int nb10, const int nb11,
+                                  const int nb12, const int nb13, queue_ptr stream) {
+    const int num_blocks = (ne + SYCL_CPY_BLOCK_SIZE - 1) / SYCL_CPY_BLOCK_SIZE;
+    stream->parallel_for(
+        sycl::nd_range<3>(sycl::range<3>(1, 1, num_blocks) * sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE),
+                          sycl::range<3>(1, 1, SYCL_CPY_BLOCK_SIZE)),
+        [=](sycl::nd_item<3> item_ct1) {
+            cpy_f32_f16<cpy_1_i32_f32>(cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12,
+                             nb10, nb11, nb12, nb13, item_ct1);
+        });
+}
+
 static void ggml_cpy_q8_0_q8_0(const char * cx, char * cdst, const int ne, const int ne00, const int ne01,
                                    const int ne02, const int nb00, const int nb01, const int nb02, const int nb03,
                                    const int ne10, const int ne11, const int ne12, const int nb10, const int nb11,
@@ -586,6 +645,15 @@ void ggml_sycl_cpy(ggml_backend_sycl_context & ctx, const ggml_tensor * src0, co
         ggml_cpy_q4_0_q4_0(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
     } else if (src0->type == GGML_TYPE_Q4_1 && src1->type == GGML_TYPE_Q4_1) {
         ggml_cpy_q4_1_q4_1(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
+    } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F32) {
+        ggml_cpy_bf16_f32_sycl(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10,
+                          nb11, nb12, nb13, main_stream);
+    } else if (src0->type == GGML_TYPE_BF16 && src1->type == GGML_TYPE_F16) {
+        ggml_cpy_bf16_f16_sycl(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10,
+                          nb11, nb12, nb13, main_stream);
+    } else if (src0->type == GGML_TYPE_I32 && src1->type == GGML_TYPE_F32) {
+        ggml_cpy_i32_f32_sycl(src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10,
+                          nb11, nb12, nb13, main_stream);
     } else {
         GGML_LOG_ERROR("%s: unsupported type combination (%s to %s)\n", __func__, ggml_type_name(src0->type),
                        ggml_type_name(src1->type));

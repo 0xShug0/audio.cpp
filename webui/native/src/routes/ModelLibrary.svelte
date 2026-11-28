@@ -19,6 +19,7 @@
   export let removePackage: (entry: CatalogEntry, choice: InstallPackageChoice) => unknown;
   export let stopPackageDownload: (entry: CatalogEntry, job: ModelInstallJob) => unknown;
   export let cleanPartialDownload: (entry: CatalogEntry, job: ModelInstallJob) => unknown;
+  export let dismissInstallFailure: (job: ModelInstallJob) => unknown = () => {};
   export let openModel: (entry: CatalogEntry, choice?: InstallPackageChoice) => void;
   export let taskLabel: (entry: CatalogEntry) => string;
   export let formatBytes: (value: number) => string;
@@ -26,8 +27,8 @@
   export let workflowForEntry: (entry: CatalogEntry) => string;
   export let workflows: { id: string; label: string }[];
 
-  let search = '';
-  let task = '';
+  export let search = '';
+  export let task = '';
   let installation = 'all';
   let choices: Record<string, string> = {};
   const active = (job?: ModelInstallJob) => !!job && ['queued', 'running', 'cancelling'].includes(job.state);
@@ -52,12 +53,36 @@
     const known = !!entry.install_packages?.length && entry.install_packages.every((p) => !!packageSizes[p.id]);
     return matches && (!task || workflowForEntry(entry) === task) && (installation === 'all' || (installation === 'installed' ? installed : known && !installed));
   }) })).filter((g) => g.entries.length);
+  function packageSizeNote(size: ModelPackageSize | undefined) {
+    if (size?.size_bytes) return `${formatBytes(size.size_bytes)} download`;
+    if (size?.state === 'gated') return size.message?.trim() || 'Hugging Face access required';
+    if (size?.state === 'error' && size.message?.trim()) return `Size check failed: ${size.message.trim()}`;
+    return 'Download size unavailable';
+  }
+  function failureReason(job: ModelInstallJob) {
+    return job.message?.trim() || 'Model installation failed';
+  }
+  function findJobOwner(packageId: string) {
+    for (const group of groups) {
+      for (const entry of group.entries) {
+        const choice = entry.install_packages?.find((candidate) => candidate.id === packageId);
+        if (choice) return { entry, choice };
+      }
+    }
+    return undefined;
+  }
   $: activeDownloads = Object.values(installJobs).filter(active);
+  $: failedDownloads = Object.values(installJobs).filter((job) => job.state === 'failed');
 </script>
 
 <section class="library" aria-label="Model library">
   <header class="library-heading"><div><h1>Model Library</h1><span>{groups.reduce((n, g) => n + g.entries.length, 0)} models · {installedCount(groups.flatMap((g) => g.entries), packageSizes)} packages installed</span></div>
-    {#if activeDownloads.length}<span class="download-count">{activeDownloads.length} active downloads</span>{/if}
+    {#if activeDownloads.length || failedDownloads.length}
+      <div class="download-badges">
+        {#if activeDownloads.length}<span class="download-count">{activeDownloads.length} active {activeDownloads.length === 1 ? 'download' : 'downloads'}</span>{/if}
+        {#if failedDownloads.length}<span class="download-count failed">{failedDownloads.length} failed {failedDownloads.length === 1 ? 'download' : 'downloads'}</span>{/if}
+      </div>
+    {/if}
   </header>
   <details class="folder-settings"><summary>Models folder <span>{modelsFolder || defaultModelsFolder}</span></summary>
     <div class="folder-editor"><label class="folder-path">Folder path<input aria-label="Models folder path" bind:value={modelsFolderInput} placeholder={defaultModelsFolder} /></label>
@@ -86,10 +111,22 @@
     <select aria-label="Installation status" bind:value={installation}><option value="all">All models</option><option value="installed">Installed</option><option value="missing">Not installed</option></select>
   </div>
   <div class="result-count">{visibleGroups.reduce((n, g) => n + g.entries.length, 0)} models · A–Z</div>
-  {#if activeDownloads.length}
-    <details class="downloads" open><summary>Downloads</summary>{#each activeDownloads as job}
-      {@const entry = groups.flatMap((g) => g.entries).find((e) => e.install_packages?.some((p) => p.id === job.id))}
-      <div class="download-row"><span>{entry?.display_name || job.id}</span><span>{installProgressLabel(job)}</span>{#if entry}<button disabled={job.state === 'cancelling'} on:click={() => stopPackageDownload(entry, job)}>Stop</button>{/if}</div>
+  {#if activeDownloads.length || failedDownloads.length}
+    <details class="downloads" open><summary>Downloads</summary>{#each activeDownloads as job (job.id)}
+      {@const owner = findJobOwner(job.id)}
+      <div class="download-row"><span>{owner ? `${owner.entry.display_name} · ${owner.choice.label}` : job.id}</span><span>{installProgressLabel(job)}</span>{#if owner}<button disabled={job.state === 'cancelling'} on:click={() => stopPackageDownload(owner.entry, job)}>Stop</button>{/if}</div>
+    {/each}{#each failedDownloads as job (job.id)}
+      {@const owner = findJobOwner(job.id)}
+      <div class="download-row failed" role="alert">
+        <div class="download-failure-info">
+          <strong>{owner ? `${owner.entry.display_name} · ${owner.choice.label}` : job.id} — {installProgressLabel(job)}</strong>
+          <p class="failure-reason">{failureReason(job)}</p>
+        </div>
+        <div class="download-row-actions">
+          {#if owner}<button on:click={() => installPackage(owner.entry, owner.choice)}>Retry</button>{/if}
+          <button on:click={() => dismissInstallFailure(job)}>Dismiss</button>
+        </div>
+      </div>
     {/each}</details>
   {/if}
   {#each visibleGroups as group (group.family)}
@@ -106,12 +143,26 @@
           {#if choice}
             <div class="package"><label for={`package-${entry.id}`}>Package ({packageCount})</label><select id={`package-${entry.id}`} value={choice.id} on:change={(event) => choices = { ...choices, [entry.id]: event.currentTarget.value }}>
               {#each entry.install_packages || [] as p}<option value={p.id}>{p.label} · {packageStatus(p, packageSizes, installJobs, packageSizeState)}</option>{/each}
-            </select><span>{packageSizes[choice.id]?.size_bytes ? `${formatBytes(packageSizes[choice.id].size_bytes!)} download` : 'Download size unavailable'}</span></div>
+            </select><span class:size-warning={packageSizes[choice.id]?.state === 'gated' || packageSizes[choice.id]?.state === 'error'}>{packageSizeNote(packageSizes[choice.id])}</span></div>
             <div class="state" class:installed><strong>{installed ? '✓ Installed' : packageStatus(choice, packageSizes, installJobs, packageSizeState)}</strong>{#if installed && packageSizes[choice.id]?.version_state === 'update_available'}<span>Update available</span>{/if}</div>
             <div class="actions"><button class="primary" disabled={!installed && (active(job) || !packageSizes[choice.id])} on:click={() => installed ? openModel(entry, choice) : installPackage(entry, choice)}>{installed ? 'Open in Studio' : 'Download'}</button>
               {#if installed}<details class="manage"><summary aria-label={`Manage ${entry.display_name}`}>Manage</summary><div>{#if packageSizes[choice.id]?.version_state === 'update_available'}<button disabled={busy} on:click={() => installPackage(entry, choice, true)}>Update</button>{/if}<button disabled={busy} on:click={() => removePackage(entry, choice)}>Remove</button></div></details>{/if}
             </div>
-            {#if job && !['complete', 'cleaned'].includes(job.state)}<div class="job" class:failed={job.state === 'failed'}><span>{installProgressLabel(job)}</span><progress max="100" value={job.progress_percent >= 0 ? job.progress_percent : undefined}></progress><p>{job.message}</p>{#if active(job)}<button disabled={job.state === 'cancelling'} on:click={() => stopPackageDownload(entry, job)}>Stop download</button>{:else}<button on:click={() => cleanPartialDownload(entry, job)}>Clean partial download</button>{/if}</div>{/if}
+            {#if job && !['complete', 'cleaned'].includes(job.state)}
+              <div class="job" class:failed={job.state === 'failed'} role={job.state === 'failed' ? 'alert' : undefined}>
+                <span class="job-status">{installProgressLabel(job)}</span>
+                {#if active(job)}<progress max="100" value={job.progress_percent >= 0 ? job.progress_percent : undefined}></progress>{/if}
+                <p class="job-message">{job.state === 'failed' ? failureReason(job) : job.message}</p>
+                <div class="job-actions">
+                  {#if active(job)}
+                    <button disabled={job.state === 'cancelling'} on:click={() => stopPackageDownload(entry, job)}>Stop download</button>
+                  {:else}
+                    <button on:click={() => cleanPartialDownload(entry, job)}>Clean partial download</button>
+                    {#if job.state === 'failed'}<button on:click={() => dismissInstallFailure(job)}>Dismiss</button>{/if}
+                  {/if}
+                </div>
+              </div>
+            {/if}
           {:else}<span class="state">Manual setup</span><div class="actions">{#if entry.weights_url}<a href={entry.weights_url} target="_blank" rel="noreferrer">View weights ↗</a>{/if}<button on:click={() => openModel(entry)}>Open in Studio</button></div>{/if}
         </div>
       {/each}
@@ -148,6 +199,11 @@
   .state { font-size: 13px; } .installed, .family > header > .installed { color: var(--green, #a6e3a1); }
   .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; } .primary { width: 100%; }
   .manage > div { display: flex; gap: 8px; padding-top: 8px; } .job { grid-column: 1/-1; font-size: 13px; overflow-wrap: anywhere; }
+  .job.failed { padding: 12px; border: 1px solid var(--danger); border-radius: 6px; background: color-mix(in srgb, var(--danger) 8%, transparent); }
+  .job-status { font-weight: 600; } .job-message { margin: 6px 0 10px; line-height: 1.5; }
+  .job-actions, .download-row-actions, .download-badges { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .download-failure-info { flex: 1; min-width: 0; display: grid; gap: 4px; } .failure-reason { margin: 0; line-height: 1.45; }
+  .size-warning { color: var(--danger); }
   progress { display: block; width: 100%; height: 6px; margin-top: 10px; accent-color: var(--cyan); } .failed { color: var(--danger); }
   .downloads { padding: 12px; border: 1px solid var(--line); margin-bottom: 20px; } .download-row { display: flex; gap: 16px; align-items: center; padding-top: 10px; font-size: 13px; } .download-row span:first-child { flex: 1; }
   .empty { padding: 48px 0; display: grid; justify-items: center; gap: 16px; }

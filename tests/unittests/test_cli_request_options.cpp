@@ -1,14 +1,18 @@
 #include "../../app/cli/args.h"
 #include "../../app/cli/request.h"
+#include "../../app/common/base64.h"
 
 #include "engine/framework/io/json.h"
+#include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/errors.h"
 #include "engine/framework/runtime/options.h"
 
 #include "test_assert.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -81,6 +85,42 @@ void test_malformed_seeds_are_invalid_requests() {
     // A JSON null option reaches the parser as "null".
     for (const char * value : {"null", " -1", "18446744073709551616"}) {
         require_seed_rejected(value);
+    }
+}
+
+void test_random_seed_resolution() {
+    using engine::runtime::resolve_random_seed;
+    using engine::test::require;
+    using engine::test::require_eq;
+    std::unordered_map<std::string, std::string> options{{"other", "kept"}};
+    const auto omitted = options;
+    resolve_random_seed(options);
+    require(options == omitted, "omitted seed stays absent");
+    for (const std::string value : {"0", "4294967295", "1000000000000001", "-2", " -1", "-1.0", "null"}) {
+        options["seed"] = value;
+        const auto original = options;
+        resolve_random_seed(options);
+        require(options == original, "non-sentinel options preserved exactly");
+    }
+    options["family.seed"] = "-1";
+    options["seed"] = "-1";
+    resolve_random_seed(options);
+    require(parse_seed(options.at("seed")) <= uint64_t{2147483647}, "random seed fits signed 32-bit");
+    const auto resolved = options;
+    resolve_random_seed(options);
+    require(options == resolved, "resolution is idempotent");
+    require_eq(options.at("family.seed"), std::string("-1"), "model alias not reinterpreted");
+    for (const char * numeric : {"-1", "-1.0"}) {
+        options["seed"] = option_from_json_number(numeric);
+        resolve_random_seed(options);
+        require(parse_seed(options.at("seed")) <= uint64_t{2147483647}, "JSON numeric sentinel resolves");
+    }
+    for (const char * flag : {"--seed", "--request-option"}) {
+        const char * argv[] = {"audiocpp_cli", flag, std::string(flag) == "--seed" ? "-1" : "seed=-1"};
+        auto request = minitts::cli::build_request_from_cli(3, const_cast<char **>(argv));
+        require_eq(request.options.at("seed"), std::string("-1"), "CLI leaves raw sentinel until dispatch");
+        resolve_random_seed(request.options);
+        require(parse_seed(request.options.at("seed")) <= uint64_t{2147483647}, "CLI seed resolves before model parsing");
     }
 }
 
@@ -489,20 +529,480 @@ void test_non_negative_int_flag_values() {
     }
 }
 
+// A 16-bit mono WAV of these samples, as a caller would send it.
+std::string wav_bytes(const std::vector<int16_t> & samples, uint32_t sample_rate) {
+    std::string wav;
+    const auto put = [&wav](uint32_t value, int bytes) {
+        for (int i = 0; i < bytes; ++i) {
+            wav.push_back(static_cast<char>((value >> (8 * i)) & 0xFF));
+        }
+    };
+    const auto data_bytes = static_cast<uint32_t>(samples.size() * sizeof(int16_t));
+    wav += "RIFF";
+    put(36 + data_bytes, 4);
+    wav += "WAVEfmt ";
+    put(16, 4);
+    put(1, 2);
+    put(1, 2);
+    put(sample_rate, 4);
+    put(sample_rate * 2, 4);
+    put(2, 2);
+    put(16, 2);
+    wav += "data";
+    put(data_bytes, 4);
+    for (const int16_t sample : samples) {
+        put(static_cast<uint16_t>(sample), 2);
+    }
+    return wav;
+}
+
+engine::runtime::TaskRequest request_with_voice_ref(const std::string & voice_ref, const std::filesystem::path & base_dir) {
+    return minitts::cli::build_request_from_json(
+        engine::io::json::parse("{\"text\":\"hi\",\"voice_ref\":" + voice_ref + "}"), base_dir);
+}
+
+void require_voice_ref_rejected(const std::string & voice_ref, const std::string & message) {
+    try {
+        (void) request_with_voice_ref(voice_ref, std::filesystem::temp_directory_path());
+    } catch (const engine::runtime::InvalidRequestError & error) {
+        engine::test::require(
+            std::string(error.what()).find(message) != std::string::npos,
+            "voice_ref " + voice_ref.substr(0, 60) + " failed with '" + error.what() + "', expected '" + message + "'");
+        return;
+    }
+    throw std::runtime_error("voice_ref was accepted: " + voice_ref.substr(0, 60));
+}
+
+void test_request_json_voice_ref() {
+    const auto dir = std::filesystem::temp_directory_path() /
+        ("audiocpp-request-voice-ref-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    struct RemoveDir {
+        std::filesystem::path path;
+        ~RemoveDir() {
+            std::error_code ignored;
+            std::filesystem::remove_all(path, ignored);
+        }
+    } remove_dir{dir};
+    std::filesystem::create_directories(dir / "voices");
+    const std::string wav = wav_bytes({0, 16384, -16384, 32767}, 16000);
+    std::ofstream(dir / "voices" / "ref.wav", std::ios::binary) << wav;
+
+    const auto require_voice = [](const engine::runtime::TaskRequest & request, const std::string & label) {
+        engine::test::require(
+            request.voice.has_value() && request.voice->speaker.has_value() && request.voice->speaker->audio.has_value(),
+            label + " sets the speaker audio");
+        const auto & audio = *request.voice->speaker->audio;
+        engine::test::require_eq(audio.sample_rate, 16000, label + " sample rate");
+        engine::test::require_eq(audio.samples.size(), size_t{4}, label + " sample count");
+        engine::test::require(audio.samples[1] > 0.49F && audio.samples[1] < 0.51F, label + " sample value");
+    };
+
+    // A path string, a path object and an inline WAV give the same voice;
+    // paths are relative to the request file.
+    require_voice(request_with_voice_ref("\"voices/ref.wav\"", dir), "path string");
+    require_voice(request_with_voice_ref("{\"type\":\"path\",\"path\":\"voices/ref.wav\"}", dir), "path object");
+    const std::vector<uint8_t> wav_data(wav.begin(), wav.end());
+    require_voice(
+        request_with_voice_ref("{\"type\":\"base64\",\"data\":\"" + minitts::app::base64_encode(wav_data) + "\"}", dir),
+        "inline base64");
+    require_voice(
+        request_with_voice_ref(
+            "{\"type\":\"base64\",\"data\":\"data:audio/wav;base64," + minitts::app::base64_encode(wav_data) + "\"}", dir),
+        "inline data URI");
+    engine::test::require(!request_with_voice_ref("null", dir).voice.has_value(), "null voice_ref");
+
+    require_voice_ref_rejected("42", "voice_ref must be a path string or an object");
+    require_voice_ref_rejected("{\"type\":\"url\",\"data\":\"x\"}", "voice_ref type must be");
+    require_voice_ref_rejected("{\"data\":\"UklGRg==\"}", "voice_ref type must be");
+    require_voice_ref_rejected("{\"type\":\"path\"}", "needs a path string");
+    require_voice_ref_rejected("{\"type\":\"base64\"}", "needs a data string");
+    require_voice_ref_rejected("{\"type\":\"base64\",\"data\":\"@@@@\"}", "not valid base64");
+    require_voice_ref_rejected("{\"type\":\"base64\",\"data\":\"\"}", "empty payload");
+    const std::string not_wav = "plain text, not a WAV file";
+    require_voice_ref_rejected(
+        "{\"type\":\"base64\",\"data\":\"" +
+            minitts::app::base64_encode(std::vector<uint8_t>(not_wav.begin(), not_wav.end())) + "\"}",
+        "not a readable WAV");
+    require_voice_ref_rejected(
+        "{\"type\":\"base64\",\"data\":\"" + std::string(size_t{8} * 1024 * 1024, 'A') + "\"}", "5 MiB limit");
+}
+
+void test_cli_arguments_can_be_loaded_from_yaml() {
+    const auto config_path = std::filesystem::temp_directory_path() /
+                             ("audiocpp-cli-config-" +
+                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                              ".yaml");
+    {
+        std::ofstream config(config_path);
+        config << "task: tts\n"
+               << "model: model.gguf\n"
+               << "text: configured text\n"
+               << "metrics: true\n"
+               << "inspect: false\n"
+               << "do-sample: false\n"
+               << "request-option:\n"
+               << "  - temperature=0.7\n"
+               << "  - top_k=10\n";
+    }
+
+    const std::string config_argument = config_path.string();
+    const char * argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--text",
+        "command line text",
+    };
+    const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+
+    engine::test::require_eq(expanded.size(), size_t{16}, "expected expanded argument count");
+    engine::test::require_eq(expanded[0], std::string("audiocpp_cli"), "executable preserved");
+    engine::test::require_eq(expanded[1], std::string("--text"), "CLI option retained first");
+    engine::test::require_eq(expanded[2], std::string("command line text"), "CLI value retained first");
+    engine::test::require_eq(expanded[3], std::string("--do-sample"), "boolean value option");
+    engine::test::require_eq(expanded[4], std::string("false"), "false value option");
+    engine::test::require_eq(expanded[5], std::string("--metrics"), "enabled flag emitted");
+    engine::test::require_eq(expanded[6], std::string("--model"), "scalar option emitted");
+    engine::test::require_eq(expanded[7], std::string("model.gguf"), "scalar option value emitted");
+    engine::test::require_eq(expanded[8], std::string("--request-option"), "sequence option emitted");
+    engine::test::require_eq(expanded[9], std::string("temperature=0.7"), "first sequence value emitted");
+    engine::test::require_eq(expanded[10], std::string("--request-option"), "repeated sequence option emitted");
+    engine::test::require_eq(expanded[11], std::string("top_k=10"), "second sequence value emitted");
+    engine::test::require_eq(expanded[12], std::string("--task"), "task option emitted");
+    engine::test::require_eq(expanded[13], std::string("tts"), "task value emitted");
+    engine::test::require_eq(expanded[14], std::string("--text"), "config text appended after CLI");
+    engine::test::require_eq(expanded[15], std::string("configured text"), "config text value appended");
+    engine::test::require(
+        std::find(expanded.begin(), expanded.end(), "--inspect") == expanded.end(),
+        "disabled boolean flag omitted");
+    engine::test::require(
+        std::find(expanded.begin(), expanded.end(), "--config-file") == expanded.end(),
+        "config-file argument consumed");
+    std::filesystem::remove(config_path);
+}
+
+void test_cli_key_value_options_override_yaml() {
+    const auto config_path = std::filesystem::temp_directory_path() /
+                             ("audiocpp-cli-config-overrides-" +
+                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                              ".yaml");
+    {
+        std::ofstream config(config_path);
+        config << "session-option:\n"
+               << "  - confucius4_r2t2.unfixed_chunk_num=2\n"
+               << "  - confucius4_r2t2.chunk_size_ms=320\n"
+               << "  - moe_policy=default\n"
+               << "  - moe_cpu_share=0.1\n"
+               << "  - moe_disk_experts=true\n"
+               << "  - moe_pin_experts=false\n"
+               << "  - moe_expert_cache_size=8\n"
+               << "  - moe_disk_expert_read_threads=1\n"
+               << "  - moe_cpu_expert_layers=2\n"
+               << "request-option: temperature=0.7\n";
+    }
+
+    const std::string config_argument = config_path.string();
+    const char * argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--session-option",
+        "confucius4_r2t2.chunk_size_ms=640",
+        "--request-option",
+        "temperature=0.9",
+        "--request-option",
+        "top_k=10",
+        "--moe-policy",
+        "placement_cpu_share",
+        "--moe-cpu-share",
+        "0.5",
+        "--moe-disk-experts",
+        "false",
+        "--moe-pin-experts",
+        "true",
+        "--moe-expert-cache-size",
+        "16",
+        "--moe-disk-expert-read-threads",
+        "4",
+        "--moe-cpu-expert-layers",
+        "3",
+    };
+    const auto expanded = minitts::cli::expand_cli_args(static_cast<int>(sizeof(argv) / sizeof(argv[0])), const_cast<char **>(argv));
+    std::vector<char *> expanded_argv;
+    expanded_argv.reserve(expanded.size() + 1);
+    for (const auto & arg : expanded) {
+        expanded_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    expanded_argv.push_back(nullptr);
+    const int expanded_argc = static_cast<int>(expanded.size());
+
+    const auto session_options =
+        minitts::cli::collect_key_value_args(expanded_argc, expanded_argv.data(), "--session-option");
+    const auto request_options =
+        minitts::cli::collect_key_value_args(expanded_argc, expanded_argv.data(), "--request-option");
+    engine::test::require_eq(
+        session_options.at("confucius4_r2t2.chunk_size_ms"),
+        std::string("640"),
+        "CLI session option overrides YAML");
+    engine::test::require_eq(
+        session_options.at("confucius4_r2t2.unfixed_chunk_num"),
+        std::string("2"),
+        "YAML session option retained");
+    for (const auto & key : {
+             "moe_policy",
+             "moe_cpu_share",
+             "moe_disk_experts",
+             "moe_pin_experts",
+             "moe_expert_cache_size",
+             "moe_disk_expert_read_threads",
+             "moe_cpu_expert_layers"}) {
+        engine::test::require(session_options.count(key) == 0, "CLI MoE option overrides YAML session option");
+    }
+    for (const auto & option : {
+             std::make_pair("--moe-policy", "placement_cpu_share"),
+             std::make_pair("--moe-cpu-share", "0.5"),
+             std::make_pair("--moe-disk-experts", "false"),
+             std::make_pair("--moe-pin-experts", "true"),
+             std::make_pair("--moe-expert-cache-size", "16"),
+             std::make_pair("--moe-disk-expert-read-threads", "4"),
+             std::make_pair("--moe-cpu-expert-layers", "3")}) {
+        engine::test::require_eq(
+            minitts::cli::find_arg(expanded_argc, expanded_argv.data(), option.first).value(),
+            std::string(option.second),
+            "CLI MoE value retained");
+    }
+    engine::test::require_eq(request_options.at("temperature"), std::string("0.9"), "CLI request option overrides YAML");
+    engine::test::require_eq(request_options.at("top_k"), std::string("10"), "CLI-only request option retained");
+    std::filesystem::remove(config_path);
+}
+
+void test_cli_option_aliases_and_load_options_override_yaml() {
+    const auto config_path = std::filesystem::temp_directory_path() /
+                             ("audiocpp-cli-config-alias-overrides-" +
+                              std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+                              ".yaml");
+    {
+        std::ofstream config(config_path);
+        config << "request-option: temperature=0.7\n"
+               << "temperature: 0.6\n"
+               << "load-option:\n"
+               << "  - engine=fp16\n"
+               << "  - threads=4\n";
+    }
+
+    const std::string config_argument = config_path.string();
+    const char * alias_argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--temperature",
+        "0.9",
+        "--load-option",
+        "engine=q8",
+    };
+    const auto alias_expanded = minitts::cli::expand_cli_args(7, const_cast<char **>(alias_argv));
+    std::vector<char *> alias_expanded_argv;
+    for (const auto & arg : alias_expanded) {
+        alias_expanded_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    alias_expanded_argv.push_back(nullptr);
+    const int alias_expanded_argc = static_cast<int>(alias_expanded.size());
+    const auto alias_request_options =
+        minitts::cli::collect_key_value_args(alias_expanded_argc, alias_expanded_argv.data(), "--request-option");
+    const auto alias_load_options =
+        minitts::cli::collect_key_value_args(alias_expanded_argc, alias_expanded_argv.data(), "--load-option");
+    engine::test::require(alias_request_options.empty(), "CLI request alias overrides YAML request-option");
+    engine::test::require_eq(
+        minitts::cli::find_arg(alias_expanded_argc, alias_expanded_argv.data(), "--temperature").value(),
+        std::string("0.9"),
+        "CLI request alias value retained");
+    const auto alias_request = minitts::cli::build_request_from_cli(alias_expanded_argc, alias_expanded_argv.data());
+    engine::test::require_eq(alias_request.options.at("temperature"), std::string("0.9"), "CLI request alias wins");
+    engine::test::require_eq(alias_load_options.at("engine"), std::string("q8"), "CLI load option overrides YAML");
+    engine::test::require_eq(alias_load_options.at("threads"), std::string("4"), "non-overridden YAML load option retained");
+
+    const char * request_option_argv[] = {
+        "audiocpp_cli",
+        "--config-file",
+        config_argument.c_str(),
+        "--request-option",
+        "temperature=0.9",
+        "--load-option",
+        "engine=q8",
+    };
+    const auto request_option_expanded = minitts::cli::expand_cli_args(7, const_cast<char **>(request_option_argv));
+    std::vector<char *> request_option_expanded_argv;
+    for (const auto & arg : request_option_expanded) {
+        request_option_expanded_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    request_option_expanded_argv.push_back(nullptr);
+    const int request_option_expanded_argc = static_cast<int>(request_option_expanded.size());
+    const auto request_options =
+        minitts::cli::collect_key_value_args(request_option_expanded_argc, request_option_expanded_argv.data(), "--request-option");
+    const auto load_options =
+        minitts::cli::collect_key_value_args(request_option_expanded_argc, request_option_expanded_argv.data(), "--load-option");
+    const auto request_option_request =
+        minitts::cli::build_request_from_cli(request_option_expanded_argc, request_option_expanded_argv.data());
+    engine::test::require_eq(request_options.at("temperature"), std::string("0.9"), "CLI request-option overrides YAML alias");
+    engine::test::require_eq(
+        request_option_request.options.at("temperature"),
+        std::string("0.9"),
+        "CLI request-option wins over YAML request alias");
+    engine::test::require(
+        !minitts::cli::find_arg(request_option_expanded_argc, request_option_expanded_argv.data(), "--temperature").has_value(),
+        "overridden YAML request alias omitted");
+    engine::test::require_eq(load_options.at("engine"), std::string("q8"), "CLI load option retained");
+    engine::test::require_eq(load_options.at("threads"), std::string("4"), "non-overridden YAML load option retained");
+    std::filesystem::remove(config_path);
+}
+
+void test_config_file_token_used_as_option_value() {
+    const char * argv[] = {"audiocpp_cli", "--help", "--log", "--text", "--config-file"};
+    const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+    engine::test::require_eq(expanded.size(), size_t{5}, "config-file token retained as text value");
+    engine::test::require_eq(expanded.back(), std::string("--config-file"), "config-file token not parsed as option");
+}
+
+void test_cli_backend_device_name_selection_and_yaml_overrides() {
+    auto make_dev = [](std::string reg, std::string opt, int idx, std::string dev_name, std::string desc) {
+        engine::core::BackendDeviceInfo d;
+        d.backend = std::move(reg);
+        d.backend_option = std::move(opt);
+        d.index = idx;
+        d.device_name = std::move(dev_name);
+        d.description = std::move(desc);
+        d.name = d.description;
+        d.type = opt == "cpu" ? "CPU" : "GPU";
+        return d;
+    };
+    const std::vector<engine::core::BackendDeviceInfo> devices = {
+        make_dev("CUDA", "cuda", 0, "CUDA0", "NVIDIA GeForce RTX 5090"),
+        make_dev("Vulkan", "vulkan", 0, "Vulkan0", "NVIDIA GeForce RTX 5090"),
+        make_dev("Vulkan", "vulkan", 1, "Vulkan1", "Intel(R) Arc(TM) A770"),
+        make_dev("CPU", "cpu", 0, "CPU", "CPU"),
+    };
+
+    // Numeric --device behavior remains unchanged.
+    {
+        const char * argv[] = {"audiocpp_cli", "--backend", "vulkan", "--device", "1"};
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(5, const_cast<char **>(argv), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "numeric backend");
+        engine::test::require_eq(cfg.device, 1, "numeric device");
+        engine::test::require_eq(cfg.threads, 4, "threads");
+    }
+
+    // --device-name without --backend resolves both backend and index.
+    {
+        const char * argv[] = {"audiocpp_cli", "--device-name", "Intel"};
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(3, const_cast<char **>(argv), 2, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "inferred vulkan");
+        engine::test::require_eq(cfg.device, 1, "inferred index");
+    }
+
+    // --backend filters --device-name to disambiguate same GPU across CUDA and Vulkan.
+    {
+        const char * argv[] = {"audiocpp_cli", "--backend", "cuda", "--device-name", "RTX 5090"};
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(5, const_cast<char **>(argv), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Cuda), "disambiguated cuda");
+        engine::test::require_eq(cfg.device, 0, "disambiguated index");
+    }
+
+    // Mutual exclusion, dangling flag, and --backend best rejection.
+    for (const auto & bad_args : std::vector<std::vector<const char *>>{
+             {"audiocpp_cli", "--device", "0", "--device-name", "Vulkan1"},
+             {"audiocpp_cli", "--device-name"},
+             {"audiocpp_cli", "--backend", "best", "--device-name", "CPU"},
+             {"audiocpp_cli", "--device-name", "RTX 5090"},
+         }) {
+        bool rejected = false;
+        try {
+            std::vector<char *> mutable_argv;
+            for (const char * arg : bad_args) mutable_argv.push_back(const_cast<char *>(arg));
+            (void) minitts::cli::parse_backend_config_from_cli(
+                static_cast<int>(mutable_argv.size()), mutable_argv.data(), 4, &devices);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        engine::test::require(rejected, "invalid --device-name CLI invocation rejected");
+    }
+
+    // YAML config overrides: CLI --device-name supersedes YAML device, and CLI --device supersedes YAML device-name.
+    const auto temp_dir = std::filesystem::temp_directory_path();
+    const auto yaml_device = temp_dir / "audiocpp_cli_device_override_test.yaml";
+    {
+        std::ofstream out(yaml_device);
+        out << "backend: vulkan\ndevice: 0\n";
+    }
+    {
+        const std::string path_str = yaml_device.string();
+        const char * argv[] = {"audiocpp_cli", "--config-file", path_str.c_str(), "--device-name", "Intel"};
+        const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+        std::vector<char *> exp_argv;
+        for (const auto & arg : expanded) exp_argv.push_back(const_cast<char *>(arg.c_str()));
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(
+            static_cast<int>(exp_argv.size()), exp_argv.data(), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "YAML+CLI backend");
+        engine::test::require_eq(cfg.device, 1, "CLI --device-name overrides YAML device");
+    }
+    {
+        std::ofstream out(yaml_device);
+        out << "backend: vulkan\ndevice-name: Intel\n";
+    }
+    {
+        const std::string path_str = yaml_device.string();
+        const char * argv[] = {"audiocpp_cli", "--config-file", path_str.c_str(), "--device", "0"};
+        const auto expanded = minitts::cli::expand_cli_args(5, const_cast<char **>(argv));
+        std::vector<char *> exp_argv;
+        for (const auto & arg : expanded) exp_argv.push_back(const_cast<char *>(arg.c_str()));
+        const auto cfg = minitts::cli::parse_backend_config_from_cli(
+            static_cast<int>(exp_argv.size()), exp_argv.data(), 4, &devices);
+        engine::test::require_eq(static_cast<int>(cfg.type), static_cast<int>(engine::core::BackendType::Vulkan), "YAML+CLI numeric backend");
+        engine::test::require_eq(cfg.device, 0, "CLI --device overrides YAML device-name");
+    }
+    {
+        std::ofstream out(yaml_device);
+        out << "device: 0\ndevice-name: Intel\n";
+    }
+    {
+        const std::string path_str = yaml_device.string();
+        const char * argv[] = {"audiocpp_cli", "--config-file", path_str.c_str()};
+        const auto expanded = minitts::cli::expand_cli_args(3, const_cast<char **>(argv));
+        std::vector<char *> exp_argv;
+        for (const auto & arg : expanded) exp_argv.push_back(const_cast<char *>(arg.c_str()));
+        bool rejected = false;
+        try {
+            (void) minitts::cli::parse_backend_config_from_cli(
+                static_cast<int>(exp_argv.size()), exp_argv.data(), 4, &devices);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        engine::test::require(rejected, "YAML with both device and device-name must be rejected");
+    }
+    std::filesystem::remove(yaml_device);
+}
+
 }  // namespace
 
 int main() {
+    engine::debug::configure_logging({true});
     test_large_safe_integer_numbers_stay_decimal();
     test_float_numbers_keep_json_formatting();
     test_unsafe_integer_numbers_are_not_silently_rounded();
     test_malformed_seeds_are_invalid_requests();
+    test_random_seed_resolution();
     test_audio_only_language_is_request_option();
     test_audio_chunk_shortcut_uses_canonical_name();
     test_normalized_request_option_aliases();
     test_out_format_selects_wav_sample_format();
     test_request_json_artifacts();
+    test_request_json_voice_ref();
     test_component_exec_plans();
     test_non_negative_int_flag_values();
+    test_cli_arguments_can_be_loaded_from_yaml();
+    test_cli_key_value_options_override_yaml();
+    test_cli_option_aliases_and_load_options_override_yaml();
+    test_config_file_token_used_as_option_value();
+    test_cli_backend_device_name_selection_and_yaml_overrides();
     std::cout << "cli_request_options_test passed\n";
     return 0;
 }

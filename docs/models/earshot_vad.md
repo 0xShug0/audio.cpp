@@ -198,6 +198,6 @@ Earshot's raw frame scores reach a PR-AUC of 0.977 on the same set.
 Regenerate it with:
 
 ```bash
-python tests/earshot_vad/convert_earshot.py \
+python tools/gguf/earshot_vad_weights_prepare.py \
   --output assets/framework/models/earshot_vad/earshot_vad.safetensors
 ```

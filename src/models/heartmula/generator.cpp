@@ -373,6 +373,7 @@ HeartMuLaGeneratedFrames generate_heartmula_frames(
         prompt_embeddings.values,
         prompt_embeddings.batch_size,
         prompt_embeddings.steps);
+    const int64_t max_audio_frames = static_cast<int64_t>(request.options.duration_seconds * 1000.0F) / 80;
     HeartMuLaBackboneCachedState backbone_state;
     mula.reset_backbone_cached_state(backbone_state, std::move(backbone.state));
 
@@ -397,7 +398,6 @@ HeartMuLaGeneratedFrames generate_heartmula_frames(
         scratch);
     append_first_branch_frame(out, current_frame, config);
 
-    const int64_t max_audio_frames = static_cast<int64_t>(request.options.duration_seconds * 1000.0F) / 80;
     for (int64_t frame_index = 0; frame_index < max_audio_frames; ++frame_index) {
         auto next_embeddings = mula.merge_frame_embeddings(next_frame_embedding_inputs(current_frame, encoding.batch_size, config));
         auto next_backbone = mula.backbone_cached_step(

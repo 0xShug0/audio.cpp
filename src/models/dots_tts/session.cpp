@@ -843,6 +843,7 @@ std::vector<DotsLatentMatrix> DotsSession::generate_latent_patches(
     debug::timing_log_scalar("dots_tts.decode.llm_prefill_ms", llm_prefill_ms);
     debug::timing_log_scalar("dots_tts.decode.llm_decode_ms", llm_decode_ms);
     debug::timing_log_scalar("dots_tts.decode.eos_ms", eos_ms);
+    flow_.release_decode_cache();
     return payload;
 }
 
@@ -1147,6 +1148,7 @@ std::vector<DotsLatentMatrix> DotsSession::generate_edit_latent_patches(
     debug::timing_log_scalar("dots_tts.edit.decode.llm_prefill_ms", llm_prefill_ms);
     debug::timing_log_scalar("dots_tts.edit.decode.llm_decode_ms", llm_decode_ms);
     debug::timing_log_scalar("dots_tts.edit.decode.eos_ms", eos_ms);
+    flow_.release_decode_cache();
     return payload;
 }
 
@@ -1489,6 +1491,7 @@ runtime::TaskResult DotsSession::finish_stream() {
 
 void DotsSession::reset() {
     streaming_result_.reset();
+    flow_.release_decode_cache();
 }
 
 runtime::StreamEvent DotsSession::process_audio_chunk(const runtime::AudioChunk & chunk) {

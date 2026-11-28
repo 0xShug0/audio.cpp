@@ -40,6 +40,15 @@ runtime::AudioBuffer trim_mono_audio(
     return audio;
 }
 
+void validate_config(const ChatterboxVoiceConversionConfig & config) {
+    if (config.num_inference_steps <= 0) {
+        throw std::runtime_error("Chatterbox VC num_inference_steps must be positive");
+    }
+    if (!(config.s3gen_cfg_rate >= 0.0F)) {
+        throw std::runtime_error("Chatterbox VC s3gen_cfg_rate must be non-negative");
+    }
+}
+
 }  // namespace
 
 runtime::AudioBuffer load_chatterbox_vc_audio_mono(
@@ -84,28 +93,40 @@ ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
     const runtime::AudioBuffer & source_audio,
     const runtime::AudioBuffer & target_voice,
     const ChatterboxVoiceConversionConfig & config) const {
-    if (config.num_inference_steps <= 0) {
-        throw std::runtime_error("Chatterbox VC num_inference_steps must be positive");
-    }
-    if (!(config.s3gen_cfg_rate >= 0.0F)) {
-        throw std::runtime_error("Chatterbox VC s3gen_cfg_rate must be non-negative");
-    }
-    validate_audio(source_audio, "source");
-    validate_audio(target_voice, "target");
+    validate(source_audio, config);
+    const auto target_ref_start = std::chrono::steady_clock::now();
+    const auto target_ref = prepare_target(target_voice);
+    const double target_ref_ms = engine::debug::elapsed_ms(target_ref_start);
+    auto outputs = convert(source_audio, target_ref, config);
+    outputs.target_ref_ms = target_ref_ms;
+    engine::debug::timing_log_scalar("chatterbox.vc.target_ref_ms", target_ref_ms);
+    return outputs;
+}
 
-    ChatterboxVoiceConversionOutputs outputs;
-    const auto source_16k = normalize_chatterbox_vc_audio_mono(source_audio, 16000);
+void ChatterboxVCComponent::validate(
+    const runtime::AudioBuffer & source_audio,
+    const ChatterboxVoiceConversionConfig & config) const {
+    validate_config(config);
+    validate_audio(source_audio, "source");
+}
+
+EmbedReferenceOutputs ChatterboxVCComponent::prepare_target(const runtime::AudioBuffer & target_voice) const {
+    validate_audio(target_voice, "target");
     const auto target_24k = trim_mono_audio(
         normalize_chatterbox_vc_audio_mono(target_voice, 24000),
         prompt_prep_config_.decoder_condition_samples);
     const auto target_16k = normalize_chatterbox_vc_audio_mono(target_24k, 16000);
+    return tokenizer_.embed_reference_from_wavs(speaker_encoder_, target_24k, target_16k);
+}
 
-    const auto target_ref_start = std::chrono::steady_clock::now();
-    auto target_ref = tokenizer_.embed_reference_from_wavs(
-        speaker_encoder_,
-        target_24k,
-        target_16k);
-    outputs.target_ref_ms = engine::debug::elapsed_ms(target_ref_start);
+ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
+    const runtime::AudioBuffer & source_audio,
+    const EmbedReferenceOutputs & target_ref,
+    const ChatterboxVoiceConversionConfig & config) const {
+    validate(source_audio, config);
+
+    ChatterboxVoiceConversionOutputs outputs;
+    const auto source_16k = normalize_chatterbox_vc_audio_mono(source_audio, 16000);
 
     const auto source_tokenizer_start = std::chrono::steady_clock::now();
     auto source_tokens = tokenizer_.tokenize(source_16k, std::nullopt);
@@ -139,7 +160,6 @@ ChatterboxVoiceConversionOutputs ChatterboxVCComponent::convert(
         s3gen_->release_vocoder_graphs();
     }
 
-    engine::debug::timing_log_scalar("chatterbox.vc.target_ref_ms", outputs.target_ref_ms);
     engine::debug::timing_log_scalar("chatterbox.vc.source_tokenizer_ms", outputs.source_tokenizer_ms);
     engine::debug::timing_log_scalar("chatterbox.vc.s3gen.total_ms", outputs.s3gen_ms);
     engine::debug::timing_log_scalar("chatterbox.vc.s3gen.token2mel.total_ms", outputs.s3gen_token2mel_ms);

@@ -1,98 +1,28 @@
 # MiraTTS validation
 
-This directory follows the long-lived validation pattern used for the OuteTTS
+Historical harness documentation: the removed runner and original commands
+are preserved in the [pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/README.md).
+Reported measurements, hashes and limitations are unchanged. These recipes
+are not instructions for the current tree.
+
+The historical harness followed the long-lived validation pattern used for the OuteTTS
 port in PR #63. The model is loaded once and exercised by a sequence containing
 cold, repeat, changed-prompt, long-form, and post-long-form repeat requests.
 Streaming has a separate long-lived sequence so that offline and streaming
 sessions do not duplicate model weights in VRAM.
 
-The benchmark reports one JSON object per request with wall time, generated
+The benchmark reported one JSON object per request with wall time, generated
 duration, real-time factor, sample/frame counts, a deterministic audio hash,
-and output path. Streaming runs additionally report first-event latency and the
+and output path. Streaming runs additionally reported first-event latency and the
 number of progressively emitted audio events.
 
-## Build
+## Historical workflow
 
-```powershell
-cmake -S . -B build/windows-cuda-release `
-  -DGGML_CUDA=ON -DENGINE_BUILD_WARMBENCH=ON `
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build/windows-cuda-release --config Release `
-  --target mira_tts_warm_bench -j 8
-```
-
-## Native long-lived runs
-
-Set paths once:
-
-```powershell
-$bench = "build/windows-cuda-release/bin/mira_tts_warm_bench.exe"
-$model = "../models_v3_test/MiraTTS-GGUF/mira-tts-bf16.gguf"
-$voice = "../models_v3_test/MiraTTS-comparison/00-reference-voice.wav"
-$spec = "model_specs/mira_tts.json"
-$out = "build/logs/warmbench/mira_tts"
-```
-
-Run the five-case offline sequence:
-
-```powershell
-& $bench --model $model --model-spec-override $spec --backend cuda `
-  --voice-ref $voice --request-file tests/mira_tts/offline_requests.json `
-  --audio-out-dir "$out/native-offline" `
-  --summary-file "$out/native-offline.json" `
-  --log-file "$out/native-offline.log"
-```
-
-Run the repeated streaming sequence:
-
-```powershell
-& $bench --model $model --model-spec-override $spec --backend cuda `
-  --run-mode streaming --voice-ref $voice `
-  --request-file tests/mira_tts/streaming_requests.json `
-  --audio-out-dir "$out/native-streaming" `
-  --summary-file "$out/native-streaming.json" `
-  --log-file "$out/native-streaming.log"
-```
-
-Validate deterministic repeats, streaming events, durations, hashes, and WAV
-readability (with FFprobe when available):
-
-```powershell
-python tests/mira_tts/validate_bench.py `
-  --offline-summary "$out/native-offline.json" `
-  --streaming-summary "$out/native-streaming.json"
-```
-
-For a memory measurement, start the benchmark with `--hold-seconds 30` and
-sample the process plus the selected GPU while it is holding the loaded
-session. Record both peak host RSS and peak device memory; do not report only
-the final idle value.
-
-## Trusted Python sequence
-
-Run the same offline cases through a local, revision-pinned upstream snapshot:
-
-```powershell
-python tools/community_models/mira_tts_reference_bench.py `
-  --model-dir <verified-upstream-snapshot> --reference $voice `
-  --request-file tests/mira_tts/offline_requests.json `
-  --output-dir "$out/python-offline" `
-  --summary-file "$out/python-offline.json"
-```
-
-Compare every matched request. Exact frame count is required for the strongest
-deterministic parity run:
-
-```powershell
-python tools/community_models/compare_mira_tts_outputs.py `
-  --cpp-summary "$out/native-offline.json" `
-  --python-summary "$out/python-offline.json" `
-  --output "$out/parity.json" --require-exact-frames
-```
-
-The default gates are waveform cosine >= 0.95 and log-mel cosine >= 0.95.
-Threshold changes must be justified by a saved artifact and must not hide a
-frame-count, token-boundary, or sampling mismatch.
+The archived guide above contains the original build, native offline/streaming,
+trusted Python comparison, memory-hold and artifact validation commands.
+The historical comparison gates were waveform cosine >= 0.95 and log-mel
+cosine >= 0.95, with exact frame counts required for the strongest parity run.
+No replacement timing or parity results are claimed after harness removal.
 
 ## Acceptance matrix
 
@@ -112,19 +42,9 @@ Run deterministic checks before experimenting with unseeded sampling. If a
 repeat hash changes, inspect generated speech-token boundaries, prompt/context
 tokens, and component traces before comparing subjective audio quality.
 
-## Exact-output optimization comparisons
+## Historical exact-output comparisons
 
-For performance-only changes, run the same fixtures with the same model,
-reference, seed, thread count, device, and request options before and after the
-change. Then compare each offline/streaming summary pair:
-
-```powershell
-python tests/mira_tts/compare_optimization.py --before <baseline.json> --after <candidate.json>
-python -m unittest discover -s tests/mira_tts -p test_compare_optimization.py
-```
-
-The comparison rejects changed request sets, audio hashes, WAV bytes, sample
-metadata, or streaming event counts. It reports timing changes without treating
-a single noisy measurement as a performance failure. Run `validate_bench.py`
-as well to check repeat determinism and streaming lifecycle behavior. Relative
-WAV paths are resolved from the current directory, normally the repository root.
+The pinned guide above preserves the optimization comparison commands and
+original artifact conventions. They compared request sets, audio hashes,
+WAV bytes, sample metadata and streaming event counts, and reported timing
+changes without treating a single noisy measurement as a performance failure.

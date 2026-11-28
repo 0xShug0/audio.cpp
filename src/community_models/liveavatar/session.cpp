@@ -39,14 +39,14 @@ engine::runtime::ModelMetadata make_metadata(const LiveAvatarAssets &) {
 }
 
 engine::runtime::VoiceArtifact make_video_artifact(
-    LiveAvatarVideoResult video,
+    engine::video::RgbVideoBuffer video,
     std::string id,
     std::unordered_map<std::string, std::string> meta = {}) {
     meta.emplace("format", "rgb24");
     meta.emplace("width", std::to_string(video.width));
     meta.emplace("height", std::to_string(video.height));
     meta.emplace("frames", std::to_string(video.frames));
-    meta.emplace("fps", std::to_string(video.fps));
+    meta.emplace("fps", std::to_string(static_cast<int64_t>(video.fps)));
     return engine::runtime::make_voice_artifact(
         engine::runtime::ArtifactKind::Custom,
         std::move(id),
@@ -54,7 +54,7 @@ engine::runtime::VoiceArtifact make_video_artifact(
         std::move(meta));
 }
 
-engine::runtime::TaskResult make_video_result(LiveAvatarVideoResult video) {
+engine::runtime::TaskResult make_video_result(engine::video::RgbVideoBuffer video) {
     engine::runtime::TaskResult result;
     result.output_artifacts.push_back(make_video_artifact(std::move(video), "liveavatar_video_rgb24"));
     return result;
@@ -181,7 +181,7 @@ void LiveAvatarSession::start_stream(const engine::runtime::TaskRequest & reques
     int64_t start_frame = 0;
     auto generated = pipeline_->generate(
         generation,
-        [&](LiveAvatarVideoResult chunk) {
+        [&](engine::video::RgbVideoBuffer chunk) {
             const int64_t frames = chunk.frames;
             std::unordered_map<std::string, std::string> meta;
             meta.emplace("chunk_index", std::to_string(chunk_index));

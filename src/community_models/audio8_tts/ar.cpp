@@ -865,28 +865,6 @@ ArkttsStaticDecoderOutputs build_arktts_static_decoder(
     };
 }
 
-std::vector<float> build_falcon_embeddings(
-    const Audio8TtsConfig & config,
-    const Audio8TtsDualARWeights & weights,
-    const int32_t * matrix,
-    int64_t steps) {
-    const int64_t hidden = config.text.dim;
-    std::vector<float> out(static_cast<size_t>(steps * hidden), 0.0F);
-    for (int64_t step = 0; step < steps; ++step) {
-        const int32_t token = matrix[step];
-        auto row = lookup_row(weights.text_embedding_host, token, hidden);
-        if (is_semantic_token(config, token)) {
-            for (int64_t codebook = 0; codebook < config.fast.num_codebooks; ++codebook) {
-                const int32_t code = matrix[(codebook + 1) * steps + step];
-                add_row(weights.codebook_embedding_host, codebook * config.fast.vocab_size + code, hidden, row);
-            }
-        }
-        for (auto & v : row) v *= config.text.embedding_multiplier;
-        std::copy(row.begin(), row.end(), out.begin() + static_cast<std::ptrdiff_t>(step * hidden));
-    }
-    return out;
-}
-
 // ============================================================================
 // Falcon-H1 (Mamba2 + hybrid GQA attention) stateful single-token forward.
 // Replaces the documented stub (TODO(Falcon-H1)) with a full Mamba2 port
@@ -1966,7 +1944,6 @@ std::vector<float> build_falcon_embedding_step(
     int64_t steps,
     int64_t step) {
     const int64_t hidden = config.text.dim;
-    const int64_t codebook_rows = config.fast.num_codebooks + 1;
     const int32_t token = matrix[step];
     std::vector<float> out(static_cast<size_t>(hidden), 0.0F);
     auto row = lookup_row(weights.text_embedding_host, token, hidden);

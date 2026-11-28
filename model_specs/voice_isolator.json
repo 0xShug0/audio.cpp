@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "family": "voice_isolator",
+  "display_name": "Voice Isolator v1",
+  "description": "Inworld's 48 kHz voice isolation: an offline checkpoint and a causal realtime checkpoint with selectable look-ahead.",
+  "category": "audio_tools",
+  "status": "supported",
+  "tasks": [
+    "s2s"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "language_agnostic"
+  ],
+  "capabilities": {
+    "s2s": [
+      "audio_enhancement"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "options": {
+    "request": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Storage of the large projection matrices. native takes BF16 on CPUs with AVX512-BF16 and F32 elsewhere; norms, biases and Mamba state stay F32.",
+        "values": [
+          "native",
+          "f32",
+          "bf16"
+        ],
+        "default": "native",
+        "required": false
+      },
+      {
+        "name": "attention_cache_type",
+        "type": "enum",
+        "description": "Storage of the streaming attention keys and values. native takes Q8_0 on CPU and F16 elsewhere; f32 gives the reference numerics.",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "q8_0",
+          "q5_0",
+          "q4_0"
+        ],
+        "default": "native",
+        "required": false
+      },
+      {
+        "name": "lookahead_frames",
+        "type": "int",
+        "description": "Realtime checkpoint: look-ahead in 10 ms frames, one of the trained positions (0, 2 or 4). -1 takes the checkpoint's default.",
+        "min": -1,
+        "max": 4,
+        "default": -1,
+        "required": false
+      },
+      {
+        "name": "block_frames",
+        "type": "int",
+        "description": "Realtime checkpoint: stream frames computed together. Larger blocks raise throughput and add no latency.",
+        "min": 1,
+        "max": 64,
+        "default": 4,
+        "required": false
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Offline checkpoint: render window in seconds; zero takes the checkpoint's own (12 s).",
+        "min": 0,
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "audio_chunk_overlap_sec",
+        "type": "float",
+        "description": "Offline checkpoint: overlap between render windows in seconds; zero takes the checkpoint's own (2 s).",
+        "min": 0,
+        "default": 0,
+        "required": false
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "inworld/voice-isolator",
+      "revision": "9b0285b3fe8403aa8e2f1dbb2165a80a4294c970",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "voice_isolator_realtime_f32",
+      "display_name": "Voice Isolator v1 Realtime F32 GGUF",
+      "description": "Causal checkpoint: streaming, or offline over a whole file.",
+      "default": true,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "voice-isolator-GGUF",
+      "files": [
+        "voice-isolator-realtime-f32.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Etherll/voice-isolator-GGUF",
+        "revision": "488f02f87199e3f24ad195b5b2d4b44705aca545",
+        "gated": false
+      }
+    },
+    {
+      "id": "voice_isolator_offline_f32",
+      "display_name": "Voice Isolator v1 Offline F32 GGUF",
+      "description": "Two-sided checkpoint: offline only.",
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "voice-isolator-GGUF",
+      "files": [
+        "voice-isolator-offline-f32.gguf"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "Etherll/voice-isolator-GGUF",
+        "revision": "488f02f87199e3f24ad195b5b2d4b44705aca545",
+        "gated": false
+      }
+    },
+    {
+      "id": "voice_isolator_safetensors",
+      "display_name": "Voice Isolator v1 Safetensors (offline + realtime)",
+      "default": false,
+      "format": "safetensors",
+      "precision": "f32",
+      "target_directory": "voice-isolator",
+      "files": [
+        "denoiser.safetensors",
+        "denoiser_realtime.safetensors",
+        "LICENSE",
+        "NOTICE"
+      ]
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "voice_isolator_realtime_f32",
+    "tags": [
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/voice_isolator.md",
+      "docs/audio_tools.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "weights"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "optional_files": {
+        "offline_checkpoint": "model:denoiser.safetensors",
+        "realtime_checkpoint": "model:denoiser_realtime.safetensors"
+      },
+      "optional_tensors": {
+        "offline": "model:denoiser.safetensors",
+        "realtime": "model:denoiser_realtime.safetensors"
+      }
+    }
+  ]
+}

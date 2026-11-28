@@ -1,7 +1,8 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onMount } from 'svelte';
   import { Users, Upload, Search, Save, Trash2, Download, FileText, Mic } from '@lucide/svelte';
-  import { listVoices, saveVoice, deleteVoice, type SavedVoice } from '$lib/library';
+  import { listVoices, saveVoice, deleteVoice, exportVoiceLibrary, importVoiceLibrary, type SavedVoice } from '$lib/library';
   import { browserDecodeToWav } from '$lib/audio';
   import MediaPreview from '$lib/MediaPreview.svelte';
 
@@ -11,12 +12,16 @@
   let draft: SavedVoice | undefined;
   let original: SavedVoice | undefined;
   let query = '';
+  let sort = 'name';
+  let notice = '';
+  let backupInput: HTMLInputElement;
   let busy = false;
   let error = '';
   let input: HTMLInputElement;
-  $: filtered = voices.filter(v => `${v.name} ${v.transcript}`.toLowerCase().includes(query.toLowerCase()));
+  $: filtered = voices.filter(v => `${v.name} ${v.transcript}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => sort === 'name'
+    ? a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }) || a.id.localeCompare(b.id)
+    : b.createdAt - a.createdAt);
   $: dirty = !!draft && (!original || draft.name !== original.name || draft.transcript !== original.transcript || draft.audio !== original.audio);
-  $: previewFile = draft ? new File([draft.audio], `${draft.name}.wav`, { type: 'audio/wav' }) : null;
 
   export function canClose() {
     return !busy && (!dirty || confirm('Discard unsaved voice edits?'));
@@ -34,7 +39,7 @@
     busy = true; error = '';
     try {
       const audio = await browserDecodeToWav(file);
-      draft = { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), transcript: '', audio, createdAt: Date.now() };
+      draft = { id: randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), transcript: '', audio, createdAt: Date.now() };
       original = undefined;
     } catch (e) { error = `Cannot import ${file.name}: ${String(e)}`; }
     finally { busy = false; input.value = ''; }
@@ -72,6 +77,31 @@
     link.href = url; link.download = `${draft.name}.wav`; link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+  async function exportLibrary() {
+    busy = true; error = ''; notice = '';
+    try {
+      const url = URL.createObjectURL(await exportVoiceLibrary());
+      const link = document.createElement('a');
+      link.href = url; link.download = 'audiocpp-voices.json'; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      notice = `Exported ${voices.length} saved voices. Unsaved edits are not included.`;
+    } catch (e) { error = String(e); }
+    finally { busy = false; }
+  }
+  async function importLibrary(file?: File) {
+    if (!file || busy) return;
+    if ((dirty && !confirm('Discard unsaved voice edits?')) ||
+        !confirm('Import this backup? Existing voices with matching IDs will be updated. Other saved voices will be kept.')) {
+      backupInput.value = ''; return;
+    }
+    busy = true; error = ''; notice = '';
+    try {
+      const count = await importVoiceLibrary(file);
+      await refresh(); draft = undefined; original = undefined;
+      await onchange(); notice = `Imported ${count} voices.`;
+    } catch (e) { error = String(e); }
+    finally { busy = false; backupInput.value = ''; }
+  }
   onMount(() => { refresh().catch(e => error = String(e)); });
 </script>
 
@@ -80,13 +110,21 @@
 <section class="voice-library-page">
   <header class="library-head">
     <div class="library-title"><Users size={25}/><h1>Voices</h1><span>{voices.length} saved · This browser</span></div>
-    <button disabled={busy} on:click={() => input.click()}><Upload size={16}/>Add voice</button>
+    <div class="library-actions">
+      <button disabled={busy || !voices.length} on:click={exportLibrary}><Download size={16}/>Export library</button>
+      <button disabled={busy} on:click={() => backupInput.click()}><Upload size={16}/>Import library</button>
+      <button disabled={busy} on:click={() => input.click()}><Upload size={16}/>Add voice</button>
+    </div>
+    <input hidden bind:this={backupInput} type="file" accept="application/json,.json" on:change={e => importLibrary(e.currentTarget.files?.[0])}/>
     <input hidden bind:this={input} type="file" accept="audio/*" on:change={e => importVoice(e.currentTarget.files?.[0])}/>
   </header>
+  <p class="library-help">Export all saved voices, including recordings and transcripts, to transfer them to another browser or device. Backups stay on your device.</p>
+  {#if notice}<p role="status">{notice}</p>{/if}
   {#if error}<p class="library-error" role="alert">{error}</p>{/if}
   <div class="library-layout">
     <div class="voice-browser">
       <label class="voice-search"><Search size={16}/><input aria-label="Search voices" placeholder="Search voices" bind:value={query}/></label>
+      <label class="voice-sort">Sort voices<select aria-label="Sort voices" bind:value={sort}><option value="name">Name (A–Z)</option><option value="newest">Newest first</option></select></label>
       <div class="voice-grid">
         {#each filtered as voice (voice.id)}
           <button disabled={busy} class="voice-tile" class:active={draft?.id === voice.id} on:click={() => select(voice)}>
@@ -100,7 +138,7 @@
     <aside class="voice-editor">
       {#if draft}
         <label>Name<input aria-label="Voice name" bind:value={draft.name} disabled={busy}/></label>
-        <MediaPreview file={previewFile} label="Voice preview"/>
+        <MediaPreview file={draft.audio} name={draft.name} label="Voice preview"/>
         <label>Words spoken in the recording (optional)<textarea aria-label="Voice transcript" rows="5" bind:value={draft.transcript} disabled={busy}></textarea></label>
         <div class="tools">
           <button class="primary" disabled={busy || !dirty} on:click={save}><Save size={16}/>{dirty ? 'Save voice' : 'Saved'}</button>
@@ -115,6 +153,9 @@
 
 <style>
   .voice-library-page { min-width: 0; }
+  .library-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .library-help { color:var(--muted); font-size:12px; margin:0 0 20px; }
+  .voice-sort { display:flex; align-items:center; gap:12px; margin-bottom:16px; color:var(--muted); font-size:12px; }
   .library-head, .library-title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .library-head { justify-content: space-between; padding: 8px 0 20px; }
   .library-title h1 { margin: 0; font-size: 24px; }

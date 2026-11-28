@@ -11,19 +11,42 @@
 
 namespace engine::models::irodori_tts {
 
+class IrodoriRfSamplerState;
+struct IrodoriRfSampleRequest;
+struct IrodoriRfSampleResult;
+struct IrodoriRfSampleTiming;
+
+struct IrodoriFlowImplementation {
+    bool interval_conditioning;
+    bool validate_rf_guidance;
+    int64_t default_inference_steps;
+    const char *sample_log;
+    IrodoriRfSampleResult (IrodoriRfSamplerState::*sample)(
+        const IrodoriRfSampleRequest &, IrodoriRfSampleTiming *);
+};
+
+extern const IrodoriFlowImplementation kIrodoriRfImplementation;
+extern const IrodoriFlowImplementation kIrodoriMfImplementation;
+const IrodoriFlowImplementation & require_irodori_flow_implementation(const std::string & parameterization);
+
 struct IrodoriModelConfig {
-    std::string flow_parameterization = "rf_velocity";
+    const IrodoriFlowImplementation *impl = &kIrodoriRfImplementation;
     int64_t latent_dim = 32;
     int64_t latent_patch_size = 1;
     int64_t model_dim = 1280;
     int64_t num_layers = 12;
     int64_t num_heads = 20;
-    float mlp_ratio = 2.875F;
-    float text_mlp_ratio = 2.6F;
-    float speaker_mlp_ratio = 2.6F;
+    // MLP widths are int(dim * ratio) in Python, a double product. In float,
+    // 1280 * 2.6 (v4 Large's speaker encoder) truncates to 3327, not 3328.
+    double mlp_ratio = 2.875;
+    double text_mlp_ratio = 2.6;
+    double speaker_mlp_ratio = 2.6;
     float dropout = 0.0F;
     int64_t text_vocab_size = 99574;
     std::string text_encoder_type = "scratch";
+    // Python's ModelConfig default. The v4 Small checkpoints set
+    // "sbintuitions/modernbert-ja-310m".
+    std::string text_tokenizer_repo = "sbintuitions/sarashina2.2-0.5b";
     bool text_add_bos = true;
     int64_t text_dim = 512;
     int64_t text_layers = 10;
@@ -36,6 +59,16 @@ struct IrodoriModelConfig {
     float pretrained_text_full_rope_theta = 160000.0F;
     float pretrained_text_sliding_rope_theta = 10000.0F;
     std::vector<std::string> pretrained_text_layer_types;
+    // "modernbert" (v4 Small) or "t5gemma2" (v4 Large, the encoder half of
+    // google/t5gemma-2-1b-1b). The fields below are read for t5gemma2 only.
+    std::string pretrained_text_model_type = "modernbert";
+    int64_t pretrained_text_kv_heads = 0;
+    int64_t pretrained_text_head_dim = 0;
+    float pretrained_text_rms_norm_eps = 1.0e-6F;
+    float pretrained_text_query_pre_attn_scalar = 0.0F;
+    float pretrained_text_attn_logit_softcap = 0.0F;
+    float pretrained_text_full_rope_freq_scale = 1.0F;
+    float pretrained_text_sliding_rope_freq_scale = 1.0F;
     std::string pretrained_projector_type = "linear";
     float pretrained_projector_hidden_ratio = 2.0F;
     bool use_caption_condition = false;
@@ -44,7 +77,7 @@ struct IrodoriModelConfig {
     int64_t caption_dim = 0;
     int64_t caption_layers = 0;
     int64_t caption_heads = 0;
-    float caption_mlp_ratio = 0.0F;
+    double caption_mlp_ratio = 0.0;
     int64_t speaker_dim = 768;
     int64_t speaker_layers = 8;
     int64_t speaker_heads = 12;
@@ -74,11 +107,12 @@ struct IrodoriModelConfig {
     int64_t patched_latent_dim() const noexcept;
     int64_t speaker_patched_latent_dim() const noexcept;
     bool use_pretrained_text_encoder() const noexcept;
+    bool use_t5gemma2_text_encoder() const noexcept;
     int64_t caption_vocab_size_resolved() const noexcept;
     int64_t caption_dim_resolved() const noexcept;
     int64_t caption_layers_resolved() const noexcept;
     int64_t caption_heads_resolved() const noexcept;
-    float caption_mlp_ratio_resolved() const noexcept;
+    double caption_mlp_ratio_resolved() const noexcept;
 };
 
 struct IrodoriCodecConfig {

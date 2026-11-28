@@ -424,6 +424,14 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
     const struct ggml_tensor * src0 = op->src[0];
     const struct ggml_tensor * src1 = op->src[1];
 
+    if (op->op == GGML_OP_RMS_NORM_CHANNELS_SILU && op->type == GGML_TYPE_F16) {
+        return false;
+    }
+
+    if (op->op == GGML_OP_CONV_3D && op->op_params[12] != 0) {
+        return false; // Explicit CUDA lowering must not be scheduled on CPU.
+    }
+
     if (op->op == GGML_OP_NONE || op->op == GGML_OP_RESHAPE || op->op == GGML_OP_VIEW || op->op == GGML_OP_PERMUTE || op->op == GGML_OP_TRANSPOSE) {
         return true;
     }

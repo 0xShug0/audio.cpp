@@ -81,10 +81,10 @@ The legacy unprefixed session name `text_chunk_size` remains accepted for
 | `miotts.best_of_n_default` | integer | `1` | Default best-of-N candidate count. |
 | `miotts.best_of_n_max` | integer | `8` | Maximum best-of-N candidate count. |
 | `miotts.best_of_n_language` | `auto`, `en`, `ja` | `auto` | Default language used when scoring candidates. |
-| `miotts.prefill_graph_arena_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `miotts.decode_graph_arena_mb` | integer >= 1 | `1024` | Context or graph arena size in MiB. |
-| `miotts.weight_context_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `miotts.codec_weight_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `miotts.codec_constant_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `miotts.global_graph_arena_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `miotts.wave_graph_arena_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+| `miotts.prefill_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
+| `miotts.decode_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
+| `miotts.weight_context_mb` | integer >= 1 | `8` | Context or graph arena size in MiB. |
+| `miotts.codec_weight_context_mb` | integer >= 1 | `8` | Context or graph arena size in MiB. |
+| `miotts.codec_constant_context_mb` | integer >= 1 | `16` | Context or graph arena size in MiB. |
+| `miotts.global_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
+| `miotts.wave_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |

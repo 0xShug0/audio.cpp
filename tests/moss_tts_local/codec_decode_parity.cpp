@@ -4,6 +4,8 @@
 // against the Python reference (model.decode with fp32 / autocast disabled).
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/audio/conversion.h"
+#include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/codecs/moss_audio_tokenizer_codec_runtime.h"
 
@@ -34,54 +36,20 @@ int int_arg(int argc, char ** argv, const std::string & name, int fallback) {
     return std::stoi(arg_value(argc, argv, name, std::to_string(fallback)));
 }
 
-void write_pcm16_wav(
-    const std::string & path,
-    const std::vector<std::vector<float>> & channels,
-    int32_t sample_rate) {
-    const int32_t num_channels = static_cast<int32_t>(channels.size());
-    const int64_t frames = channels.empty() ? 0 : static_cast<int64_t>(channels.front().size());
-    const int32_t bits = 16;
-    const int32_t block_align = num_channels * bits / 8;
-    const int32_t byte_rate = sample_rate * block_align;
-    const int32_t data_bytes = static_cast<int32_t>(frames * block_align);
-
-    std::ofstream out(path, std::ios::binary);
-    const auto put32 = [&](int32_t value) { out.write(reinterpret_cast<const char *>(&value), 4); };
-    const auto put16 = [&](int16_t value) { out.write(reinterpret_cast<const char *>(&value), 2); };
-    out.write("RIFF", 4);
-    put32(36 + data_bytes);
-    out.write("WAVE", 4);
-    out.write("fmt ", 4);
-    put32(16);
-    put16(1);
-    put16(static_cast<int16_t>(num_channels));
-    put32(sample_rate);
-    put32(byte_rate);
-    put16(static_cast<int16_t>(block_align));
-    put16(static_cast<int16_t>(bits));
-    out.write("data", 4);
-    put32(data_bytes);
-    for (int64_t frame = 0; frame < frames; ++frame) {
-        for (int32_t channel = 0; channel < num_channels; ++channel) {
-            float sample = channels[static_cast<size_t>(channel)][static_cast<size_t>(frame)];
-            sample = std::max(-1.0F, std::min(1.0F, sample));
-            put16(static_cast<int16_t>(std::lround(sample * 32767.0F)));
-        }
-    }
-}
-
 }  // namespace
 
 int main(int argc, char ** argv) {
     try {
-        const std::string default_codec =
-            "C:/Users/justi/.cache/huggingface/hub/models--OpenMOSS-Team--MOSS-Audio-Tokenizer-v2/"
-            "snapshots/f6e20e543b33d2c252a7ef71bdf8aa71e5ff9169";
-        const std::filesystem::path codec_dir = arg_value(argc, argv, "--codec", default_codec);
+        const std::filesystem::path codec_dir = arg_value(argc, argv, "--codec", "");
+        if (codec_dir.empty()) throw std::runtime_error("--codec is required");
         const int frames = int_arg(argc, argv, "--frames", 12);
         const int threads = int_arg(argc, argv, "--threads", 16);
         const int num_quantizers = int_arg(argc, argv, "--quantizers", 12);
         const std::string wav_path = arg_value(argc, argv, "--out", "moss_codec_decode_cpp.wav");
+
+        if (frames <= 0 || num_quantizers <= 0 || num_quantizers > 12) {
+            throw std::runtime_error("frames must be positive and quantizers must be in [1,12]");
+        }
 
         constexpr size_t kWeightContextBytes = 256ull * 1024 * 1024;
         constexpr size_t kGraphArenaBytes = 1024ull * 1024 * 1024;
@@ -117,6 +85,11 @@ int main(int argc, char ** argv) {
         std::cout << "decoding " << frames << " frames...\n" << std::flush;
         const auto decoded = decoder.decode(engine::codecs::MossAudioTokenizerCodes{frames, std::move(codes)});
         const auto & stereo = decoded.channels;
+        if (decoded.sampling_rate != 48000 || stereo.size() != 2 ||
+            stereo[0].size() != static_cast<size_t>(frames) * 3840 ||
+            stereo[1].size() != stereo[0].size()) {
+            throw std::runtime_error("v2 decoder returned incorrect format or length");
+        }
 
         std::cout << "\n=== RESULT ===\n";
         std::cout << "channels=" << stereo.size() << " samples_per_channel=" << stereo.front().size() << "\n";
@@ -125,6 +98,7 @@ int main(int argc, char ** argv) {
             double sum = 0.0;
             double sq = 0.0;
             for (float value : data) {
+                if (!std::isfinite(value)) throw std::runtime_error("decoder produced non-finite samples");
                 sum += value;
                 sq += static_cast<double>(value) * value;
             }
@@ -140,7 +114,11 @@ int main(int argc, char ** argv) {
             std::cout << "]\n";
         }
 
-        write_pcm16_wav(wav_path, stereo, 48000);
+        std::vector<float> planar;
+        planar.reserve(stereo[0].size() * 2);
+        for (const auto & channel : stereo) planar.insert(planar.end(), channel.begin(), channel.end());
+        engine::audio::write_pcm16_wav(
+            wav_path, 48000, 2, engine::audio::interleave_planar_channels(planar, 2, static_cast<int64_t>(stereo[0].size())));
         std::cout << "wrote " << wav_path << "\n";
         return 0;
     } catch (const std::exception & error) {

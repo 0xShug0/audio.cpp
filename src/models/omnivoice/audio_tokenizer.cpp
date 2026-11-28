@@ -1967,7 +1967,7 @@ struct HiggsAudioV2EncoderGraph {
             }).build(ctx, embedded, quantizer.project_out);
             auto quantized_bct = transpose_btc_to_bct(ctx, quantized);
             residual_bct = core::wrap_tensor(
-                ggml_sub(ctx.ggml, residual_bct.tensor, quantized_bct.tensor),
+                ggml_sub(ctx.ggml, ensure_contiguous(ctx, residual_bct).tensor, quantized_bct.tensor),
                 residual_bct.shape,
                 GGML_TYPE_F32);
         }

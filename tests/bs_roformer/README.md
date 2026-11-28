@@ -7,7 +7,7 @@ audio-separator.
 ## Convert the reference checkpoint
 
 ```powershell
-python tests\bs_roformer\convert_reference_ckpt.py `
+python tools\gguf\bs_roformer_weights_prepare.py `
   --ckpt model_bs_roformer_ep_368_sdr_12.9628.ckpt `
   --config-path model_bs_roformer_ep_368_sdr_12.9628.yaml `
   --output-dir models\BS-RoFormer-ep368
@@ -76,8 +76,9 @@ about 173 MB.
 
 The CUDA graph now lowers non-causal axial attention through the framework's
 view-preserving Flash Attention path with F32 accumulation. Gate values are
-broadcast directly instead of materializing a repeated gate tensor. CPU and
-other backends retain the explicit attention implementation.
+broadcast directly instead of materializing a repeated gate tensor. Vulkan
+uses the same attention lowering; CPU and other backends retain the explicit
+attention implementation.
 
 RTX 3090 results for the same 8-second, 44.1 kHz stereo input:
 

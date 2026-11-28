@@ -30,6 +30,13 @@ cmake --build build --target audiocpp
 This produces `libaudiocpp.so` / `libaudiocpp.dylib` / `audiocpp.dll` with
 `SOVERSION 0`. Nothing changes in a build that leaves the option off.
 
+On Linux, when `GGML_BLAS=ON` uses a non-system OpenBLAS installation, add the
+directory containing `libopenblas.so.0` before linking or running C API programs:
+
+```bash
+export LD_LIBRARY_PATH="/path/to/openblas/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
 ## When to use it
 
 | | best for | cost |
@@ -57,6 +64,17 @@ requests.
 - **Out parameters are optional.** Pass NULL for anything you do not want.
 - **Handles are not individually thread-safe.** Separate handles may be used
   concurrently from separate threads.
+
+### Random seeds
+
+For a model supporting `seed`, set `audiocpp_request_set_option(request,
+"seed", "-1")` to request a fresh random seed. The shared request resolver
+chooses an integer in `0..2147483647` before preparation and execution.
+An explicit `audiocpp_session_prepare` followed by execution of the same,
+unchanged request reuses that resolution. Another execution draws again;
+request mutation or stream reset invalidates pending preparation. The caller's
+stored option remains `-1`. Omitted and explicit nonnegative seeds retain
+existing behavior. Enable logging to record `request.seed` for replay.
 
 ### Lifetime
 
@@ -95,6 +113,16 @@ the only reason the field carries information:
 /* audiocpp_request_set_option_array arrived in 0.2. */
 if ((audiocpp_abi_version() & 0xffff) < 0x0200) {
     /* fall back, or refuse, rather than resolving a symbol that is not there */
+}
+
+/* audiocpp_log_set arrived in 0.3. */
+if ((audiocpp_abi_version() & 0xffff) < 0x0300) {
+    /* fall back when log interception is not available */
+}
+
+/* audiocpp_result_custom_schema arrived in 0.4. */
+if ((audiocpp_abi_version() & 0xffff) < 0x0400) {
+    /* custom-schema result access is not available */
 }
 ```
 
@@ -167,6 +195,27 @@ fed back into a later request instead of being re-derived. The server's generic
 task routes and the CLI request JSON carry artifacts the same way, as an
 `artifacts` array (see the [server docs](../app/server/README.md#post-v1tasksrun)).
 
+### Custom-schema results
+
+Classification families such as CED and AST-AudioSet return a custom schema
+rather than text or audio. In ABI 0.4 and later, read its schema identifier and
+JSON data with:
+
+```c
+const char * schema = NULL;
+const char * data = NULL;
+audiocpp_status status = audiocpp_result_custom_schema(result, &schema, &data);
+if (status == AUDIOCPP_OK) {
+    /* schema identifies the format; data is a JSON string to parse. */
+}
+```
+
+Both out parameters are optional. Returned strings are non-NULL on success and
+remain valid until `result` is freed. JSON is serialized on the first data read
+and cached in the result. If the task produced no custom-schema output, the
+accessor returns `AUDIOCPP_ERR_NOT_AVAILABLE`; a NULL result returns
+`AUDIOCPP_ERR_INVALID_ARGUMENT`.
+
 ## Discovering what a model accepts
 
 `ModelInspection::cli` is exposed, so a binding can enumerate a family's options
@@ -227,13 +276,12 @@ the queue is empty — that is `AUDIOCPP_OK`, not an error.
 
 ## Symbol surface
 
-`libaudiocpp.so` exports exactly the 55 entry points in `audiocpp.h` and nothing
+`libaudiocpp.so` exports exactly the entry points in `audiocpp.h` and nothing
 else. This needs a linker export list, not just `CXX_VISIBILITY_PRESET hidden`:
 the visibility preset reaches only this target's own sources, while the static
 libraries linked in (ggml, cJSON, sentencepiece, ...) are compiled without
-`-fvisibility=hidden` and would otherwise be re-exported — 2767 dynamic symbols
-instead of 55, any of which could collide with something the host application
-has already loaded.
+`-fvisibility=hidden` and would otherwise be re-exported, potentially colliding
+with symbols the host application has already loaded.
 
 `src/capi/audiocpp.map` (ELF) and `src/capi/audiocpp.symbols` (Mach-O) hold that
 list.
@@ -259,7 +307,27 @@ nm -D --defined-only build/bin/libaudiocpp.so | awk '$2=="T"{print $3}' | grep -
 nm -gU build/bin/libaudiocpp.dylib | awk '{print $NF}' | grep -cv '^_audiocpp_'
 # PE
 dumpbin /EXPORTS build\bin\Release\audiocpp.dll
-# all three: 0 non-matching, 69 total
+# all three: 0 non-matching; total must match the public header
+```
+
+## Logging
+
+By default, backend and compute libraries write log messages directly to `stderr`.
+Callers embedding `libaudiocpp` in host applications with custom log sinks or
+severity filters can intercept or silence these messages using `audiocpp_log_set()`:
+
+```c
+static void my_log_callback(audiocpp_log_level level, const char * text, void * user_data) {
+    if (level == AUDIOCPP_LOG_LEVEL_ERROR) {
+        fprintf(stderr, "[audiocpp ERROR] %s", text);
+    }
+}
+
+/* Intercept backend logs */
+audiocpp_log_set(my_log_callback, NULL);
+
+/* Restore default stderr behavior */
+audiocpp_log_set(NULL, NULL);
 ```
 
 ## Notes
@@ -273,6 +341,13 @@ dumpbin /EXPORTS build\bin\Release\audiocpp.dll
 - The facade depends only on framework headers, never on `app/`, so the CLI and
   the C API stay independent of each other. The one consequence is that the
   backend-name mapping is duplicated from `app/cli/args.cpp`.
+- ASR families that chunk long audio with a VAD (`sense_asr`, `parakeet_tdt`,
+  `qwen3_asr`, `vibevoice_asr`, `moonshine_asr`, `lfm2_audio`, `lfm3_audio`)
+  default `<family>.vad_model_path` to `assets/framework/models/silero_vad`. That
+  default is looked up relative to the working directory first, then beside the
+  library and up to three directories above it. To use VAD chunking without
+  setting the option, ship `assets/framework/models/silero_vad/` beside the
+  library (or one level above its `libs/` folder).
 
 ## Test
 
@@ -323,6 +398,17 @@ ctest --test-dir build -R audiocpp_c_api --output-on-failure
 `audiocpp_c_api_parity` is the one that answers "is this actually working": the
 C API drives the same runtime the CLI does, so for identical inputs the two must
 produce identical output.
+
+The model test's alternate input defaults to eight seconds of deterministic,
+nonzero 44.1 kHz stereo samples generated in memory. Parity prepares the same
+PCM16 samples in its temporary directory and passes that WAV to independent C
+API and CLI runs; no committed alternate WAV or ffmpeg is needed. The stereo
+channels carry different signals. `parity.py --alt-audio /path/to/input.wav`
+keeps an explicit fixture override; an unreadable override fails the test.
+The C executable accepts the alternate WAV as its fourth positional argument
+(after model root, primary audio, and backend); omit it or pass `""` to generate
+samples. Use `""` when also supplying threads and `--log` in later positions.
+The primary audio default remains `assets/resources/sample_16k.wav`.
 
 Note that generative families draw noise per run — two unseeded `audiocpp_cli`
 Kokoro runs over the same text produce different audio — so the parity check

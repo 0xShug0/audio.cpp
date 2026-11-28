@@ -4,7 +4,7 @@
 #include "engine/framework/runtime/model.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/heartmula/assets.h"
-#include "engine/models/heartmula/codec.h"
+#include "engine/framework/codecs/heartcodec_runtime.h"
 #include "engine/models/heartmula/generator.h"
 #include "engine/models/heartmula/mula.h"
 #include "engine/models/heartmula/tokenizer_text.h"
@@ -37,23 +37,23 @@ private:
     runtime::TaskSpec task_;
     std::shared_ptr<const HeartMuLaAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
-    size_t generator_weight_context_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t generator_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
     size_t generator_constant_context_bytes_ = 256ull * 1024ull * 1024ull;
     size_t generator_backbone_prefill_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
     size_t generator_backbone_step_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
     size_t generator_decoder_prefill_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t generator_decoder_step_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
     size_t generator_frame_embedding_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t codec_weight_context_bytes_ = 32ull * 1024ull * 1024ull;
-    size_t codec_flow_estimator_graph_arena_bytes_ = 2048ull * 1024ull * 1024ull;
-    size_t codec_conditioning_graph_arena_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t codec_scalar_decoder_graph_arena_bytes_ = 1536ull * 1024ull * 1024ull;
+    size_t codec_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
+    size_t codec_flow_estimator_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t codec_conditioning_graph_arena_bytes_ = 16ull * 1024ull * 1024ull;
+    size_t codec_scalar_decoder_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
     assets::TensorStorageType mula_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType codec_weight_storage_type_ = assets::TensorStorageType::Native;
     bool mem_saver_ = false;
     HeartMuLaTextTokenizer text_tokenizer_;
     HeartMuLaWeightsRuntime mula_;
-    HeartCodecWeightsRuntime codec_;
+    codecs::HeartCodecRuntime codec_;
 };
 
 std::shared_ptr<runtime::IVoiceModelLoader> make_heartmula_loader();

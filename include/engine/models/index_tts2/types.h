@@ -162,7 +162,8 @@ struct IndexTTS2Request {
     std::optional<std::string> emotion_text = std::nullopt;
     bool use_random_emotion = false;
     int interval_silence_ms = 200;
-    int max_text_tokens_per_segment = 120;
+    int text_chunk_tokens = 120;
+    bool text_normalization = true;
     IndexTTS2GenerationOptions generation;
 };
 

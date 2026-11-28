@@ -1,5 +1,8 @@
 # Audio Flamingo 3, Next, and Music Flamingo
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 The `audio_flamingo` family supports Audio Flamingo 3, Audio Flamingo Next, and Music Flamingo.
 Audio Flamingo checkpoints answer questions about speech, music, and environmental sounds,
 and support transcription and audio captioning through the `asr` task. The input
@@ -79,7 +82,8 @@ Use a 16-kHz mono WAV when comparing with Python. Python's optional TorchCodec
 loader and its librosa fallback use different downmixing and resampling paths,
 which can change this model's response substantially. Pass the same decoded WAV
 to both implementations for a meaningful comparison. audio.cpp averages channels
-and uses SOXR for inputs that require resampling.
+and prefers SOXR for resampling, with a warning and the built-in sinc fallback
+when SOXR is unavailable.
 
 ## Server
 

@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
 """Generate golden R2T2 outputs from the macOS MPS baseline.
 
-Run from the Confucius4-R2T2 repo (uv environment):
-
-    cd /Users/david/github/voice/Confucius4-R2T2
-    PYTHONPATH=. uv run python /Users/david/github/voice/audio.cpp/tests/confucius4_r2t2/make_golden.py \
-        --model_path checkpoints/r2t2 --audio resources/test.wav \
-        --out /Users/david/github/voice/audio.cpp/tests/confucius4_r2t2/golden.json
+Run from the upstream Confucius4-R2T2 checkout with its MPS dependencies.
+Pass explicit --model_path and --out; see README.md for examples. The default
+input is audio.cpp's shared English assets/resources/sample_16k.wav.
 
 Produces offline transcript plus the per-chunk (text, fixed_text) streaming
 sequence used to verify the C++ LSP streaming port step by step.
 """
 
 import argparse
+import hashlib
 import json
 import sys
-
-import numpy as np
-
-from r2t2 import R2T2ASRModel
-from r2t2.r2t2_asr import ASRStreamingState  # noqa: F401  (state shape doc)
+from pathlib import Path
 
 
 def read_wav_16k(path):
+    import numpy as np
     import soundfile as sf
     wav, sr = sf.read(path, dtype="float32", always_2d=False)
     if wav.ndim > 1:
@@ -34,9 +29,11 @@ def read_wav_16k(path):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model_path", default="checkpoints/r2t2")
-    ap.add_argument("--audio", default="resources/test.wav")
+    repo_root = Path(__file__).resolve().parents[2]
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--model_path", required=True, help="Upstream model checkpoint path")
+    ap.add_argument("--audio", type=Path, default=repo_root / "assets/resources/sample_16k.wav",
+                    help="Input WAV (default: repo assets/resources/sample_16k.wav, English)")
     ap.add_argument("--language", default=None)
     ap.add_argument("--context", default="")
     ap.add_argument("--chunk_ms", type=int, default=320)
@@ -44,14 +41,21 @@ def main():
     ap.add_argument("--unfixed_token_num", type=int, default=5)
     ap.add_argument("--max_new_tokens", type=int, default=32)
     ap.add_argument("--dtype", default=None, help="e.g. float16 or bfloat16 (default: MPS float16)")
-    ap.add_argument("--out", default="golden.json")
+    ap.add_argument("--out", required=True, help="Explicit destination JSON path")
     args = ap.parse_args()
 
-    wav = read_wav_16k(args.audio)
+    from r2t2 import R2T2ASRModel
+
+    audio_path = args.audio.resolve()
+    audio_identity = (audio_path.relative_to(repo_root).as_posix()
+                      if audio_path.is_relative_to(repo_root) else str(audio_path))
+    audio_sha256 = hashlib.sha256(audio_path.read_bytes()).hexdigest()
+    wav = read_wav_16k(audio_path)
     asr = R2T2ASRModel.from_pretrained(args.model_path, dtype=args.dtype)
 
     golden = {
-        "audio": args.audio,
+        "audio": audio_identity,
+        "audio_sha256": audio_sha256,
         "chunk_ms": args.chunk_ms,
         "unfixed_chunk_num": args.unfixed_chunk_num,
         "unfixed_token_num": args.unfixed_token_num,

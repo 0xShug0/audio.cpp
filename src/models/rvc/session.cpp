@@ -1,5 +1,7 @@
 #include "engine/models/rvc/session.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/runtime/options.h"
@@ -139,6 +141,7 @@ void RvcSession::prepare(const runtime::SessionPreparationRequest & request) {
 }
 
 runtime::TaskResult RvcSession::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("RVC run()");
     auto validation_options = request.options;
     for (const auto * key : {"pitch_file", "pitch_path", "retrieval_index_file", "retrieval_index_path"}) {
@@ -202,6 +205,7 @@ runtime::TaskResult RvcSession::run(const runtime::TaskRequest & request) {
         static_cast<size_t>(std::max(1, options().backend.threads)));
     runtime::TaskResult result;
     result.audio_output = std::move(output);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
 

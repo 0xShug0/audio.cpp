@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "family": "moss_soundeffect",
+  "display_name": "MOSS-SoundEffect v2",
+  "description": "English and Chinese text-to-sound-effects generation with a Qwen3 text encoder, Wan audio DiT and continuous DAC decoder.",
+  "category": "audio_generation",
+  "status": "supported",
+  "tasks": [
+    "sfx"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "duration_sec",
+        "type": "float",
+        "description": "Output duration in seconds, rounded to one decimal; generation uses the full trained window.",
+        "min": 0.1,
+        "max": 30,
+        "default": 10,
+        "required": false
+      },
+      {
+        "name": "num_steps",
+        "type": "int",
+        "description": "Flow-matching Euler solver steps.",
+        "min": 1,
+        "default": 100,
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Classifier-free guidance scale; one disables the negative branch.",
+        "default": 4,
+        "required": false
+      },
+      {
+        "name": "sigma_shift",
+        "type": "float",
+        "description": "Flow-matching schedule shift.",
+        "min": 1e-06,
+        "default": 5,
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Noise seed.",
+        "min": 0,
+        "max": 4294967295,
+        "default": 0,
+        "required": false
+      },
+      {
+        "name": "negative_prompt",
+        "type": "string",
+        "description": "Negative text conditioning.",
+        "default": "",
+        "required": false
+      },
+      {
+        "name": "append_duration_suffix",
+        "type": "bool",
+        "description": "Append the training-time duration tag to the positive prompt.",
+        "default": true,
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "preset": "weight_type_full",
+        "description": "Text encoder and DiT weight storage; native preserves the GGUF tensors.",
+        "default": "native",
+        "required": false
+      },
+      {
+        "name": "fused_epilogues",
+        "type": "bool",
+        "default": true,
+        "required": false,
+        "description": "Enable denoiser normalization-affine, bias-activation and gated-residual fusion; false uses ordinary kernels."
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
+        "default": "auto",
+        "required": false,
+        "description": "DiT self/cross attention lowering; auto selects flash where supported, eager retains F32 attention arithmetic."
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "moss_soundeffect_q8_0",
+      "display_name": "MOSS-SoundEffect v2 Q8_0 GGUF",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "MOSS-SoundEffect-v2-GGUF",
+      "files": [
+        "MOSS-SoundEffect-v2-GGUF/moss-soundeffect-v2-q8_0.gguf"
+      ],
+      "strip_prefix": "MOSS-SoundEffect-v2-GGUF",
+      "default": true
+    },
+    {
+      "id": "moss_soundeffect_bf16",
+      "display_name": "MOSS-SoundEffect v2 BF16 GGUF",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "MOSS-SoundEffect-v2-GGUF",
+      "files": [
+        "MOSS-SoundEffect-v2-GGUF/moss-soundeffect-v2-bf16.gguf"
+      ],
+      "strip_prefix": "MOSS-SoundEffect-v2-GGUF"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "moss_soundeffect_q8_0",
+    "tags": [
+      "SFX",
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/moss_soundeffect.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "vocab": "model:vocab.json",
+        "merges": "model:merges.txt",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "text_encoder": {
+          "source": "weights:",
+          "prefix": "text_encoder"
+        },
+        "dit": {
+          "source": "weights:",
+          "prefix": "dit"
+        },
+        "vae": {
+          "source": "weights:",
+          "prefix": "vae"
+        }
+      }
+    }
+  ],
+  "capabilities": {
+    "sfx": [
+      "prompt_generation"
+    ]
+  }
+}

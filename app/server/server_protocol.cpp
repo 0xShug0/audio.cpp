@@ -9,6 +9,7 @@
 #include "engine/framework/model_spec/options.h"
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
 #include <cctype>
@@ -52,14 +53,14 @@ std::optional<int> parse_busy_timeout_override(const Value &body) {
 engine::runtime::TaskRequest apply_default_request_options(
     const std::unordered_map<std::string, std::string> &default_options,
     engine::runtime::TaskRequest request) {
-  if (default_options.empty()) {
-    return request;
+  if (!default_options.empty()) {
+    auto options = default_options;
+    for (auto &[key, value] : request.options) {
+      options[key] = std::move(value);
+    }
+    request.options = std::move(options);
   }
-  auto options = default_options;
-  for (auto &[key, value] : request.options) {
-    options[key] = std::move(value);
-  }
-  request.options = std::move(options);
+  engine::runtime::resolve_random_seed(request.options);
   return request;
 }
 
@@ -438,13 +439,26 @@ model_config_from_json(const Value &body,
   model.task = engine::io::json::optional_string(body, "task", model.task);
   model.mode = engine::io::json::optional_string(body, "mode", model.mode);
   model.lazy = lazy;
-  if (body.find("device") != nullptr) {
+  const bool has_device = body.find("device") != nullptr;
+  const auto *device_name = body.find("device_name");
+  if (has_device && device_name != nullptr) {
+    throw engine::runtime::InvalidRequestError(
+        "model " + model.id + " cannot specify both device and device_name");
+  }
+  if (has_device) {
     const int device = engine::io::json::optional_i32(body, "device", 0);
     if (device < 0) {
       throw engine::runtime::InvalidRequestError(
           "device for model " + model.id + " must be >= 0");
     }
     model.device = device;
+  }
+  if (device_name != nullptr) {
+    if (!device_name->is_string() || device_name->as_string().empty()) {
+      throw engine::runtime::InvalidRequestError(
+          "device_name for model " + model.id + " must be a non-empty string");
+    }
+    model.device_name = device_name->as_string();
   }
   if (const auto *value = body.find("model_spec_override")) {
     const auto &selection = value->as_string();
@@ -535,6 +549,10 @@ const char *backend_name(engine::core::BackendType type) {
     return "vulkan";
   case engine::core::BackendType::Metal:
     return "metal";
+  case engine::core::BackendType::WebGPU:
+    return "webgpu";
+  case engine::core::BackendType::Sycl:
+    return "sycl";
   case engine::core::BackendType::BestAvailable:
     return "best";
   }
@@ -884,12 +902,13 @@ std::string live_speech_timing_json(double request_start_to_first_audio_ms,
   return out.str();
 }
 
-bool stream_event_has_output(const engine::runtime::StreamEvent &event) {
+bool stream_event_has_output(const engine::runtime::StreamEvent &event, bool include_artifacts) {
   return (event.partial_text.has_value() &&
           !event.partial_text->text.empty()) ||
          (event.partial_text_snapshot.has_value() &&
           !event.partial_text_snapshot->text.empty()) ||
-         event.audio_output.has_value() || !event.named_audio_outputs.empty();
+         event.audio_output.has_value() || !event.named_audio_outputs.empty() ||
+         (include_artifacts && !event.output_artifacts.empty());
 }
 
 bool task_result_has_output(const engine::runtime::TaskResult &result) {
@@ -921,6 +940,23 @@ static const char *artifact_kind_name(engine::runtime::ArtifactKind kind) {
     return "custom";
   }
   return "custom";
+}
+
+static void write_artifact_json(std::ostream &out,
+                                const engine::runtime::VoiceArtifact &artifact) {
+  out << "{\"id\":" << json_quote(artifact.id)
+      << ",\"kind\":" << json_quote(artifact_kind_name(artifact.kind))
+      // Base64 contains no JSON escapes; avoid copying large video payloads through cJSON.
+      << ",\"payload\":\"" << base64_encode(artifact.payload)
+      << "\",\"meta\":{";
+  bool first_meta = true;
+  for (const auto &[key, value] : artifact.meta) {
+    if (!first_meta)
+      out << ",";
+    first_meta = false;
+    out << json_quote(key) << ":" << json_quote(value);
+  }
+  out << "}}";
 }
 
 double require_ttft_ms(const std::optional<double> &ttft_ms) {
@@ -1104,18 +1140,7 @@ task_result_json_with_timing(const engine::runtime::TaskResult &result,
       if (!first_artifact)
         out << ",";
       first_artifact = false;
-      out << "{\"id\":" << json_quote(artifact.id)
-          << ",\"kind\":" << json_quote(artifact_kind_name(artifact.kind))
-          << ",\"payload\":" << json_quote(base64_encode(artifact.payload))
-          << ",\"meta\":{";
-      bool first_meta = true;
-      for (const auto &[key, value] : artifact.meta) {
-        if (!first_meta)
-          out << ",";
-        first_meta = false;
-        out << json_quote(key) << ":" << json_quote(value);
-      }
-      out << "}}";
+      write_artifact_json(out, artifact);
     };
     if (result.artifact_output.has_value())
       write_artifact(*result.artifact_output);
@@ -1199,7 +1224,7 @@ streaming_task_result_json(const engine::runtime::TaskResult &result,
 }
 
 std::string stream_event_json(const engine::runtime::StreamEvent &event,
-                              bool diarization) {
+                              bool diarization, bool include_artifacts) {
   std::ostringstream out;
   out << "{";
   bool first = true;
@@ -1237,6 +1262,16 @@ std::string stream_event_json(const engine::runtime::StreamEvent &event,
       out << "{\"id\":" << json_quote(event.named_audio_outputs[i].id)
           << ",\"audio\":" << json_quote(base64_encode(wav))
           << ",\"format\":\"wav\"}";
+    }
+    out << "]";
+  }
+  if (include_artifacts && !event.output_artifacts.empty()) {
+    field("artifacts");
+    out << "[";
+    for (size_t i = 0; i < event.output_artifacts.size(); ++i) {
+      if (i != 0)
+        out << ",";
+      write_artifact_json(out, event.output_artifacts[i]);
     }
     out << "]";
   }

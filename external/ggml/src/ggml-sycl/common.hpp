@@ -16,7 +16,11 @@
 #include <cstddef>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
+#include <type_traits>
+#include <unordered_map>
+#include <vector>
 
 #include "dpct/helper.hpp"
 #include "ggml.h"
@@ -61,6 +65,11 @@ extern int g_ggml_sycl_debug;
 extern int g_ggml_sycl_disable_optimize;
 extern int g_ggml_sycl_prioritize_dmmv;
 extern int g_ggml_sycl_enable_flash_attention;
+extern int g_ggml_sycl_disable_dnn;
+extern int g_ggml_sycl_fa_onednn;
+extern int g_ggml_sycl_fa_onednn_max_kv;
+extern int g_ggml_sycl_weight_f16_cache;
+extern int g_ggml_sycl_graph_eviction_timeout;
 
 
 #if defined(__clang__) && __has_builtin(__builtin_expect)
@@ -212,6 +221,8 @@ inline dpct::err0 ggml_sycl_set_device(const int device) try {
 //////////////////////
 struct optimize_feature {
     bool reorder=false;
+    bool hw_dp4a=false;               // the device executes the vISA dp4a instruction
+    bool onednn_optimized_gemm=false; // oneDNN has a non-reference matmul for the device
 };
 
 struct sycl_device_info {
@@ -227,6 +238,10 @@ struct sycl_device_info {
     size_t  total_vram;
     sycl_hw_info hw_info;
     optimize_feature opt_feature;
+#ifdef GGML_SYCL_GRAPH
+    bool graph_support;        // command graphs can be recorded and replayed
+    bool graph_update_support; // a finalized command graph can be updated
+#endif
 };
 
 
@@ -317,6 +332,31 @@ void ggml_sycl_free_device(void *ptr, sycl::queue &q);
 void release_extra_gpu(ggml_tensor_extra_gpu * extra, std::vector<queue_ptr> streams={});
 
 namespace sycl_ex = sycl::ext::oneapi::experimental;
+
+#ifdef GGML_SYCL_GRAPH
+struct ggml_sycl_graph {
+    // src data/ne/nb are kept next to the node copy: a node can keep its pointer while one of its
+    // sources gets different contents or a different shape.
+    struct node_properties {
+        ggml_tensor node;
+        void *      node_src_data_ptrs[GGML_MAX_SRC];
+        int64_t     node_src_ne[GGML_MAX_SRC][GGML_MAX_DIMS];
+        size_t      node_src_nb[GGML_MAX_SRC][GGML_MAX_DIMS];
+    };
+
+    std::unique_ptr<sycl_ex::command_graph<sycl_ex::graph_state::executable>> exec_graph = nullptr;
+    std::vector<node_properties> node_props;
+    bool     warmup_complete = false;
+    uint64_t uid             = 0;
+    int64_t  last_used_time  = 0;
+
+    // result of check_graph_compatibility() for the current node properties
+    bool compatible = false;
+};
+
+static_assert(std::is_trivial<ggml_sycl_graph::node_properties>::value, "node_properties must be trivial");
+#endif
+
 struct ggml_backend_sycl_context {
     int device;
     std::string name;
@@ -442,7 +482,38 @@ struct ggml_backend_sycl_context {
     }
 
 #ifdef GGML_SYCL_GRAPH
-    std::unique_ptr<sycl_ex::command_graph<sycl_ex::graph_state::executable>> exec_graph = nullptr;
+    // One replayable graph per ggml graph, keyed by its first node.
+    std::unordered_map<const void *, std::unique_ptr<ggml_sycl_graph>> sycl_graphs;
+    int64_t last_graph_eviction_sweep = 0;
+
+    ggml_sycl_graph * sycl_graph(const void * first_node_ptr) {
+        const int64_t time_now = ggml_time_us();
+        const int64_t eviction_timeout_us = g_ggml_sycl_graph_eviction_timeout * 1000000LL;
+
+        // sweep every half the eviction timeout, evicting graphs unused for >= the eviction timeout
+        if (time_now - last_graph_eviction_sweep >= eviction_timeout_us / 2) {
+            last_graph_eviction_sweep = time_now;
+            for (auto it = sycl_graphs.begin(); it != sycl_graphs.end();) {
+                if (time_now - it->second->last_used_time >= eviction_timeout_us) {
+                    it = sycl_graphs.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
+        auto it = sycl_graphs.find(first_node_ptr);
+        if (it == sycl_graphs.end()) {
+            it = sycl_graphs.emplace(first_node_ptr, std::make_unique<ggml_sycl_graph>()).first;
+        }
+        it->second->last_used_time = time_now;
+        return it->second.get();
+    }
+#endif
+
+#if GGML_SYCL_DNNL
+    // Compiled oneDNN SDPA partitions. Owned here so that separate sessions never share the map.
+    std::shared_ptr<void> sdpa_partitions;
 #endif
 
     ggml_sycl_pool & host_pool(int device) {

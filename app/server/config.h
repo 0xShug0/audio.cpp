@@ -51,6 +51,9 @@ struct ServerModelConfig {
     // Overrides ServerConfig::device for this model. When absent the server-wide
     // device remains the default, preserving existing single-device configs.
     std::optional<int> device;
+    // Optional name-based device selection ("device_name") resolved into `device`
+    // against ServerConfig::backend before server startup or model load.
+    std::optional<std::string> device_name;
     int slots = 1; // Capacity read only by the startup-selected parallel runtime.
     // Overrides ServerConfig::busy_timeout_ms for this model, and acts as the ceiling
     // a per-request busy_timeout_ms is clamped to. Model runtimes differ by orders of
@@ -79,9 +82,14 @@ struct ServerConfig {
     // than on by default.
     bool ui_requested = false;
     bool ui_management = false;
+    std::optional<std::filesystem::path> models_root;
     engine::core::BackendType backend = engine::core::BackendType::Cuda;
+    bool backend_explicit = false;
     std::string backend_impl;
     int device = 0;
+    // Optional name-based device selection (--device-name / "device_name") resolved
+    // into (backend, device) before server startup.
+    std::optional<std::string> device_name;
     int threads = 1;
     bool lazy_load = false;
     bool log_request_body = false;
@@ -133,8 +141,25 @@ struct ServerConfig {
 };
 
 engine::core::BackendType parse_server_backend(const std::string & value);
+ServerConfig parse_server_config(const std::filesystem::path & path, bool parallel_jobs = false);
+void resolve_server_devices(ServerConfig & config);
+void resolve_server_devices(
+    ServerConfig & config,
+    const std::vector<engine::core::BackendDeviceInfo> & devices);
+void resolve_model_device(engine::core::BackendType server_backend, ServerModelConfig & model);
+void resolve_model_device(
+    engine::core::BackendType server_backend,
+    ServerModelConfig & model,
+    const std::vector<engine::core::BackendDeviceInfo> & devices);
 ServerConfig load_server_config(const std::filesystem::path & path);
 ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs);
+ServerConfig load_server_config(
+    const std::filesystem::path & path,
+    bool parallel_jobs,
+    const std::vector<engine::core::BackendDeviceInfo> & devices);
+// Startup-only model overrides. No model flags leaves the configuration untouched.
+// A multi-model configuration requires --model-id to select the affected entry.
+void apply_model_cli_options(ServerConfig & config, int argc, char ** argv);
 // Adds the config.default_session_options entries for model.family that the model's
 // own session_options do not set.
 void apply_default_session_options(const ServerConfig & config, ServerModelConfig & model);

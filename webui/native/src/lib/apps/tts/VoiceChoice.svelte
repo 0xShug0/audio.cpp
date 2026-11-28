@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onDestroy } from 'svelte';
   import { catalog, modelCapabilities } from '$lib/catalog';
   import { browserDecodeToWav } from '$lib/audio';
@@ -34,12 +35,12 @@
     if(id==='inherit') { onchange(undefined);return; }
     if(id.startsWith('builtin:')) { onchange({kind:'builtin',id:id.slice(8)});return; }
     const voice=voices.find(v=>v.id===id);
-    if(voice) onchange({kind:'reference',data:{id:crypto.randomUUID(),name:voice.name,audio:voice.audio,transcript:voice.transcript}});
+    if(voice) onchange({kind:'reference',data:{id:randomUUID(),name:voice.name,audio:voice.audio,transcript:voice.transcript}});
   }
   async function upload(file: File | undefined) {
     if(!file)return;
     onbusy(true);error='';
-    try { const audio=await browserDecodeToWav(file);onchange({kind:'reference',data:{id:crypto.randomUUID(),name:file.name,audio,transcript:''}}); }
+    try { const audio=await browserDecodeToWav(file);onchange({kind:'reference',data:{id:randomUUID(),name:file.name,audio,transcript:''}}); }
     catch(e){error=String(e);}finally{onbusy(false);}
   }
 </script>

@@ -1,12 +1,14 @@
 #include "engine/framework/core/execution_context.h"
 
+#include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace engine::core {
 
 ExecutionContext::ExecutionContext(const BackendConfig & config)
-    : config_(config),
-      backend_(init_backend(config)) {
+    : config_(config) {
+    backend_ = init_backend(config);
     if (backend_ != nullptr && config_.threads > 0) {
         set_backend_threads(backend_, config_.threads);
     }

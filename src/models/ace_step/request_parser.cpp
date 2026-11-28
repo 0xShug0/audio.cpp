@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -15,6 +16,7 @@
 #include "engine/models/ace_step/task_route.h"
 #include "engine/models/ace_step/prompt_builder.h"
 #include "engine/framework/io/json.h"
+#include "engine/framework/audio/wav_reader.h"
 #include "engine/framework/runtime/options.h"
 
 namespace engine::models::ace_step {
@@ -126,6 +128,14 @@ AceStepRequest ace_step_parse_request(const runtime::TaskRequest &request) {
         out.vocal_language = *language;
     }
     out.source_audio = request.audio_input;
+    if (const auto reference_audio = request.options.find("reference_audio"); reference_audio != request.options.end()) {
+        if (reference_audio->second.empty()) {
+            throw std::runtime_error("ACE-Step reference_audio must be a non-empty WAV path");
+        }
+        auto wav = audio::read_wav_f32(std::filesystem::path(reference_audio->second));
+        out.reference = AceStepReferenceCondition{
+            runtime::AudioBuffer{wav.sample_rate, wav.channels, std::move(wav.samples)}, std::nullopt};
+    }
     if (const auto lyrics = runtime::find_option(request.options, {"lyrics"}); lyrics.has_value()) {
         out.lyrics = *lyrics;
     }

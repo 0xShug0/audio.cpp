@@ -29,7 +29,7 @@ namespace modules = engine::modules;
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kDefaultAudioWeightContextBytes = 2048ull * 1024ull * 1024ull;
+constexpr size_t kDefaultAudioWeightContextBytes = 8ull * 1024ull * 1024ull;
 
 struct GgmlContextDeleter {
     void operator()(ggml_context * ctx) const noexcept {

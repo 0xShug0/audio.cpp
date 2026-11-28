@@ -1,0 +1,24 @@
+#version 450
+layout(constant_id = 0) const uint CHANNELS_PER_WG = 32;
+layout(constant_id = 1) const uint TOKENS_PER_WG = 4;
+layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z = 1) in;
+layout(binding = 0) readonly buffer X { float x[]; };
+layout(binding = 1) readonly buffer Weights { float weights[]; };
+layout(binding = 2) readonly buffer Bias { float bias[]; };
+layout(binding = 3) writeonly buffer Output { float dst[]; };
+layout(push_constant) uniform PushConstants {
+    uint channels; uint tokens; uint kernel_size;
+    uint token_stride; uint channel_stride; uint seq_stride;
+    uint offsets[3]; uint dst_offset;
+};
+void main() {
+    const uint c = gl_GlobalInvocationID.x, t = gl_GlobalInvocationID.y, seq = gl_WorkGroupID.z;
+    if (c >= channels || t >= tokens) return;
+    float sum = 0;
+    for (uint k = 0; k < kernel_size; ++k) {
+        const int pos = int(t) + int(k) - int(kernel_size) + 1;
+        if (pos >= 0) sum += x[offsets[0] + seq*seq_stride + uint(pos)*token_stride + c*channel_stride]*weights[offsets[1] + c*kernel_size + k];
+    }
+    sum += bias[offsets[2] + c];
+    dst[dst_offset + (seq*tokens + t)*channels + c] = sum/(1.0 + exp(-sum));
+}

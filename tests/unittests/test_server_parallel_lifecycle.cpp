@@ -1,8 +1,11 @@
+#include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 // Run the actual server handlers with tiny controlled loaders. Barriers force
 // lifecycle overlaps without GPU timing, sleeps in production, or large models.
 #include "parallel_runtime.h"
 #include "engine/framework/audio/wav_writer.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/runtime/options.h"
 #include <chrono>
 #include <condition_variable>
 #include <fstream>
@@ -73,6 +76,8 @@ struct Gate {
     void release() { std::lock_guard<std::mutex> lock(mutex); released = true; cv.notify_all(); }
 };
 struct Control {
+    bool record_seeds = false;
+    std::vector<std::unordered_map<std::string, std::string>> prepared_options, executed_options;
     Gate load, run, destroy;
     std::atomic<int> loads{0}, destructions{0}, runs{0}, finishes{0};
     std::atomic<int> sessions{0}, clones{0}, final_text{0};
@@ -91,7 +96,8 @@ public:
     std::string family() const override { return "lifecycle_fixture"; }
     rt::VoiceTaskKind task_kind() const override { return task_.task; }
     rt::RunMode run_mode() const override { return task_.mode; }
-    void prepare(const rt::SessionPreparationRequest &) override {
+    void prepare(const rt::SessionPreparationRequest & request) override {
+        if (control_->record_seeds) control_->prepared_options.push_back(request.options);
         if (control_->fail_prepare) { throw std::runtime_error("controlled preparation failure"); }
     }
     size_t parallel_session_capacity() const noexcept override { return capacity_; }
@@ -103,6 +109,7 @@ public:
     }
     rt::TaskResult run(const rt::TaskRequest & request) override {
         control_->run.wait();
+        if (control_->record_seeds) control_->executed_options.push_back(request.options);
         ++control_->runs;
         if (control_->fail_run) { throw std::runtime_error("controlled inference failure"); }
         if (control_->reject_run) { throw rt::InvalidRequestError("controlled request rejection"); }
@@ -131,6 +138,7 @@ public:
         emitted_ = true;
         rt::StreamEvent event;
         event.audio_output = result_.audio_output;
+        event.output_artifacts = result_.output_artifacts;
         event.partial_text = result_.text_output; if (control_->final_text == 2) { event.partial_text->text += "!"; }
         event.is_final = true;
         return event;
@@ -282,6 +290,43 @@ struct Fixture {
             quote(task) + ",\"slots\":" + std::to_string(count) + "}");
     }
 };
+
+void random_seed_paths() {
+    for (const int slots : {1, 2}) {
+        Fixture f(slots);
+        auto c = f.add("seed");
+        c->record_seeds = true;
+        auto & defaults = Access::model(*f.state, "seed").config.default_request_options;
+        defaults["seed"] = "-1";
+        success(post(*f.state, "/v1/tasks/run", R"({"model":"seed","text":"hello"})"));
+        require(c->prepared_options.back() == c->executed_options.back(), "server preparation/execution seed mismatch");
+        const auto seed = rt::parse_u32_option(c->executed_options.back(), {"seed"});
+        require(seed && *seed <= 2147483647U, "server default seed unresolved");
+        require(defaults.at("seed") == "-1", "server changed shared defaults");
+        success(post(*f.state, "/v1/audio/speech", R"({"model":"seed","input":"hello","seed":42})"));
+        require(c->executed_options.back().at("seed") == "42", "OpenAI seed override lost");
+        defaults.clear();
+        auto batch = post(*f.state, "/v1/tasks/batch",
+            R"({"model":"seed","requests":[{"text":"a","seed":-1},{"text":"b","seed":42},{"text":"c","seed":-1},{"text":"d"}]})");
+        success(batch);
+        Writer writer; batch.stream_body(writer); batch.stream_body = {};
+        require(c->executed_options.size() == 6, "native batch did not run four items");
+        require(rt::parse_u32_option(c->executed_options[2], {"seed"}).has_value() &&
+                rt::parse_u32_option(c->executed_options[4], {"seed"}).has_value(), "native batch sentinel unresolved");
+        require(c->executed_options[3].at("seed") == "42" && c->executed_options[5].count("seed") == 0,
+                "native batch fixed/omitted neighbors changed");
+        require(c->prepared_options.back() == c->executed_options[2], "native batch preparation seed mismatch");
+
+        auto stream_control = f.add("stream", "streaming");
+        stream_control->record_seeds = true;
+        auto stream = post(*f.state, "/v1/tasks/stream",
+            R"({"model":"stream","request":{"text":"hello","seed":-1},"stream_format":"sse"})");
+        success(stream);
+        if (stream.stream_body) { Writer sink; stream.stream_body(sink); stream.stream_body = {}; }
+        require(stream_control->prepared_options.back() == stream_control->executed_options.back(), "stream preparation seed mismatch");
+        require(rt::parse_u32_option(stream_control->executed_options.back(), {"seed"}).has_value(), "stream sentinel unresolved");
+    }
+}
 
 void per_model_device_selection() {
     Fixture f(1, 0, 3);
@@ -737,7 +782,8 @@ void unsupported_capacity_preserves_registration() {
             } catch (const std::exception & error) {
                 response.status = 500; response.body = error.what();
             }
-            const auto & model = Access::model(*f.state, "shared");
+            const std::string model_id = "shared";
+            const auto & model = Access::model(*f.state, model_id);
             require(model.sessions.get() == before && model.config.slots == count &&
                     model.config.path == f.root / "shared" && Access::resident(*f.state, "shared") &&
                     old->destructions == 0 && old->loads == 1,
@@ -1001,6 +1047,25 @@ void generic_request_artifacts(int count) {
 // then the JSON response's "result" and [DONE]. Without the field, or with
 // null, the response is the JSON body. The fixture counts finalize calls, so a
 // writer that records the count at each write shows when an event left.
+void stream_artifacts_are_output() {
+    rt::StreamEvent event;
+    require(!srv::stream_event_has_output(event), "empty event counted as output");
+    require(srv::stream_event_json(event,false)=="{\"is_final\":false}", "empty event shape changed");
+    event.output_artifacts.push_back(rt::make_voice_artifact(rt::ArtifactKind::Custom,"frame",{std::byte{0},std::byte{255}},{{"format","rgb24"}}));
+    require(!srv::stream_event_has_output(event), "artifact-only event changed default output timing");
+    require(parse(srv::stream_event_json(event,false)).find("artifacts") == nullptr, "artifacts leaked without opt-in");
+    require(srv::stream_event_has_output(event, true), "opt-in artifact-only event not counted as output");
+    const auto encoded=parse(srv::stream_event_json(event,false,true));
+    const auto & artifacts=encoded.require("artifacts").as_array();
+    require(artifacts.size()==1 && artifacts[0].require("id").as_string()=="frame" &&
+            artifacts[0].require("payload").as_string()=="AP8=" &&
+            artifacts[0].require("meta").require("format").as_string()=="rgb24", "stream artifact was lost or changed");
+    rt::TaskResult result;result.output_artifacts=event.output_artifacts;
+    const auto final=parse(srv::task_result_json(result,0));
+    require(engine::io::json::stringify(final.require("artifacts"))==engine::io::json::stringify(encoded.require("artifacts")),
+            "stream and final artifact formats differ");
+}
+
 void generic_task_stream_sse(int count) {
     Fixture f(count); auto c = f.add("stream", "streaming");
     const auto active = [&] { return Access::slots(*f.state, "stream").active; };
@@ -1070,6 +1135,17 @@ void generic_task_stream_sse(int count) {
         require(writer.writes[0].first == before && writer.writes[1].first == before + 1,
                 "task stream wrote its event after the run was over");
     }
+    const auto default_events = parse(stream(body("", true)).body).require("events").as_array();
+    require(default_events.front().find("artifacts") == nullptr, "default route leaked event artifacts");
+    const auto opted_events = parse(stream(body(",\"include_artifacts\":true", true)).body).require("events").as_array();
+    require(opted_events.front().require("artifacts").as_array().size() == 1,
+            "opt-in JSON route omitted event artifacts");
+    auto opted_sse = stream(body(sse + ",\"include_artifacts\":true", true));
+    Recorder opted_writer(c);
+    opted_sse.stream_body(opted_writer);
+    require(opted_writer.writes.front().second.find("\"artifacts\"") != std::string::npos,
+            "opt-in SSE route omitted event artifacts");
+    opted_sse.stream_body = {};
     // Only the top-level field of this route opts in: not the Accept header,
     // not a field inside `request`, not the field on /v1/tasks/run.
     srv::HttpRequest accept; accept.method = "POST"; accept.path = "/v1/tasks/stream"; accept.body = body("", true);
@@ -1137,6 +1213,23 @@ void generic_task_stream_sse(int count) {
 int main(int argc, char ** argv) {
     try {
         engine::io::json::enable_serialized_json_parsing();
+        if (argc >= 2 && std::string(argv[1]) == "seed") {
+            engine::debug::configure_logging({true});
+            const auto started = std::chrono::steady_clock::now();
+            random_seed_paths();
+            engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
+            std::cout << "serial-slot and multi-slot seed routing passed\n";
+            return 0;
+        }
+        if (argc >= 2 && std::string(argv[1]) == "stream-artifacts") {
+            engine::debug::configure_logging({true});
+            const auto started = std::chrono::steady_clock::now();
+            stream_artifacts_are_output();
+            for (int count : {1, 2}) generic_task_stream_sse(count);
+            engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
+            std::cout << "stream artifact defaults and opt-in JSON/SSE passed\n";
+            return 0;
+        }
         if (argc == 2) {
             const std::string test = argv[1];
             if (test == "audit-capacity") { unsupported_capacity_preserves_registration(); }
@@ -1150,6 +1243,7 @@ int main(int argc, char ** argv) {
         registration_is_visible_while_loading();
         live_policy_does_not_hold_registry_lock();
         concurrent_json_parsing();
+        stream_artifacts_are_output();
         per_model_device_selection();
         unsupported_capacity_preserves_registration();
         dynamic_capacity_changes_use_parallel_lifecycle();

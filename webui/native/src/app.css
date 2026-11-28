@@ -317,6 +317,12 @@ button.danger { color: #ffd8df; border-color: rgba(255,119,139,.45); background:
 .live-card strong, .live-card small { display: block; }
 .live-card strong { font-size: 12px; }
 .live-card small { max-width: 380px; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.reload-prompt { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 12px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--active-border); border-radius: 8px; background: var(--active-bg); }
+.reload-prompt > div { min-width: 0; flex: 1 1 220px; }
+.reload-prompt strong, .reload-prompt small { display: block; }
+.reload-prompt strong { font-size: 12px; color: var(--text-strong); }
+.reload-prompt small { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.reload-prompt button { flex: 0 0 auto; white-space: nowrap; }
 details { margin-top: 11px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 summary { cursor: pointer; padding: 8px 10px; color: var(--text-label); font-size: 11px; font-weight: 700; background: color-mix(in srgb, var(--code-bg) 55%, transparent); }
 summary span { float: right; color: var(--muted); font-weight: 500; }
@@ -327,6 +333,7 @@ summary span { float: right; color: var(--muted); font-weight: 500; }
 .range input { padding: 0; accent-color: var(--cyan); }
 .range output { font: 12px ui-monospace, monospace; text-align: right; color: var(--cyan); }
 .toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-weight: 500; }
+.studio-playback-controls > .toggle { margin: 0; }
 .toggle input { position: absolute; opacity: 0; width: 1px; }
 .toggle span { width: 34px; height: 19px; border-radius: 20px; background: var(--control-border); position: relative; }
 .toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: var(--text-label); transition: .15s; }
@@ -340,6 +347,9 @@ kbd { font: 9px ui-monospace, monospace; padding: 2px 4px; border: 1px solid rgb
 .status.busy { color: var(--cyan); }
 .status.warning { color: #ff9aaa; font-weight: 600; }
 .status.error { color: var(--danger); font-weight: 600; }
+.auto-save-notice, .auto-save-warning { margin: 0 0 10px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.auto-save-notice { color: var(--muted); }
+.auto-save-warning { color: var(--danger); font-weight: 600; }
 .empty-output { min-height: 120px; display: grid; place-content: center; text-align: center; color: var(--muted); }
 .empty-output .wave { font-size: 62px; line-height: .7; color: var(--line); }
 .audio-list { display: grid; gap: 12px; }

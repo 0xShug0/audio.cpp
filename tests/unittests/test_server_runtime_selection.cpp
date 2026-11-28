@@ -1,6 +1,8 @@
 // Public legacy handlers reject every explicit slots field before touching state.
 // Exercise frontend forwarding too; no test hook in the original runtime is needed.
 #include "runtime.h"
+#include "server_protocol.h"
+#include "../../app/common/base64.h"
 #include "engine/framework/io/json.h"
 
 #include <filesystem>
@@ -9,6 +11,27 @@
 
 int main() {
     try {
+        // Artifact Base64 is already JSON-safe, including padding and all byte values.
+        for (const size_t count : {0, 1, 2, 3, 256, 257, 258}) {
+            std::vector<std::byte> payload(count);
+            for (size_t i = 0; i < count; ++i) payload[i] = static_cast<std::byte>(i & 255);
+            const auto artifact = engine::runtime::make_voice_artifact(
+                engine::runtime::ArtifactKind::Custom, "quoted\"id", payload, {{"key", "line\nvalue"}});
+            engine::runtime::TaskResult result;
+            result.output_artifacts.push_back(artifact);
+            engine::runtime::StreamEvent event;
+            event.output_artifacts.push_back(artifact);
+            for (const auto & body : {minitts::server::task_result_json(result, 0),
+                                     minitts::server::stream_event_json(event, false, true)}) {
+                const auto parsed = engine::io::json::parse(body);
+                const auto & row = parsed.require("artifacts").as_array().at(0);
+                if (minitts::app::base64_decode_bytes(row.require("payload").as_string()) != payload ||
+                    row.require("id").as_string() != artifact.id ||
+                    row.require("meta").require("key").as_string() != "line\nvalue" ||
+                    body.find("\"payload\":" + minitts::server::json_quote(minitts::app::base64_encode(payload))) == std::string::npos)
+                    throw std::runtime_error("artifact serialization changed JSON or payload bytes");
+            }
+        }
         minitts::server::ServerConfig config;
         config.backend = engine::core::BackendType::Cpu;
         config.ui_management = true;

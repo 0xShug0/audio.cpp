@@ -39,6 +39,71 @@ build/debug/bin/audiocpp_cli \
 Use `num_clips`, not `num_clip`. With the default 48-frame clip size, two clips
 produce 93 output frames after block overlap is resolved.
 
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `liveavatar` |
+| Tasks | `sfx` |
+| Modes | `offline`, `streaming` |
+| Languages | `auto` |
+| Default package | `liveavatar_nvfp4_lora` |
+| Input | Reference image, speech audio, and generation prompt |
+| Output | Portrait video frames; see generation examples |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `reference_image_file` | `string` | required | Reference image path used as the identity/appearance condition. |
+| `generation_mode` | `offline`, `liveavatar` | `offline` | Use whole-clip generation or LiveAvatar blockwise generation. |
+| `height` | `int` | `480` | Generated frame height; must be a positive multiple of 16. Declared range: minimum 16. |
+| `width` | `int` | `832` | Generated frame width; must be a positive multiple of 16. Declared range: minimum 16. |
+| `num_frames` | `int` | `48` | Frames generated per LiveAvatar segment; must be positive and a multiple of 4 in blockwise mode (streaming or generation_mode=liveavatar). Declared range: minimum 1. |
+| `num_clips` | `int` | `1` | Maximum LiveAvatar clips to generate from the input audio. Declared range: minimum 1. |
+| `num_inference_steps` | `int` | `4` | Denoising steps; offline generation uses UniPC, blockwise generation uses Euler. The LiveAvatar DMD adapter is designed for 4 steps. Declared range: minimum 1. |
+| `guidance_scale` | `float` | `0.0` | Classifier-free guidance scale; LiveAvatar blockwise generation requires 0. Declared range: minimum 0.0. |
+| `batched_cfg` | `bool` | `true` | Run classifier-free guidance in one denoiser graph. |
+| `sage_attention` | `bool` | `true` | Use CUDA SageAttention when the backend supports it. |
+| `mem_saver` | `bool` | `true` | Reuse immutable condition data and temporary denoiser graph storage across sequential blocks. |
+| `denoiser_layerwise` | `bool` | `false` | Run the denoiser in layerwise mode. Offline generation requires batched_cfg=true and guidance_scale > 1. |
+| `denoiser_layerwise_batch` | `int` | `16` | Layer group size used by layerwise denoising. Declared range: minimum 1. |
+| `vae_encoder_chunk_size` | `int` | `16` | Cached VAE encoder chunk size. Declared range: minimum 1. |
+| `vae_decoder_tile_size` | `int` | `0` | Opt-in VAE decoder spatial tile size for large outputs; 0 disables tiling. Enabled tile sizes must be multiples of 8 and larger than the 64-pixel overlap. Declared range: minimum 0. |
+| `target_cache_blocks` | `int` | `0` | Target KV cache window in block units; 0 keeps the full clip cache. Declared range: minimum 0. |
+| `vae_cache_f16` | `bool` | `true` | Store cached VAE encoder state in F16. |
+| `shift` | `float` | `3.0` | Flow scheduler shift; must be > 0. Declared range: minimum 0.0. |
+| `negative_prompt` | `string` | Model/session default | Negative prompt for classifier-free guidance. |
+| `seed` | `int` | `420` | Generation seed. Declared range: minimum 0. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `liveavatar.denoiser_weight_streaming` | `bool` | `false` | Keep denoiser transformer blocks in host memory and stage layer groups on the accelerator. |
+
+## Load Options (use with `--load-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `liveavatar.support_gguf` | `string` | `Wan2.2-S2V-Support-Q4_K_S-F16.gguf` | Support GGUF containing text_encoder/audio_encoder tensors and the embedded tokenizer sidecar. |
+| `liveavatar.vae_gguf` | `string` | `Wan2.2-S2V-VAE-F16.gguf` | Wan video VAE component GGUF file relative to the model root. |
+| `liveavatar.denoiser_gguf` | `string` | `Wan2.2-S2V-14B-NVFP4-LORA.gguf` | Denoiser DiT GGUF file relative to the model root. |
+
 ## Memory Control
 
 `liveavatar.denoiser_weight_streaming` is an opt-in session option. It is
@@ -67,40 +132,3 @@ The VAE has separate memory controls. `vae_encoder_chunk_size` limits encoder
 work per chunk, while `vae_decoder_tile_size` enables tiled spatial decoding.
 For 720p generation near a 16 GiB limit, use encoder chunks of `4`, decoder tiles
 of `320`, and `target_cache_blocks=1` as shown above.
-
-## Options
-
-Request options (use with `--request-option`):
-
-| Option | Default | Notes |
-|---|---:|---|
-| `generation_mode` | `offline` | Use `liveavatar` for blockwise audio-driven generation. |
-| `reference_image_file` | required | Reference image used for identity and appearance. Legacy `reference_image_path` and `ref_image` remain accepted. |
-| `height` / `width` | `480` / `832` | Output frame dimensions; each must be a positive multiple of 16. |
-| `num_frames` | `48` | Positive frame count per segment; must be a multiple of 4 in blockwise mode (streaming or `generation_mode=liveavatar`). |
-| `num_clips` | `1` | Maximum number of audio-driven clips to generate. |
-| `num_inference_steps` | `4` | UniPC steps offline, Euler steps in blockwise mode; the LiveAvatar adapter is designed for four steps. |
-| `shift` | `3` | Flow scheduler shift; must be > 0. |
-| `guidance_scale` | `0` | LiveAvatar blockwise generation requires zero guidance. |
-| `batched_cfg` | `true` | Run CFG branches in one denoiser graph. Legacy `fused_cfg` and `liveavatar.fused_cfg` remain accepted; the new name takes precedence. |
-| `seed` | `420` | Generation seed. |
-| `mem_saver` | `true` | Reuse immutable condition data and temporary denoiser graph storage between blocks. Legacy `memory_saver` and `liveavatar.memory_saver` remain accepted. |
-| `denoiser_layerwise` | `false` | Required by denoiser weight streaming. Offline generation requires `batched_cfg=true` and `guidance_scale > 1`. |
-| `denoiser_layerwise_batch` | `16` | Number of denoiser layers staged and evaluated together. |
-| `target_cache_blocks` | `0` | Target KV cache window; `1` keeps one block. |
-| `vae_encoder_chunk_size` | `16` | VAE encoder chunk size. |
-| `vae_decoder_tile_size` | `0` | VAE decoder tile size; zero disables tiling. Enabled sizes must be multiples of 8 and greater than the 64-pixel overlap. |
-
-Session options (use with `--session-option`):
-
-| Option | Default | Notes |
-|---|---:|---|
-| `liveavatar.denoiser_weight_streaming` | `false` | Stream denoiser block weights and keep the completed condition KV cache in host memory. |
-
-Load options (use with `--load-option`):
-
-| Option | Default | Notes |
-|---|---:|---|
-| `support_gguf` | package default | Override the support component path relative to the model root. |
-| `vae_gguf` | package default | Override the VAE component path relative to the model root. |
-| `denoiser_gguf` | package default | Override the denoiser component path relative to the model root. |

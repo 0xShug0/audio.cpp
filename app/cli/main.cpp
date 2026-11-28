@@ -1,3 +1,4 @@
+#include "engine/framework/runtime/moe_options.h"
 #include "args.h"
 #include "batch.h"
 #include "partial_render.h"
@@ -20,6 +21,7 @@
 #include "engine/framework/io/json.h"
 #include "engine/framework/runtime/registry.h"
 #include "engine/framework/runtime/session.h"
+#include "engine/framework/runtime/options.h"
 
 #include <algorithm>
 #include <chrono>
@@ -60,12 +62,14 @@ void print_task_list_help() {
         << "    --task vad|asr|diar|sep|gen|tts|clon|vc|s2s|align|vdes|spk|svc|midi|wake|cls\n"
         << "    --family <name>\n"
         << "    --model <path>\n"
-        << "    --backend cpu|cuda|hip|rocm|vulkan|metal|best  (rocm is an alias for hip)\n"
+        << "    --backend cpu|cuda|hip|rocm|vulkan|metal|webgpu|sycl|best  (rocm is an alias for hip)\n"
         << "    --mode offline|streaming  default offline\n"
         << "    --device <n>\n"
+        << "    --device-name <name>              select backend device by ggml name (e.g. CUDA0) or unique description substring\n"
         << "    --backend-impl <name>             optional backend implementation; default preserves existing dispatch\n"
         << "    --list-devices  List available backend devices and exit; --json adds PCI ids and memory\n"
         << "    --threads <n>  Backend and OpenMP worker threads, default 4\n"
+        << "    --config-file <yaml>  Load CLI options from YAML; explicit scalar CLI values take precedence\n"
         << "    --registry-config <path>\n"
         << "    --model-spec-override <json-or-directory|embedded>  Select a spec file/directory or the GGUF's embedded spec\n"
         << "    --config <id>\n"
@@ -79,6 +83,13 @@ void print_task_list_help() {
         << "    --metrics  Print compact wall time, audio duration, and RTF summary after offline generation\n"
         << "    --load-option key=value\n"
         << "    --session-option key=value\n"
+        << "    --moe-policy <placement[,eviction]> select independent MoE execution/cache policies\n"
+        << "    --moe-cpu-share <0..1>             session CPU share of disk-expert cache misses; default 0\n"
+        << "    --moe-disk-experts <bool>         stage expert weights through bounded caches\n"
+        << "    --moe-pin-experts <bool>          pin staged expert banks in host RAM\n"
+        << "    --moe-expert-cache-size <int>     expert slots per routed layer\n"
+        << "    --moe-disk-expert-read-threads <int>  host expert read workers\n"
+        << "    --moe-cpu-expert-layers <int>     first N MoE layers execute on CPU\n"
         << "    --request-option key=value\n"
         << "  Batch:\n"
         << "    --request-sequence <json>  Run JSON requests in one offline session\n"
@@ -784,6 +795,26 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
 
+        auto common_session_options = collect_key_value_args(argc, argv, "--session-option");
+        if (const auto value = find_arg(argc, argv, "--moe-cpu-share")) {
+            const auto moe_cpu_share = engine::runtime::parse_finite_float_option({{"moe_cpu_share", *value}}, {"moe_cpu_share"}).value();
+            if (moe_cpu_share < 0 || moe_cpu_share > 1) throw std::runtime_error("--moe-cpu-share must be between zero and one");
+            common_session_options["moe_cpu_share"] = *value;
+        }
+        for (const auto & entry : {
+                 std::make_pair("--moe-policy", "moe_policy"),
+                 std::make_pair("--moe-disk-experts", "moe_disk_experts"),
+                 std::make_pair("--moe-pin-experts", "moe_pin_experts"),
+                 std::make_pair("--moe-expert-cache-size", "moe_expert_cache_size"),
+                 std::make_pair("--moe-disk-expert-read-threads", "moe_disk_expert_read_threads"),
+                 std::make_pair("--moe-cpu-expert-layers", "moe_cpu_expert_layers")}) {
+            if (const auto value = find_arg(argc, argv, entry.first)) {
+                if (common_session_options.count(entry.second))
+                    throw std::invalid_argument(std::string("duplicate shared MoE session option: ") + entry.second);
+                common_session_options[entry.second] = *value;
+            }
+        }
+
         const auto model_arg = find_arg(argc, argv, "--model");
         const auto pipeline_arg = find_arg(argc, argv, "--pipeline");
         const auto recipe_arg = find_arg(argc, argv, "--recipe");
@@ -800,11 +831,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
 #ifdef _OPENMP
             omp_set_num_threads(threads);
 #endif
-            engine::core::BackendConfig backend;
-            backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
-            backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-            backend.device = parse_int_arg(argc, argv, "--device", 0);
-            backend.threads = threads;
+            const auto backend = parse_backend_config_from_cli(argc, argv, threads);
             minitts::app::run_json_workflow(
                 registry,
                 minitts::app::WorkflowRunOptions{
@@ -813,7 +840,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
                     backend,
                     optional_path_arg(argc, argv, "--out"),
                     collect_key_value_args(argc, argv, "--load-option"),
-                    collect_key_value_args(argc, argv, "--session-option"),
+                    common_session_options,
                     workflow_inputs,
                     optional_path_arg(argc, argv, "--model-spec-override"),
                     audio_converter,
@@ -821,6 +848,15 @@ int audiocpp_cli_main(int argc, char ** argv) {
             return 0;
         }
         if (recipe_arg.has_value()) {
+            const auto policies = engine::runtime::resolve_moe_policies(common_session_options);
+            const auto prepared_policy = engine::moe::prepare_policy(policies);
+            for (const auto & option : common_session_options) {
+                const bool policy_key = option.first == "moe_policy" || option.first == "moe_cpu_share" ||
+                    option.first.rfind("moe_policy_params.", 0) == 0;
+                if (policy_key && !prepared_policy.active_placement && policies.eviction.name == "default") continue;
+                if (option.first.compare(0, 4, "moe_") == 0)
+                    throw std::runtime_error("recipes require role-scoped MoE options: --session-option <role>." + option.first + "=<value>");
+            }
             const int threads = parse_int_arg(argc, argv, "--threads", 4);
             if (threads <= 0) {
                 throw std::runtime_error("--threads must be positive");
@@ -834,12 +870,9 @@ int audiocpp_cli_main(int argc, char ** argv) {
             }
             recipe_options.model_families = collect_key_value_args(argc, argv, "--recipe-family");
             recipe_options.load_options = collect_key_value_args(argc, argv, "--load-option");
-            recipe_options.session_options = collect_key_value_args(argc, argv, "--session-option");
+            recipe_options.session_options = common_session_options;
             recipe_options.model_spec_override = optional_path_arg(argc, argv, "--model-spec-override");
-            recipe_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
-            recipe_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-            recipe_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
-            recipe_options.backend.threads = threads;
+            recipe_options.backend = parse_backend_config_from_cli(argc, argv, threads);
 
             auto request = build_request_from_cli(argc, argv);
             const auto wav_options = wav_write_options_from_cli(argc, argv);
@@ -925,19 +958,16 @@ int audiocpp_cli_main(int argc, char ** argv) {
             throw std::runtime_error("--metrics currently supports offline mode only");
         }
 
-        engine::runtime::SessionOptions session_options;
-        session_options.backend.type = parse_backend(find_arg(argc, argv, "--backend").value_or("cpu"));
-        session_options.backend.impl = find_arg(argc, argv, "--backend-impl").value_or("");
-        session_options.backend.device = parse_int_arg(argc, argv, "--device", 0);
         const int threads = parse_int_arg(argc, argv, "--threads", 4);
         if (threads <= 0) {
             throw std::runtime_error("--threads must be positive");
         }
-        session_options.backend.threads = threads;
+        engine::runtime::SessionOptions session_options;
+        session_options.backend = parse_backend_config_from_cli(argc, argv, threads);
 #ifdef _OPENMP
         omp_set_num_threads(threads);
 #endif
-        session_options.options = collect_key_value_args(argc, argv, "--session-option");
+        session_options.options = common_session_options;
         // Parsed before the model loads so a bad value fails fast.
         const auto wav_options = wav_write_options_from_cli(argc, argv);
         auto model = registry.load(load_request);
@@ -1041,6 +1071,7 @@ int audiocpp_cli_main(int argc, char ** argv) {
             request.options["export_voice_state_file"] = voice_state_out->string();
         }
         require_known_args(argc, argv);
+        engine::runtime::resolve_random_seed(request.options);
         const auto session_start = std::chrono::steady_clock::now();
         session->prepare(engine::runtime::build_preparation_request(request));
         if (voice_state_out.has_value()) {
@@ -1102,15 +1133,24 @@ int audiocpp_cli_main(int argc, char ** argv) {
 int wmain(int argc, wchar_t ** wargv) {
     try {
         auto utf8_args = wide_args_to_utf8(argc, wargv);
-        std::vector<char *> argv;
-        argv.reserve(utf8_args.size() + 1);
+        std::vector<char *> utf8_argv;
+        utf8_argv.reserve(utf8_args.size() + 1);
         for (auto & arg : utf8_args) {
+            utf8_argv.push_back(arg.data());
+        }
+        utf8_argv.push_back(nullptr);
+
+        auto expanded_args = minitts::cli::expand_cli_args(argc, utf8_argv.data());
+        std::vector<char *> argv;
+        argv.reserve(expanded_args.size() + 1);
+        for (auto & arg : expanded_args) {
             argv.push_back(arg.data());
         }
         argv.push_back(nullptr);
-        const int status = audiocpp_cli_main(argc, argv.data());
-        if (status == 0 && !minitts::cli::has_arg(argc, argv.data(), "--version")) {
-            minitts::cli::warn_ignored_args(argc, argv.data());
+        const int expanded_argc = static_cast<int>(expanded_args.size());
+        const int status = audiocpp_cli_main(expanded_argc, argv.data());
+        if (status == 0 && !minitts::cli::has_arg(expanded_argc, argv.data(), "--version")) {
+            minitts::cli::warn_ignored_args(expanded_argc, argv.data());
         }
         return status;
     } catch (const std::exception & ex) {
@@ -1120,10 +1160,23 @@ int wmain(int argc, wchar_t ** wargv) {
 }
 #else
 int main(int argc, char ** argv) {
-    const int status = audiocpp_cli_main(argc, argv);
-    if (status == 0 && !minitts::cli::has_arg(argc, argv, "--version")) {
-        minitts::cli::warn_ignored_args(argc, argv);
+    try {
+        auto expanded_args = minitts::cli::expand_cli_args(argc, argv);
+        std::vector<char *> expanded_argv;
+        expanded_argv.reserve(expanded_args.size() + 1);
+        for (auto & arg : expanded_args) {
+            expanded_argv.push_back(arg.data());
+        }
+        expanded_argv.push_back(nullptr);
+        const int expanded_argc = static_cast<int>(expanded_args.size());
+        const int status = audiocpp_cli_main(expanded_argc, expanded_argv.data());
+        if (status == 0 && !minitts::cli::has_arg(expanded_argc, expanded_argv.data(), "--version")) {
+            minitts::cli::warn_ignored_args(expanded_argc, expanded_argv.data());
+        }
+        return status;
+    } catch (const std::exception & ex) {
+        std::cerr << "audiocpp_cli failed: " << ex.what() << "\n";
+        return 1;
     }
-    return status;
 }
 #endif

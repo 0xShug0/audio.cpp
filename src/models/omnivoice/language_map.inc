@@ -321,6 +321,7 @@
     {"kxp", "Wadiyara Koli"},
     {"ky", "Kirghiz"},
     {"kyx", "Rapoisi"},
+    {"la", "Latin"},
     {"lag", "Rangi"},
     {"lb", "Luxembourgish"},
     {"lcm", "Tungag"},

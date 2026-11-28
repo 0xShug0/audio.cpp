@@ -6,7 +6,7 @@ GGUF output directory. The conversion script verifies shapes and retained F32
 tensor bytes against the original safetensors.
 
 ```bash
-python tests/reuse/convert_reuse_gguf.py \
+python tools/gguf/reuse_convert.py \
   --source /path/to/RE-USE --output /path/to/RE-USE-GGUF/reuse-f32.gguf \
   --log build/logs/reuse/conversion.log
 ```

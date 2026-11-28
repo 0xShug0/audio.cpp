@@ -1,11 +1,14 @@
 #include "engine/models/moonshine_asr/session.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/models/moonshine_asr/runtime.h"
 #include "engine/models/moonshine_asr/assets.h"
 #include "engine/models/moonshine_asr/weights.h"
 #ifdef ENGINE_HAVE_NEON
 #include "engine/models/moonshine_asr/neon_decoder.h"
 #endif
+#include "engine/framework/assets/bundled_assets.h"
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -25,7 +28,7 @@ constexpr const char * kFamily = "moonshine_asr";
 constexpr float kDefaultAudioChunkSeconds = 60.0F;
 
 std::filesystem::path default_vad_model_path() {
-    return std::filesystem::path("assets") / "framework" / "models" / "silero_vad";
+    return engine::assets::resolve_bundled_asset(std::filesystem::path("assets") / "framework" / "models" / "silero_vad");
 }
 
 int64_t audio_frame_count(const runtime::AudioBuffer & audio) {
@@ -260,6 +263,7 @@ void MoonshineSTTSession::prepare(const runtime::SessionPreparationRequest & req
 }
 
 runtime::TaskResult MoonshineSTTSession::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("run()");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Moonshine ASR run() requires an offline session");
@@ -269,7 +273,7 @@ runtime::TaskResult MoonshineSTTSession::run(const runtime::TaskRequest & reques
     }
     auto normalized_request = request;
     normalized_request.options = normalize_request_options(request.options, *contract_);
-    return transcribe_moonshine_asr_with_chunking(
+    auto result = transcribe_moonshine_asr_with_chunking(
         *assets_,
         *weights_,
         execution_context(),
@@ -277,6 +281,8 @@ runtime::TaskResult MoonshineSTTSession::run(const runtime::TaskRequest & reques
         normalized_request.options,
         runtime_config_,
         engine::audio::parse_audio_chunk_mode(normalized_request.options) == engine::audio::AudioChunkMode::Vad ? &vad_session() : nullptr);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
+    return result;
 }
 
 runtime::StreamingPolicy MoonshineSTTSession::streaming_policy() const {
@@ -289,6 +295,7 @@ runtime::StreamingPolicy MoonshineSTTSession::streaming_policy() const {
 }
 
 void MoonshineSTTSession::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("Moonshine ASR start_stream()");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Moonshine ASR start_stream() requires a streaming session");
@@ -358,6 +365,7 @@ runtime::TaskResult MoonshineSTTSession::finalize() {
             ? &vad_session()
             : nullptr);
     reset();
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return result;
 }
 

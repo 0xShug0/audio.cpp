@@ -2,6 +2,7 @@
 
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/codecs/heartcodec_runtime.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -45,44 +46,11 @@ struct HeartMuLaGenerationConfig {
     int64_t empty_id = 0;
 };
 
-struct HeartCodecConfig {
-    std::string model_type;
-    std::string torch_dtype;
-    int64_t dim = 0;
-    int64_t codebook_size = 0;
-    float decay = 0.0F;
-    float commitment_weight = 0.0F;
-    int64_t threshold_ema_dead_code = 0;
-    bool use_cosine_sim = false;
-    int64_t codebook_dim = 0;
-    int64_t num_quantizers = 0;
-    int64_t attention_head_dim = 0;
-    int64_t in_channels = 0;
-    std::string norm_type;
-    int64_t num_attention_heads = 0;
-    int64_t num_layers = 0;
-    int64_t num_layers_2 = 0;
-    int64_t out_channels = 0;
-    int64_t num_bands = 0;
-    int sample_rate = 0;
-    bool causal = true;
-    int64_t num_samples = 0;
-    std::vector<int64_t> downsample_factors;
-    std::vector<int64_t> downsample_kernel_sizes;
-    std::vector<int64_t> upsample_factors;
-    std::vector<int64_t> upsample_kernel_sizes;
-    int64_t latent_hidden_dim = 0;
-    int64_t default_kernel_size = 0;
-    int64_t delay_kernel_size = 0;
-    int64_t init_channel = 0;
-    int64_t res_kernel_size = 0;
-};
-
 struct HeartMuLaAssets {
     assets::ResourceBundle resources;
     HeartMuLaConfig mula_config;
     HeartMuLaGenerationConfig generation_config;
-    HeartCodecConfig codec_config;
+    codecs::HeartCodecConfig codec_config;
     std::shared_ptr<const assets::TensorSource> mula_weights;
     std::shared_ptr<const assets::TensorSource> codec_weights;
 };

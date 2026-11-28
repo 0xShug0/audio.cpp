@@ -1,5 +1,8 @@
 # AuK
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 Tencent AuK base and AuK-Flash are available as experimental `--family auk`
 models for offline speech generation and instruction-based audio editing.
 Output is mono 24 kHz.

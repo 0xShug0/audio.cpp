@@ -31,6 +31,7 @@ struct CausalDecoderRuntimeConfig {
     bool evict_cuda_graph_cache_on_release = false;
     // Zero keeps full-capacity attention; positive values cache bounded decode graphs.
     int64_t batched_attention_alignment = 0;
+    bool reuse_batched_decode_scratch = false;
 };
 
 struct CausalDecoderRuntimeWeights {

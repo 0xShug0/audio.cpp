@@ -18,6 +18,7 @@
 #include "fattn-tile.hpp"
 #include "fattn-vec.hpp"
 #include "fattn.hpp"
+#include "fattn-onednn.hpp"
 
 
 #define FATTN_VEC_CASE(D, type_K, type_V)                                                                        \
@@ -96,12 +97,13 @@ static void ggml_sycl_flash_attn_ext_vec(ggml_backend_sycl_context & ctx, ggml_t
 enum best_fattn_kernel {
     BEST_FATTN_KERNEL_NONE     =   0,
     BEST_FATTN_KERNEL_VEC      = 100,
+    BEST_FATTN_KERNEL_ONEDNN   = 150,
     BEST_FATTN_KERNEL_TILE     = 200,
 };
 
 static best_fattn_kernel ggml_sycl_get_best_fattn_kernel(const int device, const ggml_tensor * dst) {
-    GGML_UNUSED(device);
 #ifndef SYCL_FLASH_ATTN
+    GGML_UNUSED(device);
     GGML_UNUSED(dst);
     return BEST_FATTN_KERNEL_NONE;
 #endif// SYCL_FLASH_ATTN
@@ -186,6 +188,11 @@ static best_fattn_kernel ggml_sycl_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_NONE;
     }
 
+    // oneDNN's fused SDPA: taken only when statically supported, otherwise the kernels below run.
+    if (ggml_sycl_flash_attn_ext_onednn_supported(device, dst)) {
+        return BEST_FATTN_KERNEL_ONEDNN;
+    }
+
     // For small batch sizes the vector kernel may be preferable over the kernels optimized for large batch sizes:
     const bool can_use_vector_kernel = Q->ne[0] <= 512 && Q->ne[0] % 64 == 0 && K->ne[1] % FATTN_KQ_STRIDE == 0;
 
@@ -195,9 +202,7 @@ static best_fattn_kernel ggml_sycl_get_best_fattn_kernel(const int device, const
     if (can_use_vector_kernel) {
         if (!ggml_is_quantized(K->type) && !ggml_is_quantized(V->type)) {
             if (Q->ne[1] == 1) {
-                if (!gqa_opt_applies) {
-                    return BEST_FATTN_KERNEL_VEC;
-                }
+                return BEST_FATTN_KERNEL_VEC;
             }
         } else {
             if (Q->ne[1] <= 2) {
@@ -213,6 +218,11 @@ void ggml_sycl_flash_attn_ext(ggml_backend_sycl_context & ctx, ggml_tensor * dst
     switch (ggml_sycl_get_best_fattn_kernel(ggml_sycl_get_device(), dst)) {
         case BEST_FATTN_KERNEL_NONE:
             GGML_ABORT("Not support Flash-Attention");
+#if GGML_SYCL_DNNL
+        case BEST_FATTN_KERNEL_ONEDNN:
+            ggml_sycl_flash_attn_ext_onednn(ctx, dst);
+            break;
+#endif
         case BEST_FATTN_KERNEL_TILE:
             ggml_sycl_flash_attn_ext_tile(ctx, dst);
             break;
@@ -224,4 +234,8 @@ void ggml_sycl_flash_attn_ext(ggml_backend_sycl_context & ctx, ggml_tensor * dst
 
 bool ggml_sycl_flash_attn_ext_supported(int device, const ggml_tensor * dst) {
     return ggml_sycl_get_best_fattn_kernel(device, dst) != BEST_FATTN_KERNEL_NONE;
+}
+
+bool ggml_sycl_flash_attn_ext_uses_onednn(int device, const ggml_tensor * dst) {
+    return ggml_sycl_get_best_fattn_kernel(device, dst) == BEST_FATTN_KERNEL_ONEDNN;
 }

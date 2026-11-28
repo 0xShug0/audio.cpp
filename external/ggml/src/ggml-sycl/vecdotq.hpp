@@ -384,6 +384,48 @@ template <> struct reorder_vec_dot_q_sycl<GGML_TYPE_Q8_0> {
     }
 };
 
+// The reordered Q8_0 dot product using the hardware dp4a instruction. The reorder path also runs
+// on GPUs without dp4a, so kernels using this functor are only dispatched after a device check.
+struct reorder_vec_dot_q8_0_hw_dp4a {
+    static constexpr ggml_type gtype = GGML_TYPE_Q8_0;
+
+    using q8_0_block  = ggml_sycl_reordered::block_q_t<GGML_TYPE_Q8_0>;
+    using q8_0_traits = typename q8_0_block::traits;
+
+    __dpct_inline__ float operator()(const void * __restrict__ vbq, const std::pair<int, int> ibx_offset,
+                                     const std::pair<int, int> d_offset, const int8_t * q8_1_quant_ptr,
+                                     const sycl::half2 * q8_1_ds, const int & iqs) {
+        const uint8_t * base = static_cast<const uint8_t *>(vbq);
+        const int8_t *  qs   = reinterpret_cast<const int8_t *>(base + ibx_offset.first);
+        const ggml_half  d   = *reinterpret_cast<const ggml_half *>(base + d_offset.first);
+
+        int v[q8_0_traits::vdr_mmvq];
+        int u[q8_0_traits::vdr_mmvq];
+
+#pragma unroll
+        for (size_t i = 0; i < q8_0_traits::vdr_mmvq; ++i) {
+            v[i] = get_int_from_int8_aligned(qs, iqs + i);
+            u[i] = get_int_from_int8_aligned(q8_1_quant_ptr, iqs + i);
+        }
+
+        int sumi = 0;
+#pragma unroll
+        for (size_t i = 0; i < q8_0_traits::vdr_mmvq; ++i) {
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__SPIR__)
+            int next;
+            asm("dp4a (M1, 16) %0(0,0)<1> %1(0,0)<1;1,0> %2(0,0)<1;1,0> %3(0,0)<1;1,0>"
+                : "=rw"(next) : "rw"(sumi), "rw"(v[i]), "rw"(u[i]));
+            sumi = next;
+#else
+            sumi = dpct::dp4a(v[i], u[i], sumi);
+#endif
+        }
+
+        const sycl::half2 ds_values = *q8_1_ds;
+        return static_cast<float>(d) * static_cast<float>(ds_values[0]) * sumi;
+    }
+};
+
 static inline float vec_dot_q4_K_q8_1_common(const int * __restrict__ q4, const uint16_t * __restrict__ scales,
                                              const ggml_half2 & dm, const block_q8_1 * __restrict__ bq8_1,
                                              const int &        iqs) {

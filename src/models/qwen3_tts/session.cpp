@@ -26,7 +26,7 @@ constexpr int64_t kDefaultTextChunkSize = 8192;
 
 // Text chunking splits the talker, not the vocoder: with `qwen3_tts.stitch_decode=true` every
 // chunk's codes are concatenated and voiced in one decode pass. Voicing per chunk re-voices the
-// whole voice-clone reference once per chunk (`decode_and_trim_reference` prepends it and trims it
+// whole voice-clone reference once per chunk (the session prepends it and trims it
 // back off), pads every chunk's tail up to a full 64-token group, and zeroes the stateful
 // conv/KV cache at every chunk boundary. Measured on RK3588, 300 Russian characters, voice-clone
 // reference 22.5 s: voicing per chunk at `--text-chunk-size 60` runs the vocoder 7 times for
@@ -47,14 +47,6 @@ void append_speech_codes(Qwen3SpeechCodes & dst, const Qwen3SpeechCodes & src) {
     }
     dst.codes.insert(dst.codes.end(), src.codes.begin(), src.codes.end());
     dst.frames += src.frames;
-}
-
-runtime::AudioBuffer decode_stitched(const Qwen3SpeechTokenizerDecoderRuntime & decoder,
-                                     const Qwen3SpeechCodes * reference_codes,
-                                     const Qwen3SpeechCodes & codes) {
-    return reference_codes != nullptr
-        ? decoder.decode_and_trim_reference(*reference_codes, codes)
-        : decoder.decode(codes);
 }
 
 std::shared_ptr<const Qwen3TTSAssets> require_assets(std::shared_ptr<const Qwen3TTSAssets> assets) {
@@ -356,6 +348,12 @@ Qwen3TTSSession::Qwen3TTSSession(
       voice_prompt_context_(voice_prompt_backend_config(options)),
       voice_prompt_cache_(voice_prompt_cache_slots_from_options(options)) {
     const auto perf = perf_settings_from_options(options);
+    const auto activation_type = runtime::find_option(options.options,
+        {"qwen3_tts.activation_type"}).value_or("f32");
+    if (activation_type != "f32" && activation_type != "bf16")
+        throw std::runtime_error("qwen3_tts.activation_type must be f32 or bf16");
+    debug::trace_log_scalar("qwen3_tts.activation_type", activation_type);
+
     conv_weight_storage_type_ = perf.conv_weight_type;
     const bool flash_attention = perf.attention && core::resolve_flash_attention(
         execution_context().backend(), assets_->config.talker.head_dim, *perf.attention);
@@ -406,16 +404,17 @@ Qwen3TTSSession::Qwen3TTSSession(
           {{"ggml", {options.backend.type}, {}, {}},
            {"rknn", {}, {"main"}, {"first", "window"}}}}});
     const auto & decoder_plan = exec_plan.at("speech_decoder");
+    std::string rknn_model_path, rknn_first_path, rknn_window_path;
     if (decoder_plan.impl == "rknn") {
         const auto & model_dir = assets_->resources.model_directory();
-        rknn_decoder_.model_path = engine::rknn::resolve_engine_path(
+        rknn_model_path = engine::rknn::resolve_engine_path(
             decoder_plan.artifacts.at("main"), model_dir);
         if (const auto first = decoder_plan.artifacts.find("first"); first != decoder_plan.artifacts.end()) {
-            rknn_decoder_.first_model_path = engine::rknn::resolve_engine_path(first->second, model_dir);
+            rknn_first_path = engine::rknn::resolve_engine_path(first->second, model_dir);
         }
         if (const auto window = decoder_plan.artifacts.find("window");
             window != decoder_plan.artifacts.end()) {
-            rknn_decoder_.window_path = engine::rknn::resolve_engine_path(window->second, model_dir);
+            rknn_window_path = engine::rknn::resolve_engine_path(window->second, model_dir);
         }
     }
     for (const auto & [key, _] : options.options) {
@@ -438,6 +437,7 @@ Qwen3TTSSession::Qwen3TTSSession(
             key != "qwen3_tts.exec_plan" &&
             key != "qwen3_tts.perf_mode" &&
             key != "qwen3_tts.attention" &&
+            key != "qwen3_tts.activation_type" &&
             key != "qwen3_tts.packed_projections" &&
             key != "qwen3_tts.kv_cache_write" &&
             key != "qwen3_tts.talker_kv_cache_alignment" &&
@@ -461,21 +461,29 @@ Qwen3TTSSession::Qwen3TTSSession(
         perf.kv_cache_alignment,
         perf.packed_projections,
         perf.kv_cache_type,
-        perf.optimized_kv_cache_write);
+        perf.optimized_kv_cache_write, activation_type == "bf16");
     talker_step_ = talker_.create_step_runtime(
         talker_weights_,
         assets_->config.talker.max_position_embeddings,
         assets_->config.max_new_tokens);
-    speech_decoder_ = std::make_unique<Qwen3SpeechTokenizerDecoderRuntime>(
-        assets_,
-        execution_context(),
-        speech_decoder_graph_arena_bytes_,
-        speech_decoder_constant_context_bytes_,
-        speech_decoder_weight_storage_type_,
-        conv_weight_storage_type_,
-        attention_mode,
-        rknn_decoder_,
-        perf.stateful_decoder);
+    const auto decoder_config = codecs::parse_qwen3_audio_tokenizer_decoder_config(
+        assets_->resources.parse_json("speech_tokenizer_config"));
+    speech_decoder_code_groups_ = decoder_config.num_quantizers;
+    if (decoder_plan.impl == "rknn") {
+        if (perf.stateful_decoder) {
+            throw std::runtime_error("qwen3_tts.stream_decoder=stateful requires the GGML speech decoder");
+        }
+        rknn_decoder_ = std::make_unique<RknnSpeechDecoder>(
+            rknn_model_path, rknn_first_path, rknn_window_path,
+            decoder_config.num_quantizers, decoder_config.head_dim,
+            decoder_config.sliding_window, decoder_config.rope_theta);
+    } else {
+        speech_decoder_ = std::make_unique<codecs::Qwen3SpeechTokenizerDecoderRuntime>(
+            assets_->speech_tokenizer_weights, decoder_config, execution_context(),
+            speech_decoder_graph_arena_bytes_, speech_decoder_constant_context_bytes_,
+            speech_decoder_weight_storage_type_, conv_weight_storage_type_,
+            attention_mode == Qwen3TTSPerfMode::FlashAttention, perf.stateful_decoder);
+    }
     if (assets_->config.variant == Qwen3TTSVariant::Base &&
         task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning) {
@@ -490,22 +498,21 @@ Qwen3TTSSession::Qwen3TTSSession(
         throw std::runtime_error("Qwen3 custom voice model only supports the Tts task");
     }
     if (assets_->config.variant == Qwen3TTSVariant::Base) {
-        speech_encoder_ = std::make_unique<Qwen3SpeechTokenizerEncoderRuntime>(
-            assets_,
+        speech_encoder_ = std::make_unique<codecs::Qwen3SpeechTokenizerEncoderRuntime>(
+            assets_->speech_tokenizer_weights,
             voice_prompt_context_,
             speech_encoder_graph_arena_bytes_,
             speech_encoder_weight_storage_type_,
             conv_weight_storage_type_,
             core::resolve_flash_attention(voice_prompt_context_.backend(), 64,
-                perf.attention.value_or(core::AttentionPreference::Eager))
-                ? Qwen3TTSPerfMode::FlashAttention : Qwen3TTSPerfMode::Standard);
+                perf.attention.value_or(core::AttentionPreference::Eager)));
         speaker_encoder_ = std::make_unique<Qwen3TTSEcapaTdnnEncoderRuntime>(
             assets_,
             voice_prompt_context_,
             speaker_encoder_graph_arena_bytes_,
             conv_weight_storage_type_);
     }
-    if (!rknn_decoder_.model_path.empty()) {
+    if (rknn_decoder_ != nullptr) {
         // The NPU decoder voices the speech decoder, so the ggml decoder's weights are
         // never loaded. The speech-tokenizer tensor source is one resident blob opened for
         // the whole model, and a source frees only the ranges it hands out, so the
@@ -548,6 +555,57 @@ void Qwen3TTSSession::reset_stream_state() {
     stream_audio_.reset();
 }
 
+runtime::AudioBuffer Qwen3TTSSession::decode_speech(
+    const Qwen3SpeechCodes & codes, const Qwen3SpeechCodes * reference) const {
+    if (reference != nullptr) {
+        const auto & reference_codes = *reference;
+        const auto & generated_codes = codes;
+        if (reference_codes.code_groups != generated_codes.code_groups) {
+            throw std::runtime_error("Qwen3 speech decoder reference/generated code group mismatch");
+        }
+        if (reference_codes.frames < 0 || generated_codes.frames < 0 || reference_codes.code_groups <= 0) {
+            throw std::runtime_error("Qwen3 speech decoder reference/generated code shape is invalid");
+        }
+        if (reference_codes.frames > std::numeric_limits<int64_t>::max() - generated_codes.frames) {
+            throw std::runtime_error("Qwen3 speech decoder combined frame count is too large");
+        }
+        Qwen3SpeechCodes combined;
+        combined.frames = reference_codes.frames + generated_codes.frames;
+        combined.code_groups = reference_codes.code_groups;
+        if (combined.frames > std::numeric_limits<int64_t>::max() / combined.code_groups) {
+            throw std::runtime_error("Qwen3 speech decoder combined code count is too large");
+        }
+        const int64_t combined_code_count = combined.frames * combined.code_groups;
+        if (static_cast<uint64_t>(combined_code_count) > std::numeric_limits<size_t>::max()) {
+            throw std::runtime_error("Qwen3 speech decoder combined code count exceeds host size limits");
+        }
+        combined.codes.reserve(static_cast<size_t>(combined_code_count));
+        combined.codes.insert(combined.codes.end(), reference_codes.codes.begin(), reference_codes.codes.end());
+        combined.codes.insert(combined.codes.end(), generated_codes.codes.begin(), generated_codes.codes.end());
+        auto audio = decode_speech(combined);
+        if (reference_codes.frames > std::numeric_limits<int64_t>::max() / codecs::Qwen3SpeechTokenizerDecoderRuntime::kSamplesPerFrame) {
+            throw std::runtime_error("Qwen3 speech decoder reference sample count is too large");
+        }
+        const int64_t cut = reference_codes.frames * codecs::Qwen3SpeechTokenizerDecoderRuntime::kSamplesPerFrame;
+        if (static_cast<uint64_t>(cut) > audio.samples.size()) {
+            throw std::runtime_error("Qwen3 speech decoder reference trim is out of range");
+        }
+        audio.samples.erase(audio.samples.begin(), audio.samples.begin() + static_cast<std::ptrdiff_t>(cut));
+        return audio;
+    }
+    if (rknn_decoder_ == nullptr) return speech_decoder_->decode(codes);
+    if (codes.frames <= 0 || codes.code_groups != speech_decoder_code_groups_) {
+        throw std::runtime_error("Qwen3 speech decoder received invalid codec shape");
+    }
+    if (static_cast<int64_t>(codes.codes.size()) != codes.frames * codes.code_groups) {
+        throw std::runtime_error("Qwen3 speech decoder codec payload size mismatch");
+    }
+    const auto started = Clock::now();
+    auto samples = rknn_decoder_->decode(codes.codes.data(), codes.frames, codes.code_groups);
+    debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.decode_ms", engine::debug::elapsed_ms(started));
+    return runtime::AudioBuffer{codecs::Qwen3SpeechTokenizerDecoderRuntime::kSampleRate, 1, std::move(samples)};
+}
+
 runtime::AudioBuffer Qwen3TTSSession::generate_audio(
     const Qwen3TalkerPrefill & prefill,
     const Qwen3TTSGenerationOptions & options,
@@ -561,9 +619,7 @@ runtime::AudioBuffer Qwen3TTSSession::generate_audio(
         const auto codes = talker_step_->generate(prefill, options, options.repetition_penalty);
         talker_ms += engine::debug::elapsed_ms(talker_start);
         const auto decoder_start = Clock::now();
-        auto audio = reference_codes != nullptr
-            ? speech_decoder_->decode_and_trim_reference(*reference_codes, codes.generated_codes)
-            : speech_decoder_->decode(codes.generated_codes);
+        auto audio = decode_speech(codes.generated_codes, reference_codes);
         decoder_ms += engine::debug::elapsed_ms(decoder_start);
         return audio;
     }
@@ -572,20 +628,40 @@ runtime::AudioBuffer Qwen3TTSSession::generate_audio(
     config.policy = stream_policy;
     config.frames_per_chunk = static_cast<size_t>(stream_frames);
     config.frame_width = static_cast<size_t>(assets_->config.talker.num_code_groups);
-    config.left_context_frames = Qwen3SpeechTokenizerDecoderRuntime::kLeftContextFrames;
+    config.left_context_frames = codecs::Qwen3SpeechTokenizerDecoderRuntime::kLeftContextFrames;
     stream_audio_.begin(config,
         [&](const runtime::StreamingAudioWindow<int32_t> & window) {
             Qwen3SpeechCodes codes;
             codes.code_groups = static_cast<int64_t>(window.frame_width);
             codes.frames = static_cast<int64_t>(window.frames());
             codes.codes.assign(window.data, window.data + window.frames() * window.frame_width);
-            return speech_decoder_->decode_stream_chunk(codes, window.left_frames, stream_frames);
+            if (rknn_decoder_ == nullptr) {
+                return speech_decoder_->decode_stream_chunk(codes, window.left_frames, stream_frames);
+            }
+            if (stream_frames <= 0 || window.left_frames > codecs::Qwen3SpeechTokenizerDecoderRuntime::kLeftContextFrames ||
+                codes.frames <= static_cast<int64_t>(window.left_frames) ||
+                codes.frames - static_cast<int64_t>(window.left_frames) > stream_frames ||
+                codes.code_groups != speech_decoder_code_groups_) {
+                throw std::runtime_error("Qwen3 streaming speech decoder received invalid codec shape");
+            }
+            const auto begin = Clock::now();
+            auto samples = rknn_decoder_->step(codes.codes.data(), window.left_frames,
+                codes.frames - window.left_frames, codes.code_groups, false);
+            debug::timing_log_scalar("qwen3_tts.speech_decoder.rknn.chunk_ms", engine::debug::elapsed_ms(begin));
+            return runtime::AudioBuffer{codecs::Qwen3SpeechTokenizerDecoderRuntime::kSampleRate, 1, std::move(samples)};
         }, stream_event_sink(), reference_codes ? reference_codes->codes : std::vector<int32_t>{},
         // Stateful decoders carry history in a cache instead of a left
         // context window: the controller resets it per utterance and drains the
         // sub-group tail once at the end. No-ops on the windowed GGML path.
-        [this] { speech_decoder_->reset_stream(); },
-        [this] { return speech_decoder_->flush_stream(); });
+        [this] {
+            if (rknn_decoder_ != nullptr) rknn_decoder_->reset();
+            else speech_decoder_->reset_stream();
+        },
+        [this] {
+            return runtime::AudioBuffer{codecs::Qwen3SpeechTokenizerDecoderRuntime::kSampleRate, 1, rknn_decoder_ != nullptr
+                ? rknn_decoder_->step(nullptr, 0, 0, speech_decoder_code_groups_, true)
+                : std::vector<float>{}};
+        });
     const auto talker_start = Clock::now();
     talker_step_->generate(prefill, options, options.repetition_penalty,
         [&](const std::vector<int32_t> & frame) { stream_audio_.push(frame); });
@@ -643,7 +719,7 @@ runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & req
         }
         if (stitch_decode_ && stream_frames == 0) {
             const auto decoder_start = Clock::now();
-            merged_audio = decode_stitched(*speech_decoder_, nullptr, codes);
+            merged_audio = decode_speech(codes);
             decoder_ms += engine::debug::elapsed_ms(decoder_start);
         }
         release_talker_cached_step_graph.release();
@@ -684,7 +760,7 @@ runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & req
         }
         if (stitch_decode_ && stream_frames == 0) {
             const auto decoder_start = Clock::now();
-            merged_audio = decode_stitched(*speech_decoder_, nullptr, codes);
+            merged_audio = decode_speech(codes);
             decoder_ms += engine::debug::elapsed_ms(decoder_start);
         }
         release_talker_cached_step_graph.release();
@@ -744,9 +820,7 @@ runtime::TaskResult Qwen3TTSSession::synthesize(const runtime::TaskRequest & req
         // whole utterance instead of once per text chunk, and the stateful vocoder cache runs
         // continuously across the chunk boundaries.
         const auto decoder_start = Clock::now();
-        merged_audio = decode_stitched(*speech_decoder_,
-                                       reference_codes ? &*reference_codes : nullptr,
-                                       codes);
+        merged_audio = decode_speech(codes, reference_codes ? &*reference_codes : nullptr);
         decoder_ms += engine::debug::elapsed_ms(decoder_start);
     }
     release_talker_cached_step_graph.release();

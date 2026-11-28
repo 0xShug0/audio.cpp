@@ -1,10 +1,15 @@
 #include "engine/framework/midi/midi_file.h"
+#include "engine/framework/debug/profiler.h"
+#include "engine/framework/debug/trace.h"
 
 #include "test_assert.h"
 
+#include <chrono>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -212,13 +217,133 @@ void test_overlap_is_trimmed_before_serializing() {
     require_eq(tracks[1].events[4].status, uint8_t{0x90}, "second note on status");
 }
 
+void test_reader_roundtrip() {
+    const auto sequence = engine::midi::read_standard_midi_file(engine::midi::write_standard_midi_file({
+        {false, 0, 0.0, 0.5, 60, "piano"},
+        {true, engine::midi::kDrumProgram, 0.25, 0.25, 36, "drums"},
+    }));
+    require_eq(sequence.ticks_per_beat, 480, "read PPQ");
+    require_eq(sequence.notes.size(), size_t{2}, "read note count");
+    require_eq(sequence.notes[0].channel, 0, "read piano channel");
+    require_eq(sequence.notes[0].pitch, 60, "read piano pitch");
+    require_eq(sequence.notes[0].onset_tick, int64_t{0}, "read piano onset");
+    require_eq(sequence.notes[0].offset_tick, int64_t{480}, "read piano offset");
+    require_eq(sequence.notes[1].channel, 9, "read drum channel");
+    require_eq(sequence.notes[1].onset_tick, int64_t{240}, "read drum onset");
+    require_eq(sequence.notes[1].offset_tick, int64_t{250}, "read drum offset");
+}
+
+void test_reader_running_status_and_overlapping_notes() {
+    // Program change, overlapping same-pitch note-ons, text meta event,
+    // velocity-zero note-off using running status, explicit note-off, EOT.
+    const auto sequence = engine::midi::read_standard_midi_file(bytes_from_hex(
+        "4d54686400000006000000010060"
+        "4d54726b0000001a"
+        "00c00500903c64183c5a0cff0101610c3c0018803c0000ff2f00"));
+    require_eq(sequence.ticks_per_beat, 96, "nondefault PPQ");
+    require_eq(sequence.notes.size(), size_t{2}, "overlap note count");
+    require_eq(sequence.notes[0].onset_tick, int64_t{0}, "FIFO first onset");
+    require_eq(sequence.notes[0].offset_tick, int64_t{48}, "FIFO first offset");
+    require_eq(sequence.notes[1].onset_tick, int64_t{24}, "FIFO second onset");
+    require_eq(sequence.notes[1].offset_tick, int64_t{72}, "FIFO second offset");
+}
+
+void test_reader_keeps_tick_timing_across_tempo_changes() {
+    const auto sequence = engine::midi::read_standard_midi_file(bytes_from_hex(
+        "4d54686400000006000000010060"
+        "4d54726b0000001a"
+        "00ff510307a12000903c6430ff51030f424030803c0000ff2f00"));
+    require_eq(sequence.notes.size(), size_t{1}, "tempo-change note count");
+    require_eq(sequence.notes[0].onset_tick, int64_t{0}, "tempo-change onset");
+    require_eq(sequence.notes[0].offset_tick, int64_t{96}, "tempo-change offset stays in ticks");
+}
+
+void test_reader_skips_escaped_sysex() {
+    const auto sequence = engine::midi::read_standard_midi_file(bytes_from_hex(
+        "4d54686400000006000000010060"
+        "4d54726b00000012"
+        "00f703903c6400903c6460803c0000ff2f00"));
+    require_eq(sequence.notes.size(), size_t{1}, "only channel events become notes");
+    require_eq(sequence.notes[0].offset_tick, int64_t{96}, "note following escaped SysEx");
+}
+
+void test_reader_rejects_malformed_data() {
+    const std::vector<std::string> malformed{
+        "4d546864", // Truncated header.
+        "4d546864000000060002000100604d54726b0000000400ff2f00", // Format 2.
+        "4d546864000000060000000180604d54726b0000000400ff2f00", // SMPTE division.
+        "4d546864000000060000000100604d54726b0000000300903c", // Missing velocity.
+        "4d546864000000060000000100604d54726b0000000800803c0000ff2f00", // Unmatched off.
+        "4d546864000000060000000100604d54726b0000000800903c6400ff2f00", // Unterminated on.
+        "4d546864000000060000000100604d54726b00000009818080800000ff2f00", // Long VLQ.
+        "4d546864000000060000000100604d54726b0000000b00ff510300000000ff2f00", // Zero tempo.
+    };
+    for (const auto & hex : malformed) {
+        bool rejected = false;
+        try {
+            engine::midi::read_standard_midi_file(bytes_from_hex(hex));
+        } catch (const std::invalid_argument &) {
+            rejected = true;
+        }
+        require(rejected, "malformed MIDI must be rejected: " + hex);
+    }
+}
+
+void test_preserved_events_and_velocities() {
+    const std::vector<engine::midi::MidiNote> notes{
+        {false, 0, 0.0, 1.0, 60, "piano", 37},
+        {false, 0, 0.5, 0.75, 60, "piano", 91},
+        {true, 0, 0.25, 0.35, 36, "drums", 53},
+    };
+    engine::midi::MidiFileOptions options;
+    options.preserve_note_events = true;
+    const auto tracks = parse_midi(engine::midi::write_standard_midi_file(notes, options));
+    require_eq(tracks.size(), size_t{3}, "preserved track count");
+    // 120 BPM / 480 PPQ gives 960 ticks/second, independently of the writer.
+    require_eq(tracks[1].events.size(), size_t{4}, "overlapping same-pitch events");
+    const std::array<uint32_t, 4> ticks{0, 480, 720, 960};
+    for (size_t i = 0; i < ticks.size(); ++i)
+        require_eq(tracks[1].events[i].tick, ticks[i], "preserved overlap tick");
+    require_eq(tracks[1].events[0].b, uint8_t{37}, "first predicted velocity");
+    require_eq(tracks[1].events[1].b, uint8_t{91}, "second predicted velocity");
+    require_eq(tracks[2].events[0].b, uint8_t{53}, "drum predicted velocity");
+    require_eq(tracks[2].events[0].tick, uint32_t{240}, "drum onset");
+    require_eq(tracks[2].events[1].tick, uint32_t{336}, "preserved 100 ms drum duration");
+
+    // Demonstrate the existing cleanup cannot serialize these events intact.
+    const auto cleaned = parse_midi(engine::midi::write_standard_midi_file(notes));
+    require_eq(cleaned[1].events[1].status, uint8_t{0x80}, "default trims earlier overlap");
+    require_eq(cleaned[2].events[1].tick, uint32_t{250}, "default still uses 10 ms drums");
+    for (const double offset : {0.0, -1.0, std::numeric_limits<double>::infinity()}) {
+        auto invalid = notes;
+        invalid[0].offset_seconds = offset;
+        bool rejected = false;
+        try { engine::midi::write_standard_midi_file(invalid, options); }
+        catch (const std::runtime_error &) { rejected = true; }
+        require(rejected, "preserve mode must reject invalid event times");
+    }
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
+    const auto started = std::chrono::steady_clock::now();
     try {
+        if (argc != 1 && (argc != 3 || std::string(argv[1]) != "--log")) {
+            throw std::invalid_argument("Usage: midi_file_test [--log FILE]");
+        }
+        engine::debug::configure_logging({argc == 3, argc == 3 ? argv[2] : ""});
         test_empty_midi_has_header_and_tempo_track();
         test_multi_track_notes_and_drums();
         test_overlap_is_trimmed_before_serializing();
+        test_preserved_events_and_velocities();
+        test_reader_roundtrip();
+        test_reader_running_status_and_overlapping_notes();
+        test_reader_keeps_tick_timing_across_tempo_changes();
+        test_reader_skips_escaped_sysex();
+        test_reader_rejects_malformed_data();
+        engine::debug::log_message("validation.status=passed");
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
     } catch (const std::exception & ex) {
         std::cerr << "midi_file_test failed: " << ex.what() << "\n";
         return 1;

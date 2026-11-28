@@ -23,7 +23,8 @@ public:
     engine::runtime::AudioBuffer synthesize(
         const std::vector<float> & mel,
         int64_t frames,
-        uint64_t seed);
+        uint64_t seed,
+        float speed = 1.0F);
     void release_graphs();
 
 private:

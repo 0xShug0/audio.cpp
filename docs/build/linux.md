@@ -132,6 +132,12 @@ Vulkan:
 cmake -S . -B build -DENGINE_ENABLE_VULKAN=ON
 ```
 
+Buffer bindings larger than the device's `maxStorageBufferRange` require both
+Vulkan headers and a driver supporting `VK_EXT_shader_64bit_indexing`. Use a recent
+Vulkan SDK to enable this support at build time. Oversized bindings select the
+64-bit indexing pipeline; bindings within the limit keep the existing pipeline.
+Older headers and devices retain their existing size restrictions.
+
 Portable CPU-kernel fallback:
 
 ```bash

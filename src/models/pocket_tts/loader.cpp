@@ -1,4 +1,6 @@
 #include "engine/models/pocket_tts/loader.h"
+#include "engine/models/pocket_tts/routing.h"
+#include "engine/framework/runtime/model_routing.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/runtime/options.h"
@@ -21,6 +23,26 @@ std::string requested_language(const runtime::ModelLoadRequest & request) {
         request.options, {{"language", "pocket_tts.language"}}, "PocketTTS", "load");
     return runtime::find_option(options, {"pocket_tts.language"}).value_or("english");
 }
+
+// Implementation registrations
+const PocketTTSImplementation pocket{
+    "pocket_tts",
+    [](const runtime::ModelLoadRequest & request) {
+        return load_pocket_tts_assets(request.model_path, requested_language(request));
+    },
+    [](const runtime::TaskSpec & task, const runtime::SessionOptions & options,
+       std::shared_ptr<const PocketTTSAssets> assets, const std::filesystem::path & voice_root,
+       std::shared_ptr<const model_spec::ModelContract> contract) -> std::unique_ptr<runtime::IVoiceTaskSession> {
+        return std::make_unique<PocketTTSSession>(
+            task, options, std::move(assets), voice_root, std::move(contract));
+    },
+};
+const runtime::ModelRouteEntry<std::string_view, PocketTTSImplementation> entries[] = {
+    {"pocket_tts", &pocket},
+    {"gradium_phonon", &kGradiumPhononImplementation},
+};
+const runtime::ModelRouteTable<std::string_view, PocketTTSImplementation> table(
+    "PocketTTS implementation family", entries);
 
 runtime::CapabilitySet capabilities(const PocketTTSAssets & assets) {
     runtime::CapabilitySet out;
@@ -86,10 +108,6 @@ runtime::ModelCliInterface cli(const PocketTTSAssets &) {
     return out;
 }
 
-std::shared_ptr<const PocketTTSAssets> load_request_assets(const runtime::ModelLoadRequest & request) {
-    return load_pocket_tts_assets(request.model_path, requested_language(request));
-}
-
 class PocketTTSLoader final : public runtime::IVoiceModelLoader {
 public:
     std::string family() const override {
@@ -122,7 +140,7 @@ public:
     }
 
     runtime::ModelInspection inspect(const runtime::ModelLoadRequest & request) const override {
-        const auto assets = load_request_assets(request);
+        const auto assets = implementation_for_family("pocket_tts").load_assets(request);
         runtime::ModelInspection inspection;
         inspection.metadata = metadata(*assets);
         inspection.capabilities = capabilities(*assets);
@@ -147,6 +165,10 @@ public:
 
 }  // namespace
 
+const PocketTTSImplementation & implementation_for_family(std::string_view family) {
+    return table.require(family);
+}
+
 PocketTTSModel::PocketTTSModel(
     std::filesystem::path model_dir,
     std::shared_ptr<const PocketTTSAssets> manifest)
@@ -162,7 +184,7 @@ PocketTTSModel PocketTTSModel::load(const ModelConfig & config) {
     if (!config.language.empty()) {
         request.options.emplace("language", config.language);
     }
-    auto manifest = load_request_assets(request);
+    auto manifest = implementation_for_family("pocket_tts").load_assets(request);
     auto voice_asset_root = manifest->voice_asset_root;
     return PocketTTSModel(std::move(voice_asset_root), std::move(manifest));
 }
@@ -173,7 +195,7 @@ std::unique_ptr<runtime::IVoiceTaskSession> PocketTTSModel::create_task_session(
     if (!manifest_) {
         throw std::runtime_error("PocketTTS model is not loaded");
     }
-    return std::make_unique<PocketTTSSession>(task, options, manifest_, model_dir_);
+    return manifest_->impl->create_session(task, options, manifest_, model_dir_, nullptr);
 }
 
 const std::filesystem::path & PocketTTSModel::model_dir() const noexcept {
@@ -203,7 +225,7 @@ std::unique_ptr<runtime::IVoiceTaskSession> PocketTTSLoadedModel::create_task_se
 }
 
 std::unique_ptr<PocketTTSLoadedModel> load_pocket_tts_model(const runtime::ModelLoadRequest & request) {
-    auto assets = load_request_assets(request);
+    auto assets = implementation_for_family("pocket_tts").load_assets(request);
     PocketTTSModel model(assets->voice_asset_root, assets);
 
     return std::make_unique<PocketTTSLoadedModel>(

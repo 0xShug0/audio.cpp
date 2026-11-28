@@ -1,5 +1,10 @@
 # Parakeet TDT: Vulkan state and allocation optimization
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/parakeet_vulkan_optimization.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 On Vulkan, each decoder step previously downloaded and re-uploaded LSTM state
 and the predictor cache. The new path keeps that state in independently owned
 device storage and appends state copies after all consumers of the old state.
@@ -78,7 +83,7 @@ In an MSVC 14.43 developer environment with the Vulkan SDK on PATH:
 cmake -S . -B ../build-vk -G Ninja -DCMAKE_BUILD_TYPE=Release \
   '-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8' \
   -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=parakeet_tdt \
-  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON \
+  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON \
   -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_BUILD_SERVER_FRONTENDS=OFF \
   -DGGML_CCACHE=OFF -DENGINE_ENABLE_CUDA=OFF -DENGINE_ENABLE_VULKAN=ON \
   -DCMAKE_CUDA_ARCHITECTURES=86
@@ -99,7 +104,7 @@ path and is preserved beside the benchmark. Device indices depend on the machine
 The benchmark composition enables CUDA as well as Vulkan and uses the Phonon
 conversion documented in #863; only these two source files differ between trials.
 
-The [portable JSON](../../tests/parakeet_tdt/parakeet_vulkan_optimization.json) records exact timing samples,
+The [portable JSON](https://github.com/0xShug0/audio.cpp/blob/4363a483002df5b0c3eb83ae93addf0073de388c/tests/parakeet_tdt/parakeet_vulkan_optimization.json) records exact timing samples,
 both process peaks, model/source hashes and the eight standalone cases. Commands,
 server configs, logs and preserved before/after binaries remain under
 `outputs/phonon2-review-20261010/`. No user audio is uploaded.

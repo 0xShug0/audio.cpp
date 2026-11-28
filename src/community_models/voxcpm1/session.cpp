@@ -356,8 +356,7 @@ runtime::TaskResult VoxCPM1SessionBase::run_offline_request(const runtime::TaskR
       release_guard(this, release_runtime_memory);
 
   const auto wall_start = Clock::now();
-  // Traditional -> Simplified conversion (OpenCC TSCharacters) unless language is Cantonese/Yue.
-  // Mirrors audio8_tts fix: keep Traditional only for yue/cantonese/zh-HK/zh-MO.
+  // Apply the shared language-aware Chinese-script normalization policy.
   const auto language = extract_request_language(request);
   auto maybe_convert = [&](std::string_view text) -> std::string {
     return engine::text::maybe_convert_traditional_to_simplified_opt(text, language);
@@ -780,8 +779,13 @@ void VoxCPM1SessionBase::validate_request(
   }
   if (request.voice.has_value()) {
     if (request.voice->style.has_value()) {
-      throw std::runtime_error(
-          "VoxCPM1 C++ session does not consume style conditions");
+      const auto &style = *request.voice->style;
+      if (style.language.has_value() || style.emotion.has_value() ||
+          style.pitch_shift.has_value() || style.energy_scale.has_value() ||
+          !style.tags.empty()) {
+        throw std::runtime_error(
+            "VoxCPM1 C++ session does not consume style conditions");
+      }
     }
     if (request.voice->speaker.has_value()) {
       const auto &speaker = *request.voice->speaker;

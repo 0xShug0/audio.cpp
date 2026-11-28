@@ -23,7 +23,7 @@ The converter also requires an OpenWakeWord source checkout and Python packages
 `numpy`, `onnx`, `onnxruntime`, `scipy`, `scikit-learn`, and `gguf`.
 
 ```bash
-python tests/open_wake_word/convert_gguf.py \
+python tools/gguf/open_wake_word/open_wake_word_convert.py \
   --source-repo <openWakeWord-checkout> --models <onnx-model-directory> \
   --output <model-directory>/open-wake-word-alexa-f32.gguf
 ```

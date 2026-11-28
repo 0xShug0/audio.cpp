@@ -147,6 +147,13 @@ PocketTTSBackendFlowWeights load_backend_flow_weights(
     weights.flow_net = load_backend_flow_net_weights(store, source, config.flow_depth, storage_type);
     weights.out_norm = binding::norm_from_named_source(store, source, "flow_lm.out_norm.weight", "flow_lm.out_norm.bias");
     weights.out_eos = binding::linear_from_named_source(store, source, "flow_lm.out_eos.weight", "flow_lm.out_eos.bias", storage_type);
+    if (source.has_tensor("flow_lm.z_proj.weight")) {
+        weights.z_projection = modules::LinearWeights{
+            binding::tensor_from_named_source(store, source, "flow_lm.z_proj.weight", storage_type),
+            source.has_tensor("flow_lm.z_proj.bias")
+                ? std::optional(binding::tensor_from_named_source(store, source, "flow_lm.z_proj.bias", storage_type))
+                : std::nullopt};
+    }
     if (has_mimi_encoder) {
         weights.speaker_proj_weight =
             binding::tensor_from_named_source(store, source, "flow_lm.speaker_proj_weight", storage_type);
@@ -181,18 +188,27 @@ PocketTTSBackendMimiEncoderWeights load_backend_mimi_encoder_weights(
     return weights;
 }
 
-PocketTTSBackendMimiDecoderWeights load_backend_mimi_decoder_weights(
+codecs::MimiLatentDecoderWeights load_backend_mimi_decoder_weights(
     core::BackendWeightStore & store,
     const assets::TensorSource & source,
     const PocketTTSModelConfig & config,
     assets::TensorStorageType matmul_storage_type,
     assets::TensorStorageType conv_storage_type,
     core::BackendType backend_type) {
-    PocketTTSBackendMimiDecoderWeights weights;
+    codecs::MimiLatentDecoderWeights weights;
     weights.transformer_layers.reserve(static_cast<size_t>(config.mimi_layers));
     for (int64_t layer = 0; layer < config.mimi_layers; ++layer) {
         const std::string prefix = "mimi.decoder_transformer.transformer.layers." + std::to_string(layer) + ".";
-        weights.transformer_layers.push_back(load_backend_transformer_layer(store, source, prefix, matmul_storage_type));
+        const auto layer_weights = load_backend_transformer_layer(store, source, prefix, matmul_storage_type);
+        modules::TransformerEncoderBlockWeights block;
+        block.norm1 = layer_weights.norm1;
+        block.self_attention.qkv_weight = layer_weights.self_attn.in_proj_weight;
+        block.self_attention.out_weight = layer_weights.self_attn.out_proj_weight;
+        block.layer_scale1 = layer_weights.layer_scale_1;
+        block.norm2 = layer_weights.norm2;
+        block.feed_forward = layer_weights.feed_forward;
+        block.layer_scale2 = layer_weights.layer_scale_2;
+        weights.transformer_layers.push_back(std::move(block));
     }
     weights.quantizer_output_proj_weight =
         binding::tensor_from_named_source(store, source, "mimi.quantizer.output_proj.weight", conv_storage_type);
@@ -223,17 +239,18 @@ PocketTTSBackendMimiDecoderWeights load_backend_mimi_decoder_weights(
             core::TensorShape::from_dims({config.mimi_dim, config.mimi_dim, upsample_kernel_size}),
             dense);
     }
-    weights.input_projection = binding::conv1d_from_named_source(store, source, "mimi.decoder.model.0.conv.weight", "mimi.decoder.model.0.conv.bias", conv_storage_type);
-    weights.stage0_upsample = binding::conv_transpose1d_from_named_source(store, source, "mimi.decoder.model.2.convtr.weight", "mimi.decoder.model.2.convtr.bias", conv_storage_type);
-    weights.stage0_upsample_bias_values = source.require_f32("mimi.decoder.model.2.convtr.bias");
-    weights.stage0_block = load_backend_residual_block(store, source, "mimi.decoder.model.3.block", conv_storage_type);
-    weights.stage1_upsample = binding::conv_transpose1d_from_named_source(store, source, "mimi.decoder.model.5.convtr.weight", "mimi.decoder.model.5.convtr.bias", conv_storage_type);
-    weights.stage1_upsample_bias_values = source.require_f32("mimi.decoder.model.5.convtr.bias");
-    weights.stage1_block = load_backend_residual_block(store, source, "mimi.decoder.model.6.block", conv_storage_type);
-    weights.stage2_upsample = binding::conv_transpose1d_from_named_source(store, source, "mimi.decoder.model.8.convtr.weight", "mimi.decoder.model.8.convtr.bias", conv_storage_type);
-    weights.stage2_upsample_bias_values = source.require_f32("mimi.decoder.model.8.convtr.bias");
-    weights.stage2_block = load_backend_residual_block(store, source, "mimi.decoder.model.9.block", conv_storage_type);
-    weights.output_projection = binding::conv1d_from_named_source(store, source, "mimi.decoder.model.11.conv.weight", "mimi.decoder.model.11.conv.bias", conv_storage_type);
+    weights.seanet.input_projection = binding::conv1d_from_named_source(store, source, "mimi.decoder.model.0.conv.weight", "mimi.decoder.model.0.conv.bias", conv_storage_type);
+    weights.seanet.stages.resize(3);
+    weights.seanet.stages[0].upsample = binding::conv_transpose1d_from_named_source(store, source, "mimi.decoder.model.2.convtr.weight", "mimi.decoder.model.2.convtr.bias", conv_storage_type);
+    const auto block0 = load_backend_residual_block(store, source, "mimi.decoder.model.3.block", conv_storage_type);
+    weights.seanet.stages[0].residual_blocks.push_back({block0.conv1, block0.conv2});
+    weights.seanet.stages[1].upsample = binding::conv_transpose1d_from_named_source(store, source, "mimi.decoder.model.5.convtr.weight", "mimi.decoder.model.5.convtr.bias", conv_storage_type);
+    const auto block1 = load_backend_residual_block(store, source, "mimi.decoder.model.6.block", conv_storage_type);
+    weights.seanet.stages[1].residual_blocks.push_back({block1.conv1, block1.conv2});
+    weights.seanet.stages[2].upsample = binding::conv_transpose1d_from_named_source(store, source, "mimi.decoder.model.8.convtr.weight", "mimi.decoder.model.8.convtr.bias", conv_storage_type);
+    const auto block2 = load_backend_residual_block(store, source, "mimi.decoder.model.9.block", conv_storage_type);
+    weights.seanet.stages[2].residual_blocks.push_back({block2.conv1, block2.conv2});
+    weights.seanet.output_projection = binding::conv1d_from_named_source(store, source, "mimi.decoder.model.11.conv.weight", "mimi.decoder.model.11.conv.bias", conv_storage_type);
     return weights;
 }
 
@@ -285,20 +302,21 @@ std::shared_ptr<const PocketTTSBackendWeights> load_pocket_tts_backend_weights(
         weights->mimi_encoder_store->upload();
     }
 
-    weights->mimi_decoder_store = std::make_shared<core::BackendWeightStore>(
+    auto decoder_store = std::make_shared<core::BackendWeightStore>(
         backend,
         backend_type,
         "PocketTTS.mimi_decoder.weights",
         mimi_decoder_context_bytes);
     weights->mimi_decoder =
         load_backend_mimi_decoder_weights(
-            *weights->mimi_decoder_store,
+            *decoder_store,
             *manifest.model_weights,
             manifest.model_config,
             matmul_storage_type,
             conv_storage_type,
             backend_type);
-    weights->mimi_decoder_store->upload();
+    decoder_store->upload();
+    weights->mimi_decoder.store = std::move(decoder_store);
 
     manifest.model_weights->release_storage();
     return weights;

@@ -19,4 +19,7 @@ void ggml_sycl_flash_attn_ext(ggml_backend_sycl_context & ctx, ggml_tensor * dst
 
 bool ggml_sycl_flash_attn_ext_supported(int device, const ggml_tensor * dst);
 
+// Reports if ggml_sycl_flash_attn_ext() gives this node to oneDNN.
+bool ggml_sycl_flash_attn_ext_uses_onednn(int device, const ggml_tensor * dst);
+
 #endif // GGML_SYCL_FATTN_HPP

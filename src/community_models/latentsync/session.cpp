@@ -1,3 +1,4 @@
+#include "engine/framework/vision/media/processing.h"
 #include "engine/community_models/latentsync/session.h"
 #include "engine/community_models/latentsync/pipeline.h"
 #include "engine/community_models/latentsync/video.h"
@@ -78,13 +79,12 @@ public:
         auto video = load_latentsync_video(*video_path, options.fps);
         const auto & input = *request.audio_input;
         auto mono = audio::convert_interleaved_audio_to_mono_torchaudio_sinc_hann_resampled(input.samples, input.sample_rate, input.channels, 16000);
-        std::vector<std::byte> output;
-        size_t frame_count = 0;
+        engine::video::RgbVideoBuffer output{video.width, video.height, 0, options.fps, {}};
         pipeline_->run(video.frames, video.height, video.width, mono, assets_->mask, options,
             [&](size_t, const std::vector<uint8_t> & frame) {
                 const auto * bytes = reinterpret_cast<const std::byte *>(frame.data());
-                output.insert(output.end(), bytes, bytes + frame.size());
-                ++frame_count;
+                output.rgb24.insert(output.rgb24.end(), bytes, bytes + frame.size());
+                ++output.frames;
             });
         runtime::TaskResult result;
         using Json = io::json::Value;
@@ -92,16 +92,16 @@ public:
             {"format", Json::make_string("rgb24")},
             {"width", Json::make_number(video.width)},
             {"height", Json::make_number(video.height)},
-            {"frames", Json::make_number(frame_count)},
+            {"frames", Json::make_number(output.frames)},
             {"fps", Json::make_number(options.fps)},
             {"file", Json::make_string("latentsync_video_rgb24.rgb")}});
         result.artifact_output = runtime::make_voice_artifact(runtime::ArtifactKind::Custom,
             "latentsync_video", runtime::bytes_from_string(io::json::stringify(metadata)),
             {{"extension", "json"}, {"mime", "application/json"}});
         result.output_artifacts.push_back(runtime::make_voice_artifact(runtime::ArtifactKind::Custom,
-            "latentsync_video_rgb24", std::move(output), {{"extension", "rgb"}, {"mime", "application/octet-stream"},
+            "latentsync_video_rgb24", std::move(output.rgb24), {{"extension", "rgb"}, {"mime", "application/octet-stream"},
                 {"format", "rgb24"}, {"width", std::to_string(video.width)},
-                {"height", std::to_string(video.height)}, {"frames", std::to_string(frame_count)}, {"fps", std::to_string(options.fps)}}));
+                {"height", std::to_string(video.height)}, {"frames", std::to_string(output.frames)}, {"fps", std::to_string(options.fps)}}));
         debug::timing_log_scalar("session.wall_ms",
             debug::elapsed_ms(start, std::chrono::steady_clock::now()));
         return result;

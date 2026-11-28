@@ -301,6 +301,7 @@ void KokoroTTSSession::prepare_decoder_graph_capacity(int64_t capacity) {
 namespace {
 
 constexpr const char * kPhonemesOption = "phonemes";
+constexpr const char * kPhonemeRulesOption = "phoneme_rules";
 constexpr const char * kTimestampsOption = "return_timestamps";
 
 /// The supplied phoneme chunks, or empty when the caller set no such option.
@@ -390,18 +391,23 @@ void validate_request_options(
     const std::unordered_map<std::string, std::string> & options,
     const std::unordered_map<std::string, std::vector<std::string>> & option_arrays,
     const engine::model_spec::ModelContract & contract) {
+    if (option_arrays.count(kPhonemeRulesOption)) {
+        throw std::runtime_error("Kokoro phoneme_rules must be a JSON string, not a string list");
+    }
     const bool old_phonemes = contract.request_option_keys.find(kPhonemesOption) == contract.request_option_keys.end();
+    const bool old_rules = contract.request_option_keys.find(kPhonemeRulesOption) == contract.request_option_keys.end();
     const bool old_speed = contract.request_option_keys.find("speed") == contract.request_option_keys.end();
     const bool old_speaking_rate = contract.request_option_keys.find("speaking_rate") == contract.request_option_keys.end();
     const bool old_timestamps = contract.request_option_keys.find(kTimestampsOption) == contract.request_option_keys.end();
     const bool old_voice_id = contract.request_option_keys.find("voice_id") == contract.request_option_keys.end();
-    if (!old_phonemes && !old_speed && !old_speaking_rate && !old_timestamps && !old_voice_id) {
+    if (!old_phonemes && !old_rules && !old_speed && !old_speaking_rate && !old_timestamps && !old_voice_id) {
         runtime::validate_spec_backed_request_options(options, option_arrays, contract, kModelName);
         return;
     }
     std::unordered_map<std::string, std::string> validation_options;
     for (const auto & [key, _] : options) {
         if ((key == "speed" && old_speed) || (key == "speaking_rate" && old_speaking_rate) ||
+            (key == kPhonemeRulesOption && old_rules) ||
             (key == "voice_id" && old_voice_id) ||
             (key == kTimestampsOption && old_timestamps)) continue;
         validation_options.emplace(key, std::string{});
@@ -602,7 +608,7 @@ void KokoroTTSSession::prepare(const runtime::SessionPreparationRequest & reques
             runtime::SessionPreparationRequest chunk_request = request;
             chunk_request.text = runtime::Transcript{chunk, request.text->language};
             const auto frontend_state =
-                resolve_kokoro_frontend_session_state(chunk_request.text, voice, *assets_);
+                resolve_kokoro_frontend_session_state(chunk_request.text, voice, *assets_, chunk_request.options);
             if (prepare_phonemes.empty()) {
                 request_size = std::max(
                     request_size,
@@ -689,7 +695,7 @@ runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & re
     std::optional<KokoroFrontendSessionState> shared_state;
     std::string shared_key_prefix;
     if (supplied) {
-        shared_state = resolve_kokoro_frontend_session_state(request.text_input, voice, *assets_);
+        shared_state = resolve_kokoro_frontend_session_state(request.text_input, voice, *assets_, request.options);
         shared_key_prefix = cache_key_prefix(*shared_state, *request.text_input);
     }
     for (size_t chunk_index = 0; chunk_index < chunk_count; ++chunk_index) {
@@ -699,14 +705,18 @@ runtime::TaskResult KokoroTTSSession::synthesize(const runtime::TaskRequest & re
                      : std::optional<std::string_view>{};
         const auto frontend_state = supplied
             ? *shared_state
-            : resolve_kokoro_frontend_session_state(chunk_request.text_input, voice, *assets_);
-        const std::string cache_key =
+            : resolve_kokoro_frontend_session_state(chunk_request.text_input, voice, *assets_, chunk_request.options);
+        std::string cache_key =
             (supplied ? shared_key_prefix : cache_key_prefix(frontend_state, *chunk_request.text_input)) +
             // Without this, two requests with the same text and different supplied phonemes
             // would hit the same cache entry and the second would be spoken as the first --
             // and with a list, every chunk shares one text, so this is the ONLY thing telling
             // them apart.
             std::string(chunk_phonemes.value_or(std::string_view{}));
+        const auto rules = chunk_request.options.find(kPhonemeRulesOption);
+        if (!supplied && rules != chunk_request.options.end()) {
+            cache_key += ":" + std::to_string(rules->second.size()) + ":" + rules->second;
+        }
         KokoroSynthesisInput input;
         frontend_ms += measure_ms([&]() {
             if (!cache_key.empty() && cached_input_ && cache_key == cached_request_key_) {

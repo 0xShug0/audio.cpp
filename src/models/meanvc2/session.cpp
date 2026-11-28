@@ -15,8 +15,8 @@ namespace {
 
 constexpr const char * kFamily = "meanvc2";
 constexpr int64_t kInputChunkSamples = 2560;
-constexpr size_t kWeightContextBytes = 512ull * 1024ull * 1024ull;
-constexpr size_t kGraphContextBytes = 256ull * 1024ull * 1024ull;
+constexpr size_t kWeightContextBytes = 8ull * 1024ull * 1024ull;
+constexpr size_t kGraphContextBytes = 32ull * 1024ull * 1024ull;
 constexpr int64_t kSpeakerDim = 256;
 constexpr int64_t kMelDim = 80;
 constexpr int64_t kVcConditionFrames = 16;
@@ -122,6 +122,7 @@ void MeanVC2Session::prepare(const runtime::SessionPreparationRequest & request)
 }
 
 runtime::TaskResult MeanVC2Session::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("MeanVC2 run()");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("MeanVC2 run() requires offline mode");
@@ -130,7 +131,9 @@ runtime::TaskResult MeanVC2Session::run(const runtime::TaskRequest & request) {
     if (!request.audio_input.has_value()) {
         throw std::runtime_error("MeanVC2 requires --audio source audio");
     }
-    return convert(request, *request.audio_input);
+    auto result = convert(request, *request.audio_input);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
+    return result;
 }
 
 runtime::StreamingPolicy MeanVC2Session::streaming_policy() const {
@@ -143,6 +146,7 @@ runtime::StreamingPolicy MeanVC2Session::streaming_policy() const {
 }
 
 void MeanVC2Session::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("MeanVC2 start_stream()");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("MeanVC2 start_stream() requires a streaming session");
@@ -344,6 +348,7 @@ runtime::TaskResult MeanVC2Session::finalize() {
         event.is_final = true;
         stream_event_sink_(event);
     }
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return result;
 }
 

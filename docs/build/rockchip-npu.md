@@ -400,6 +400,95 @@ The exported graph is checked against the torch graph it was traced from, on the
 the runtime's walk, with the torch reference evaluated in the same sine form (124.6 dB), so the
 gate measures the export and not the approximation.
 
+### OmniVoice generator step graph
+
+`tools/rknn/prepare_omnivoice_rknn_generator.py` re-traces the whole diffusion-LM decoding step the
+GGUF weights describe — the 28-layer Qwen3 forward with the audio embedding blend, the RoPE ladder,
+the 8-head audio output projection and the packed classifier-free-guidance combine — at one fixed
+total-token length per engine, and compiles the ladder the session's `omnivoice.exec_plan`
+component `generator` selects. The seam is the step graph alone, in and out at the point of the
+ggml graph's own logits output: `input_ids [2,8,S]` (the packed CFG rows, text row doubling as
+codebook 0), `audio_mask [2,S]`, the additive `attn_mask [2,1,S,S]`, the RoPE tables
+`rope_cos [2,S,head_dim/2]` / `rope_sin` (the host computes the float64 angles mod 2*pi and the
+trig tables become inputs; the board's fp16 graph must never see raw positions, because fp16
+`Cos`/`Sin` of a ~1e3-rad argument quantizes the argument and renders noise - the qwen3 vocoder's
+`freqs_in` precedent), and `guidance [1]` in; guided conditional logits `[1,8,S,1025]` out,
+cropped by the sidecar to the conditional target block. All scoring (log_softmax, layer penalty,
+gumbel, top-k fill) stays in the host loop, where the ggml path's `device_scoring=false` branch
+already reads it.
+
+The converter recipe the graph needed is stricter than the other producers' (measured on this
+converter, 2.3.2): constant folding at torch-export time (`do_constant_folding=True`), because
+the converter's own `FoldConstant` SIGABRTs at fold ~3161/3194 of the full graph;
+`optimization_level=0`; fp16 weights (`model.half()`, RoPE tables cast at the table site); GQA by
+`torch.index_select` on the head axis, because `expand().reshape()` lowers to a
+Shape/ConstantOfShape/Expand ladder the converter refuses and a 5-D broadcast matmul dies in
+`swap_reshape_softmax`. The preflighted risky-op set (Pad/Exp/ConstantOfShape/Shape/Split) is
+empty for the graph this recipe produces.
+
+Padding is the ladder's contract, and it is measured: pad tokens attend to themselves only
+(diagonal-only rows in the additive mask), and a padded run of the fp32 graph reproduces the
+exact run at 398-408 dB, so the pad costs compute and nothing else. On the PC simulator the
+fp16 engine against the fp32 reference sits at 61.0 dB output SNR with argmax agreement
+0.978-0.982, and the simulator step is 1.4 s warm.
+
+The board gate for this sidecar was originally the step run at `--guidance-scale 0.0`, the mode
+the full ladder ships validated: 32 steps of the seq768 engine render the full baseline text to
+whisper-clean audio (parity with the ggml path's own render of the same text, reference and
+seed), at 8.8 s/step against the ggml graph's 26.6 s at the same length (wall 293 s against
+883 s), with the 1.32 GiB seq256 and 1.35 GiB seq768 engines loading in 2.3-3.2 s and peak RSS
+4.9 GiB. The guidance-2.0 rollout is not usable on the full ladder: the fp16 uncond branch
+sits at 26.9 dB against the fp32 reference (the cond branch sits at 60.2 dB), and the diffusion
+decoding is knife-edged at that scale - the fp16 guidance term's noise, doubled by the CFG
+gain, moves enough per-frame argmaxes that the 32-step rollout leaves the speech basin. The
+same collapse is visible on the ggml path itself at a small perturbation: its `--guidance-scale
+-1` render of the same request is noise, while its 0/1/2 renders are clean.
+
+The fix is the front-shard ladder, `prepare_omnivoice_rknn_generator.py --front-k 28`: the
+engine keeps the embeddings and all 28 backbone layers (the fp16 backbone is NOT the noise
+source - the step-0 hidden state it returns sits at 67 dB at every depth probed) and drops the
+final norm, the audio heads and the guidance combine into the engine; the sidecar then hands
+the hidden rows to a host tail graph (the same `build_guided_logits` the ggml path uses, in
+fp32), which returns the guided logits at ~84 dB - 16x under the knife-edge. The tail graph
+replaces the token inputs with one `hidden` input and runs the device-scoring path unchanged,
+so scoring stays where it was. On the same board gate at `--guidance-scale 2.0` the seq768
+front engine renders the baseline text whisper-clean at 8.3-8.5 s/step on the NPU plus about
+0.4 s/step of fp32 CPU tail (wall 286 s), i.e. the full engine's speed with live guidance.
+Front-shard requests run at batch 1 (the packed CFG-pair engine pass writes the host's batch-1
+row layout); batched requests fall back to the ggml graph.
+
+### OmniVoice zero-op generator (rknn_zeroop)
+
+The same front-shard contract, with no compiled engine files at all:
+`omnivoice.exec_plan={"generator":{"impl":"rknn_zeroop"}}` runs the 28-layer backbone through the
+vendor `rknn_matmul_api` zero-op calls (the plain `librknnrt` runtime C API, no converter, no
+per-bucket `.rknn` artifacts, ENGINE_ENABLE_RKNN build only, aarch64-only - non-aarch64 builds
+compile the engine as a stub that fails at `open()`). One fp16 `rknn_matmul` context per
+(layer, shape) is created at geometry time, weights are packed once into the native tiled B
+layout (shared across buckets) and cached on disk under `<model dir>/rknn-zeroop-cache`
+(`AUDIOCPP_RKNN_ZEROOP_CACHE` to override); attention is assembled from vendor tiles per
+(batch, head): QK^T + a host fp32 stable softmax + PV over the full cache width, and the
+self-only step rows (the dLLM canvas mask) take an exact identity on V, zero NPU work. The
+vendor matmul is single-core (`core_mask` is accepted and ignored), so this path is a
+quality/cleanliness variant, not a speed variant of the compiled ladder.
+
+Measured on the board against the compiled front-shard ladder's own dumps: 28-layer
+step/prefill referee SNR 80.6-132.9 dB (the host fp32 softmax is the more precise side), the
+twin-geometry run decays smoothly against the compiled ground truth, and the render is
+whisper-clean Russian at `--guidance-scale 2.0`. Speed (medians over 32 steps; the first step of
+each run pays the geometry-context build): 25.8-26.2 s prefill + ~8.8 s/step at the seq896 twin
+geometry, and at deep shapes (seq1536 bucket) 50.1 s prefill + 22.9 s/step, i.e.
+compiled-ladder parity (23.2 s/step) with no artifact pipeline behind it. First run packs the
+weights (cached after; warm load ~2.8 s, most of it the FNV-1a-64 verification pass over the
+~812 MB of pack files). The cache directory is created when absent, each pack
+file is `[body][FNV-1a-64 trailer]` published via a unique `mkstemp` temp + fsync + rename (a
+crashed write can never pass the warm checks, the trailer catches full-size corruption, temps a
+killed process left behind are swept on the next pack, and any warm miss - missing, truncated,
+checksum-mismatched file or a failed device sync - names the file in the warning and falls back
+to a cold repack), and cache I/O failures are logged as a warning, never fatal - the run just
+repacks. The cache grows ~812 MB per weight fingerprint inside the model dir and is never
+pruned; swapping checkpoints strands the old set.
+
 ## Verified
 
 - Export stage: stepwise-vs-full-decode self-check 111.4 dB at B=64 and 103.7 dB at B=16,
@@ -410,6 +499,66 @@ gate measures the export and not the approximation.
   interior SNR against the runtime's own generator, a padded 128-frame window reproduces the same
   decoded unpadded at 135.1 dB, and the exported ONNX reproduces the torch graph it was traced
   from at 124.6 dB.
+- OmniVoice board stage: the seq768 engine run through the sidecar reproduces the probe-harness
+  engine run of the same step inputs byte for byte, sits at 60.2 dB (cond) / 26.9 dB (uncond)
+  output SNR against the fp32 torch reference on identical step-0 inputs, and renders the
+  baseline voice-clone request clean at guidance 0. Measured on the same request, the engine's
+  cond-minus-uncond guidance term sits at 18.9 dB SNR; the ggml path's own step-0 guidance term
+  (dumped cond/uncond slices, same text/reference/seed) reads -8.3 dB SNR with 0.2% argmax
+  agreement at both q8_0 and fp32 weight precision, i.e. the ggml guidance term is alive and
+  the fp16 engine's uncond branch is the outlier.
+- OmniVoice front-shard stage: the same probe-harness step-0 inputs through the front-28 shard
+  engine land the hidden state at 67 dB (uncond row included: the depth probe reads 67-70 dB at
+  k=7/14/21/28, so the backbone is not the noise source), and the fp32 host tail (final norm +
+  audio heads + guidance combine) returns the g=2.0 guided logits at 84.3 dB output SNR with
+  99.4% argmax agreement. On the board the seq768 front engine renders the same baseline
+  request whisper-clean at `--guidance-scale 2.0` (8.3-8.5 s/step NPU, ~0.4 s/step CPU tail,
+  wall 286 s), and the padded hidden rows gate the shard export at 392-400 dB padded-vs-exact.
+  All five shipped rungs are board-validated at guidance 2.0 on the NPU path (seed 7):
+  seq256/384 with the 5.95 s a.wav reference (the 14 s b.wav reference alone costs ~393
+  prompt tokens, so short rungs need a short reference; a request above a rung's capacity
+  falls back whole to the ggml graph, `rknn.fallback_tokens` in the trace log), seq512 with
+  a 40-char b.wav request, seq1024 with the 141-char baseline (775 tokens); per-step engine
+  time scales with the rung (1.5 s at seq256, 2.4 at 384, 3.4 at 512, 8.4 at 768, 12.2 at
+  1024) and the resident aperture runs 1665 MiB at seq256 to 3644 MiB at seq1024 inside the
+  3900 budget.
+  Streaming works on the shard unchanged (batch 1 per chunk): the baseline text at
+  `--text-chunk-size 60` over the short reference gives TTFB 85.7 s and wall 223.8 s on the
+  NPU path against 125.8 s / 338.0 s on the ggml twin, with whisper-identical transcriptions
+  across the two renders.
+  The step count is a measured speed lever, not a shipped default: the seq768 control request
+  at guidance 2.0 runs wall 464.5 s at the default 32 steps, 344.1 s at
+  `--request-option num_inference_steps=24` (-26%, whisper-identical) and 254.5 s at 16
+  (-45%, whisper drifts one word, `голова` -> `глава`, the sentence is intact); the engine is
+  linear in the count (~11.25 s/step at this rung), so every dropped step is 11 s on the wall.
+- OmniVoice deep-rung probe (negative): seq1536 compiles and runs clean in the PC simulator
+  (55.8 dB hidden SNR, 100% step-0 argmax) and completes 32 board steps at rc=0, but the
+  render is non-speech (whisper tags it music) - the NPU's fp16 attention accumulation
+  collapses at spans the simulator's fp32 accumulation survives. seq2048 cannot execute on
+  this board at all: the slot reports a 4116 MiB resident aperture, i.e. the engine's own
+  mapping crosses the ~4 GB IOVA ceiling below (`failed to allocate IOVA: -12` in the kernel
+  log), `rknn_run` task submission fails on driver 0.9.8 (8377 tasks), and preloading the
+  parked 2.5.0 userspace to work around it panics the kernel (the board net-rebooted). The shipped ladder therefore caps at seq1024; longer requests take the ggml
+  graph (a 1290-token render runs 976 s on ggml, against 286 s for the 775-token request that
+  still fits the shard, so the crossover costs speed, not quality).
+- OmniVoice int8 probe (negative): the seq768 front engine rebuilt with `do_quantization=True`
+  (w8a8, `layer` and `channel` methods, calibration on three real step-0 feeds) returns hidden
+  SNR 2.0/-0.1/1.3 dB (channel: 2.2/-0.0/1.5, the same death) at 21-69% step-0 argmax
+  agreement against the fp32 reference, where the fp16 engine measures 67 dB and 99.4% on the
+  same feeds, so per-tensor and per-channel int8 both kill the shard.
+  `w8a16` is refused by the 2.3.2 converter on rk3588, and `auto_hybrid` needs expand-batch,
+  which the batch-2 CFG-pair graph does not support. The literature remedy for int8 on
+  transformer activations is a randomized Hadamard transform (QuaRot, cf. the rk-llama.cpp
+  `W8A8_HADAMARD` pipeline at KL 0.003), which has to be exported into the ONNX graph, not
+  asked of the converter. That experiment ran: a randomized 1024 Hadamard folded into the
+  export (embeddings/QKV/gate/up by `H`, o/down by `Hᵀ`, norm weights absorbed, a final
+  de-rotation matmul keeps the shard contract; the graph is neutral - 116 dB vs fp32, and an
+  fp16 control build of the rotated graph measures 57-60 dB at argmax 1.0). The w8a8 rebuild
+  of the rotated graph measures 2.1/-0.6 dB - bit for bit the unrotated death. The residual
+  stream was not the binding outlier: per-tensor scales here are set by the unrotated MLP
+  mid (`silu(g)*u`, 3072-wide SwiGLU tails) and by QK^T/P inside attention, and full QuaRot
+  additionally keeps attention in fp16 - per-op dtype the converter cannot express. int8 is
+  closed for this family on the converter path.
 
 
 ## Component execution plans
@@ -427,6 +576,7 @@ the configurable components:
 | sanoTTS `decoder` | `sanotts.exec_plan` | `default`, `ggml`, `neon` | None |
 | Inflect v2 `decoder` | `inflect_v2.exec_plan` | `ggml`, `rknn` | RKNN: required `main` |
 | CosyVoice3 `flow` | `cosyvoice3.exec_plan` | `ggml`, `rknn` | RKNN: required `main` (comma-separated ladder of per-length engines) |
+| OmniVoice `generator` | `omnivoice.exec_plan` | `ggml`, `rknn` | RKNN: required `main` (comma-separated ladder of per-length engines) |
 
 These options also work with older GGUFs whose embedded specs do not declare
 `exec_plan`; the model validates the plan without requiring a spec override.
@@ -703,8 +853,9 @@ this is a measured lever, not a shipped default.
 multi-core and the runtime core mask decides. `RKNN_NPU_CORE_AUTO` lets the driver pick, and it
 picks one core for every one of these engines: `/sys/kernel/debug/rknpu/load` stays at
 `Core0: 55%, Core1: 0%, Core2: 0%` for the whole `qwen3_tts` vocoder run and at `Core0: 100%` for
-the smaller ones. All three sidecars therefore ask for `RKNN_NPU_CORE_0_1_2` explicitly and fall
-back to `AUTO` if the driver rejects it (single-core SoCs do). What the mask buys is per engine:
+the smaller ones. All three sidecars therefore ask for `RKNN_NPU_CORE_0_1_2` explicitly (the shared
+`Engine::load`, so the OmniVoice generator inherits the same mask) and fall back to `AUTO` if the
+driver rejects it (single-core SoCs do). What the mask buys is per engine:
 `piper_tts` and `kokoro_tts` get real spread (kokoro Core0 95%, Core1 18%, Core2 19%), and the
 `qwen3_tts` vocoder gets spread too (41/15/16) for 1.8% on the stage (21766 → 21383 ms for 300
 Russian characters, same binary with both masks, greedy). The reason the extra cores buy almost
@@ -734,6 +885,29 @@ max|d| against the CPU render, and the observed NPU-to-NPU spread is of the same
 NPU-to-CPU one (the two Kokoro sine engines differ by 28.2 dB from each other). Not characterized
 here: the per-core fp16 difference itself, which would need the same engine run with a
 single-core mask and the outputs compared.
+
+The zero-op `rknn_matmul_api` in the same library is single-core per matmul, and that is the
+ceiling on any plan to lift GEMMs out of the compiled graph. `rknn_matmul_set_core_mask` rejects
+`RKNN_NPU_CORE_0_1_2` (`Not support core mask: 7, fallback to single core auto mode`), so one matmul
+runs on one core. Measured on this board (30 loops, native layouts, the OmniVoice front-shard
+seq768 shapes at M=1536): fp16 `FLOAT16_TO_FLOAT16` 0.22-0.67 TFLOP/s, int8 `INT8_TO_INT32`
+0.89-1.73 TOPS. A register-level open library that splits a single matmul over all three cores
+reaches 1.6-1.9 TFLOP/s fp16 on the same shapes (about 2.5x), which is where the compiled graph's
+headroom actually is; that library is AGPL-3.0-only and its author declined to dual-license, so the
+vendor single-core matmul is the only legal NPU matmul path, and the compiled-graph engines above
+are the shipped form. int8 through the vendor matmul measures at parity with that open library's
+int8, so int8 buys no hidden speed there, only the usual quantization risk.
+
+That ceiling was then priced end to end: one full OmniVoice layer (QKV/O/MLP GEMMs on the matmul
+API at fp16->fp32, RoPE/softmax/SiLU/residuals on the CPU in fp32, M=1536 CFG-packed, the 64
+attention tiles as 32+32 small GEMMs) runs its NPU side in 137 ms, stage outputs matching the fp32
+torch reference at fp16-GEMM noise (q_rope 36 dB, layer output 21 dB). x28 = 3.9 s/step NPU-only,
+before host cost: NATIVE layout is tiled, not row-major (A `[K1,M,subK]`, B `[N1,K1,subN,subK]`,
+C perf, the official demo's packers), and naive scalar packing plus C unpacking triples the layer
+wall. A tuned port (prepacked weights, vectorized packing, fp16 C for the big-N GEMMs) lands near
+5-6 s/step - about 1.5x over the compiled 8.4 s engine, with the O and down projections (0.32/0.22
+TFLOP/s at K>=2048 single-core) eating 1.8 s of the floor alone. The 2.5x stays locked to the
+AGPL library; the vendor zero-op path is a real but modest lever.
 
 ## The IOVA ceiling, i.e. how big an engine can be
 

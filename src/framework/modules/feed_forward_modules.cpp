@@ -59,6 +59,9 @@ const core::ModuleSchema & FeedForwardGeluModule::static_schema() noexcept {
 }
 
 GatedFeedForwardModule::GatedFeedForwardModule(GatedFeedForwardConfig config) : config_(config) {
+    if (config.fused_swiglu && config.activation != GatedFeedForwardActivation::Silu) {
+        throw std::invalid_argument("Fused SwiGLU requires SiLU activation");
+    }
     validate_hidden_positive(config_.hidden_size, "GatedFeedForwardConfig.hidden_size");
     validate_hidden_positive(config_.intermediate_size, "GatedFeedForwardConfig.intermediate_size");
 }

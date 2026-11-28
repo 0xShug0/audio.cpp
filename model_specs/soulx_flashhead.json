@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "family": "soulx_flashhead",
+  "display_name": "SoulX-FlashHead",
+  "description": "Audio-driven streaming portrait video generation.",
+  "category": "audio_generation",
+  "status": "experimental",
+  "tasks": [
+    "sfx"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "auto"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream"
+    ]
+  },
+  "capabilities": {
+    "sfx": [
+      "prompt_generation"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "reference_image_file",
+        "type": "path",
+        "description": "Portrait image used to condition appearance.",
+        "required": true
+      },
+      {
+        "name": "height",
+        "type": "int",
+        "description": "Output height, divisible by the VAE spatial stride.",
+        "min": 32,
+        "default": 512,
+        "required": false
+      },
+      {
+        "name": "width",
+        "type": "int",
+        "description": "Output width, divisible by the VAE spatial stride.",
+        "min": 32,
+        "default": 512,
+        "required": false
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Distilled denoising steps.",
+        "min": 1,
+        "default": 4,
+        "required": false
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Generation seed.",
+        "min": 0,
+        "default": 42,
+        "required": false
+      },
+      {
+        "name": "color_correction_strength",
+        "type": "float",
+        "description": "Blend output color statistics toward the reference portrait.",
+        "min": 0,
+        "max": 1,
+        "default": 1,
+        "required": false
+      },
+      {
+        "name": "audio_guidance_scale",
+        "type": "float",
+        "description": "Audio CFG scale for non-distilled pretrained checkpoints; distilled Lite/Pro do not use CFG.",
+        "default": 3,
+        "min": 0,
+        "required": false
+      }
+    ],
+    "session": [
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON component execution plan. vae.impl is ggml (default) or cudnn. cudnn requires the Lite variant, CUDA backend, and cuDNN Conv3D build support. No artifacts or params are used.",
+        "required": false,
+        "default": "{}"
+      }
+    ],
+    "load": []
+  },
+  "packages": [
+    {
+      "id": "soulx_flashhead_lite_q8_0",
+      "display_name": "SoulX-FlashHead Lite Q8",
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "SoulX-FlashHead-GGUF",
+      "files": [
+        "SoulX-FlashHead-Lite-Q8_0.gguf"
+      ],
+      "default": true
+    },
+    {
+      "id": "soulx_flashhead_lite_bf16",
+      "display_name": "SoulX-FlashHead Lite BF16",
+      "format": "gguf",
+      "precision": "bf16",
+      "target_directory": "SoulX-FlashHead-GGUF",
+      "files": [
+        "SoulX-FlashHead-Lite-BF16.gguf"
+      ],
+      "default": false
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "soulx_flashhead_lite_q8_0",
+    "docs": [
+      "docs/models/soulx_flashhead.md"
+    ],
+    "tags": [
+      "GGUF"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "dit": {
+          "source": "weights:",
+          "prefix": "dit"
+        },
+        "vae": {
+          "source": "weights:",
+          "prefix": "vae"
+        },
+        "audio": {
+          "source": "weights:",
+          "prefix": "audio"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json"
+      },
+      "tensors": {
+        "dit": "model:dit.safetensors",
+        "vae": "model:vae.safetensors",
+        "audio": "model:audio.safetensors"
+      }
+    }
+  ],
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/SoulX-FlashHead-GGUF",
+      "revision": "main",
+      "gated": false
+    }
+  }
+}

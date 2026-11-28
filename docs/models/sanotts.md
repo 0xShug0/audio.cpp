@@ -101,7 +101,50 @@ audiocpp_cli --task tts --family sanotts \
   --text "A configured eSpeak installation." --out sanotts.wav
 ```
 
-## Options
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `sanotts` |
+| Tasks | `tts` |
+| Modes | `offline` |
+| Languages | `en`, `vi`, `id`, `cs`, `de`, `es`, `fr`, `it`, `pt`, `ro`, `ru`, `tr`, `ne`, `hi` |
+| Default package | `sanotts_heart_nano_orig` |
+| Input | Text; voice conditioning as shown in the examples |
+| Output | Generated speech audio |
+
+“Model/session default” means no explicit override. The runtime uses the
+checkpoint or session setting, or leaves the optional value unset as described.
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--text` | Input text; see the examples for the expected prompt format. |
+| `--out` | Output WAV file. |
+
+## Request Options (use with `--request-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `speed` | `float` | `1.0` | Speech speed multiplier; larger is faster. Its reciprocal scales the voice's tuned length scale before the per-token clamp. Declared range: minimum 0.5, maximum 2.0. |
+| `seed` | `int` | `0` | Decoder noise seed. The decoder is noise-fed, so a given seed picks one of many valid renderings; 0 derives it from the text as sha256(text)[:8], which is what the reference implementations do. Piperlite voices are deterministic and ignore the seed. Declared range: minimum 0. |
+| `text_chunk_mode` | `word_budget` | `word_budget` | Long-form text chunking mode. |
+| `text_chunk_size` | `int` | `280` | Maximum Unicode codepoints per long-form text chunk; default 280. Declared range: minimum 1. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `sanotts.espeak_library_path` | `path` | Model/session default | Optional explicit path to the eSpeak-ng shared library. |
+| `sanotts.espeak_data_path` | `path` | Model/session default | Optional explicit path to the directory containing espeak-ng-data. |
+| `sanotts.exec_plan` | `string` | `{}` | JSON object of component execution plans. Components: decoder, istft. Each plan accepts impl, backend, artifacts, and params. decoder impl is default/ggml/neon; istft impl is default/host/neon; no artifacts or params are used. The istft default uses the NEON iSTFT on AArch64 NEON builds (n_fft 1024, hop 256) and the framework host iSTFT elsewhere; explicit neon requires that build. Default retains automatic NEON selection on supported Nano-lineage AArch64 CPU sessions. GGML supports the session backend; explicit NEON requires a Nano-lineage model, AArch64 NEON, and a CPU session. |
+
+## Usage Notes
 
 - `speed` (request, 0.5..2.0, default 1.0) — larger is faster; its reciprocal
   multiplies the voice's tuned length scale before duration rounding and clamping.
@@ -122,8 +165,11 @@ audiocpp_cli --task tts --family sanotts \
   `decoder.impl` to `ggml` to explicitly retain the original graph.
   `{"decoder":{"impl":"neon"}}` runs the frame stage and decoder
   with hand-written AArch64 NEON kernels instead of the GGML graph (see
-  Performance). Durations, the token stage, the iSTFT and the DC block are
-  unchanged. Explicit `neon` requires CPU and an AArch64 NEON build; failures
+  Performance). In default builds (`ENGINE_ENABLE_NEON=OFF`) it also runs the
+  duration and token stages in NEON when both are on the CPU backend, and, when
+  the NEON iSTFT is selected, computes decoder, iSTFT and DC block in one pass
+  on a persistent thread pool. Output does not depend on the thread count. With
+  `ENGINE_ENABLE_NEON=ON` those stages are unchanged. Explicit `neon` requires CPU and an AArch64 NEON build; failures
   are not retried with GGML. Explicit NEON is rejected for Piperlite voices.
   No artifact files or implementation-specific `params` are used. An optional `decoder.backend` must match the session
   backend; NEON only supports CPU. See [component execution plans](../build/rockchip-npu.md#component-execution-plans).
@@ -131,8 +177,10 @@ audiocpp_cli --task tts --family sanotts \
   NEON code and the GGML graph (logged as `sanotts.neon_self_check_max_diff`,
   ~1e-5 for heart and heart-nano; ~20 ms once per session). If they disagree,
   the default selection falls back to GGML and explicit `neon` fails.
-  `sanotts_neon_decoder_test` compares the NEON decoder with a
-  double-precision reference on random weights.
+  The self-check covers the decoder only; `sanotts_neon_decoder_test` compares
+  the NEON decoder and front end with a double-precision reference on random
+  weights, and the fused audio path with the separate decoder, iSTFT and DC
+  block.
 
 ## Determinism and parity
 
@@ -144,6 +192,9 @@ The runtimes reproduce the reference implementations' exact semantics:
   codepoints convention, per-voice `phoneme_id_map`, `[BOS, PAD, (id, PAD)…,
   EOS]` framing, and the schwa fallback for ids outside a component's
   trained vocabulary.
+- One intentional difference, nano voices only: an ASCII apostrophe between
+  two letters stays part of the word. The reference counts it as punctuation,
+  which reads "don't" as "don" plus the letter "T".
 - nano: ATen-compatible MT19937 noise (24-bit uniform, Box–Muller in blocks
   of 16), torch.istft window normalisation and centre trim, and the
   reference's DC blocker `H(z) = (1 - z^-1)/(1 - 0.9973 z^-1)`.
@@ -228,6 +279,9 @@ shared NEON library with `-DENGINE_ENABLE_NEON=ON`; this preserves the same
 decoder selection contract.
 
 Select it with `--session-option 'sanotts.exec_plan={"decoder":{"impl":"neon"}}'`.
+The host iSTFT that follows the decoder has its own NEON implementation, selected the same way
+(`{"istft":{"impl":"neon"}}`; `host` keeps the framework iSTFT). It matches the host iSTFT to
+float rounding (about 1 LSB in 16-bit audio), not bit-exactly.
 
 Raspberry Pi 400 (Cortex-A72, 4 GB), CPU backend, `--threads 3` pinned to
 three cores, whole `audiocpp_cli` process, best of 3. Same build for both

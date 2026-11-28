@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/assets/tensor_source.h"
+#include "engine/framework/codecs/mimi_codec_runtime.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/modules/transformers/transformer_blocks.h"
 #include "engine/framework/modules/conditioning_modules.h"
@@ -44,6 +45,7 @@ struct PocketTTSBackendFlowWeights {
     modules::TimedConditionedFlowMLPWeights flow_net;
     modules::NormWeights out_norm;
     modules::LinearWeights out_eos;
+    std::optional<modules::LinearWeights> z_projection;
     core::TensorValue speaker_proj_weight;
 };
 
@@ -60,33 +62,15 @@ struct PocketTTSBackendMimiEncoderWeights {
     modules::StreamingConv1dWeights downsample_conv;
 };
 
-struct PocketTTSBackendMimiDecoderWeights {
-    std::vector<PocketTTSBackendTransformerLayerWeights> transformer_layers;
-    core::TensorValue quantizer_output_proj_weight;
-    core::TensorValue encoder_upsample_weight;
-    modules::StreamingConv1dWeights input_projection;
-    modules::ConvTranspose1dWeights stage0_upsample;
-    std::vector<float> stage0_upsample_bias_values;
-    PocketTTSBackendResidualBlockWeights stage0_block;
-    modules::ConvTranspose1dWeights stage1_upsample;
-    std::vector<float> stage1_upsample_bias_values;
-    PocketTTSBackendResidualBlockWeights stage1_block;
-    modules::ConvTranspose1dWeights stage2_upsample;
-    std::vector<float> stage2_upsample_bias_values;
-    PocketTTSBackendResidualBlockWeights stage2_block;
-    modules::StreamingConv1dWeights output_projection;
-};
-
 struct PocketTTSBackendWeights {
     core::BackendType backend_type = core::BackendType::Cpu;
     bool has_mimi_encoder = true;
     std::shared_ptr<core::BackendWeightStore> flow_store;
     std::shared_ptr<core::BackendWeightStore> mimi_encoder_store;
-    std::shared_ptr<core::BackendWeightStore> mimi_decoder_store;
     PocketTTSHostWeights host;
     PocketTTSBackendFlowWeights flow;
     PocketTTSBackendMimiEncoderWeights mimi_encoder;
-    PocketTTSBackendMimiDecoderWeights mimi_decoder;
+    codecs::MimiLatentDecoderWeights mimi_decoder;
 };
 
 std::shared_ptr<const PocketTTSBackendWeights> load_pocket_tts_backend_weights(

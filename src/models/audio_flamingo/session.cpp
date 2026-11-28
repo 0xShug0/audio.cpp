@@ -84,7 +84,7 @@ public:
         }
         const bool temporal_grounding = template_name == "temporal_grounding";
         if (temporal_grounding) {
-            if (assets_->config.variant != AudioFlamingoVariant::V3) {
+            if (!assets_->config.impl->allow_temporal_grounding) {
                 throw runtime::InvalidRequestError("SpotSound temporal grounding requires the Audio Flamingo 3 base model");
             }
             instruction = "This is a sequence of audio stream. Your task is to identify the temporal window "

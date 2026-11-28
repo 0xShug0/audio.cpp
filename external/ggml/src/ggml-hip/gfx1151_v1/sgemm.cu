@@ -7,10 +7,11 @@ namespace {
 
 // Reuse each 64x32 operand tile for 64 output rows/columns. Unlike reduced-
 // precision matrix instructions, this retains FP32 inputs and accumulation.
+template<bool batched = false>
 __global__ __launch_bounds__(256) void hip_gfx1151_v1_sgemm(
     const float * __restrict__ a, const float * __restrict__ b, float * __restrict__ c,
     int64_t m, int64_t n, int64_t k, int64_t lda, int64_t ldb, int64_t ldc,
-    int64_t sa, int64_t sb, int64_t sc) {
+    int64_t sa, int64_t sb, int64_t sc, int64_t sa3, int64_t sb3, int64_t ne2) {
     __shared__ float aa[32][65];
     __shared__ float bb[32][65];
     const int tid = threadIdx.x;
@@ -18,8 +19,15 @@ __global__ __launch_bounds__(256) void hip_gfx1151_v1_sgemm(
     const int col = tid / 16;
     const int64_t row0 = int64_t(blockIdx.x) * 64;
     const int64_t col0 = int64_t(blockIdx.y) * 64;
-    a += int64_t(blockIdx.z) * sa;
-    b += int64_t(blockIdx.z) * sb;
+    if constexpr (batched) {
+        const int64_t i2 = int64_t(blockIdx.z) % ne2;
+        const int64_t i3 = int64_t(blockIdx.z) / ne2;
+        a += i2 * sa + i3 * sa3;
+        b += i2 * sb + i3 * sb3;
+    } else {
+        a += int64_t(blockIdx.z) * sa;
+        b += int64_t(blockIdx.z) * sb;
+    }
     c += int64_t(blockIdx.z) * sc;
     float sum[4][4] = {};
     for (int64_t base = 0; base < k; base += 32) {
@@ -172,11 +180,17 @@ bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
         return false;
     }
     if (a->type != GGML_TYPE_F32 || b->type != GGML_TYPE_F32 || out->type != GGML_TYPE_F32 ||
-        a->ne[2] != 1 || a->ne[3] != 1 || b->ne[2] != 1 || b->ne[3] != 1 ||
+        a->ne[2] != b->ne[2] || a->ne[3] != b->ne[3] ||
         a->nb[0] != sizeof(float) || b->nb[0] != sizeof(float) || !ggml_is_contiguous(out)) {
         return false;
     }
     const int64_t m = a->ne[1], n = b->ne[1], k = a->ne[0];
+    if (b->ne[2] > 65535 || b->ne[3] > 65535 / b->ne[2] ||
+        (b->ne[2] > 1 && (a->nb[2] % sizeof(float) || b->nb[2] % sizeof(float))) ||
+        (b->ne[3] > 1 && (a->nb[3] % sizeof(float) || b->nb[3] % sizeof(float)))) {
+        return false;
+    }
+    const int64_t batch = b->ne[2] * b->ne[3];
     // Small and narrow matrices retain HIP's vector/library kernels.
     if (m < 64 || n < 64 || k < 96 || m > INT_MAX || n > 65535 * 64 || k > INT_MAX ||
         a->nb[1] < size_t(k) * sizeof(float) || b->nb[1] < size_t(k) * sizeof(float) ||
@@ -184,11 +198,12 @@ bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
         return false;
     }
     // Require enough work to amortize LDS setup on gfx1151.
-    if (m * n < ((int64_t{512} << 20) + k - 1) / k) {
+    const int64_t work = ((int64_t{512} << 20) + k - 1) / k;
+    if (m * n < (work + batch - 1) / batch) {
         return false;
     }
     const int64_t wide_cols = (n + 127) / 128;
-    if (wmma && out->op == GGML_OP_MUL_MAT &&
+    if (batch == 1 && wmma && out->op == GGML_OP_MUL_MAT &&
         ggml_get_op_params_i32(out, 0) == GGML_PREC_DEFAULT &&
         ggml_get_op_params_i32(out, 1) == GGML_MUL_MAT_LOWERING_DEFAULT &&
         reinterpret_cast<std::uintptr_t>(a->data) % 16 == 0 &&
@@ -203,12 +218,20 @@ bool ggml_hip_gfx1151_v1_mul_mat(const ggml_tensor * a, const ggml_tensor * b,
         return true;
     }
     // Preserve the F32 route's independent-tile admission threshold.
-    if (((m + 63) / 64) * ((n + 63) / 64) < 64) {
+    if (((m + 63) / 64) * ((n + 63) / 64) < (64 + batch - 1) / batch) {
         return false;
     }
-    hip_gfx1151_v1_sgemm<<<dim3((m + 63) / 64, (n + 63) / 64), 256, 0, stream>>>(
-        static_cast<const float *>(a->data), static_cast<const float *>(b->data),
-        static_cast<float *>(out->data), m, n, k, a->nb[1] / sizeof(float),
-        b->nb[1] / sizeof(float), m, 0, 0, 0);
+    if (batch > 1) {
+        hip_gfx1151_v1_sgemm<true><<<dim3((m + 63) / 64, (n + 63) / 64, batch), 256, 0, stream>>>(
+            static_cast<const float *>(a->data), static_cast<const float *>(b->data),
+            static_cast<float *>(out->data), m, n, k, a->nb[1] / sizeof(float),
+            b->nb[1] / sizeof(float), m, a->nb[2] / sizeof(float), b->nb[2] / sizeof(float),
+            m * n, a->nb[3] / sizeof(float), b->nb[3] / sizeof(float), b->ne[2]);
+    } else {
+        hip_gfx1151_v1_sgemm<false><<<dim3((m + 63) / 64, (n + 63) / 64), 256, 0, stream>>>(
+            static_cast<const float *>(a->data), static_cast<const float *>(b->data),
+            static_cast<float *>(out->data), m, n, k, a->nb[1] / sizeof(float),
+            b->nb[1] / sizeof(float), m, 0, 0, 0, 0, 0, 1);
+    }
     return true;
 }

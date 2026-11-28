@@ -15,8 +15,11 @@ namespace engine::models::roformer {
 inline constexpr std::string_view kMelBandRoformerFamily = "mel_band_roformer";
 inline constexpr std::string_view kBsRoformerFamily = "bs_roformer";
 
+struct RoformerImplementation;
+
 struct RoformerArchitectureConfig {
-    std::string family;
+    const RoformerImplementation * impl = nullptr;
+    const std::string & family() const;
     int sample_rate = 0;
     int channels = 0;
     int chunk_size = 0;

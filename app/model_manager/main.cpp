@@ -24,11 +24,14 @@ void print_usage(std::ostream & output) {
     output <<
         "audio.cpp native model package manager\n\n"
         "Usage:\n"
-        "  audiocpp_model_manager list [--remote] [--models-dir PATH] [--repository-root PATH]\n"
-        "  audiocpp_model_manager info PACKAGE [--remote] [--models-dir PATH] [--repository-root PATH]\n"
-        "  audiocpp_model_manager install PACKAGE [--overwrite] [--models-dir PATH] [--repository-root PATH]\n"
-        "  audiocpp_model_manager clean PACKAGE [--models-dir PATH] [--repository-root PATH]\n"
-        "  audiocpp_model_manager remove PACKAGE [--models-dir PATH] [--repository-root PATH]\n\n"
+        "  audiocpp_model_manager list [--remote] [--models-root PATH] [--repository-root PATH]\n"
+        "  audiocpp_model_manager info PACKAGE [--remote] [--models-root PATH] [--repository-root PATH]\n"
+        "  audiocpp_model_manager install PACKAGE [--overwrite] [--models-root PATH] [--repository-root PATH]\n"
+        "  audiocpp_model_manager clean PACKAGE [--models-root PATH] [--repository-root PATH]\n"
+        "  audiocpp_model_manager remove PACKAGE [--models-root PATH] [--repository-root PATH]\n\n"
+        "PACKAGE is an exact package ID from list, not a model family name.\n"
+        "--models-root defaults to models relative to the working directory.\n"
+        "--models-dir remains accepted as a compatibility alias.\n\n"
         "The active model_specs catalog is compiled into this executable. An external\n"
         "model_specs directory below --repository-root overrides the embedded catalog.\n";
 }
@@ -54,7 +57,7 @@ Arguments parse_arguments(int argc, char ** argv) {
     }
     for (; index < argc; ++index) {
         const std::string option = argv[index];
-        if (option == "--models-dir") result.models_root = require_value(index, argc, argv, option);
+        if (option == "--models-root" || option == "--models-dir") result.models_root = require_value(index, argc, argv, option);
         else if (option == "--repository-root") result.repository_root = require_value(index, argc, argv, option);
         else if (option == "--overwrite") result.overwrite = true;
         else if (option == "--remote") result.query_remote = true;

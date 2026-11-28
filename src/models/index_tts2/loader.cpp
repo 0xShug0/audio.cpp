@@ -22,8 +22,8 @@ runtime::ModelMetadata metadata(const IndexTTS2Assets & assets) {
 runtime::CapabilitySet capabilities(const IndexTTS2Assets & assets) {
     runtime::CapabilitySet out;
     out.supported_tasks = {
-        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
+        {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+        {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
     };
     out.supports_speaker_reference = true;
     out.supports_style_condition = true;
@@ -44,6 +44,7 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
         {"top_k", "n", "GPT top-k sampling limit.", false, "30", "1"},
         {"temperature", "float", "Positive GPT sampling temperature.", false, "0.8"},
         {"repetition_penalty", "float", "GPT repetition penalty.", false, "10"},
+        {"text_chunk_tokens", "n", "Maximum text-token budget per internal segment.", false, "120", "1", "600"},
         {"max_tokens", "n", "Maximum generated GPT speech tokens.", false, "1500", "1"},
         {"seed", "int", "Generation seed; omitted chooses a random seed.", false, std::nullopt, "0", "4294967295"},
         {"emotion_alpha", "float", "Blend strength for explicit emotion conditioning.", false, "1", "0", "1"},
@@ -59,6 +60,7 @@ runtime::ModelCliInterface cli(const IndexTTS2Assets & assets) {
         {"text_chunk_size", "int", "Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive."},
     };
     if (index_tts2_variant_from_version(assets.config.version) == IndexTTS2Variant::kV2_5) {
+        out.request_options.push_back({"text_normalization", "bool", "Normalize target text before language case and pronunciation processing.", false, "true"});
         out.request_options.push_back(
             {"language", "auto|zh|en|ja|es|ar|...", "Text language hint; auto infers zh when the text contains Han characters, otherwise en."});
     }
@@ -89,8 +91,8 @@ public:
     runtime::CapabilitySet advertised_capabilities() const override {
         runtime::CapabilitySet out;
         out.supported_tasks = {
-            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline}},
-            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline}},
+            {runtime::VoiceTaskKind::Tts, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
+            {runtime::VoiceTaskKind::VoiceCloning, {runtime::RunMode::Offline, runtime::RunMode::Streaming}},
         };
         out.supports_speaker_reference = true;
         out.supports_style_condition = true;
@@ -154,9 +156,9 @@ const runtime::CapabilitySet & IndexTTS2LoadedModel::capabilities() const noexce
 std::unique_ptr<runtime::IVoiceTaskSession> IndexTTS2LoadedModel::create_task_session(
     const runtime::TaskSpec & task,
     const runtime::SessionOptions & options) const {
-    if (task.mode != runtime::RunMode::Offline ||
+    if ((task.mode != runtime::RunMode::Offline && task.mode != runtime::RunMode::Streaming) ||
         (task.task != runtime::VoiceTaskKind::Tts && task.task != runtime::VoiceTaskKind::VoiceCloning)) {
-        throw std::runtime_error("IndexTTS2 only supports offline TTS and voice-cloning sessions");
+        throw std::runtime_error("IndexTTS2 supports offline and segment-streaming TTS and voice-cloning sessions");
     }
     return std::make_unique<IndexTTS2Session>(task, options, assets_);
 }

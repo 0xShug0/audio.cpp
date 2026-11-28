@@ -84,6 +84,13 @@
         "default": 128
       },
       {
+        "name": "skip_empty_chunks",
+        "type": "bool",
+        "description": "Skip text chunks that emit EOS before producing audio, matching upstream. The request fails if all chunks are empty.",
+        "required": false,
+        "default": false
+      },
+      {
         "name": "text_chunk_mode",
         "type": "enum",
         "description": "Framework text chunking mode.",
@@ -187,6 +194,43 @@
         "required": false,
         "min": 1,
         "default": 4
+      },
+      {
+        "name": "reuse_prefill",
+        "type": "bool",
+        "description": "Reuse the most recent complete tokenized prompt and its prefill state in an offline session with resident experts.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "reuse_reference_prefill",
+        "type": "bool",
+        "description": "Prefill the reference prefix separately and reuse its state in an offline session with resident experts. Changes sampled output relative to monolithic prefill.",
+        "required": false,
+        "default": false
+      },
+      {
+        "name": "reference_cache_dir",
+        "type": "string",
+        "description": "Optional cache root for encoded reference and history audio. An empty path disables persistence.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "prefill_cache_dir",
+        "type": "string",
+        "description": "Optional cache root for reference-prefix snapshots. Requires reuse_reference_prefill. An empty path disables persistence.",
+        "required": false,
+        "default": ""
+      },
+      {
+        "name": "reference_cache_slots",
+        "type": "int",
+        "description": "Encoded reference voices kept in host memory, least recently used evicted first. A hit needs the exact same waveform. 0 disables the in-memory cache. Each slot keeps its waveform (up to 5.3 MB).",
+        "required": false,
+        "min": 0,
+        "max": 64,
+        "default": 8
       },
       {
         "name": "codec_async_decode",

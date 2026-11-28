@@ -21,9 +21,10 @@
 
 namespace engine::community_models::parakeet_tdt {
 
-class BarkStreamingFrontend;
-
 std::shared_ptr<runtime::IVoiceModelLoader> make_parakeet_tdt_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_phonon2_asr_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_underdog_bark3_loader();
+std::shared_ptr<runtime::IVoiceModelLoader> make_haas_asr_loader();
 
 class ParakeetTDTSessionBase : public runtime::RuntimeSessionBase {
 public:
@@ -43,10 +44,11 @@ protected:
     runtime::TaskSpec task_;
     std::shared_ptr<const ParakeetTDTAssets> assets_;
     std::shared_ptr<const engine::model_spec::ModelContract> contract_;
+    std::string option_prefix_;
     std::shared_ptr<const ParakeetWeights> weights_;
-    size_t weight_context_bytes_ = 3072ull * 1024ull * 1024ull;
-    size_t encoder_graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
-    size_t decoder_graph_arena_bytes_ = 256ull * 1024ull * 1024ull;
+    size_t weight_context_bytes_ = 8ull * 1024ull * 1024ull;
+    size_t encoder_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t decoder_graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool encoder_flash_attention_ = false;
@@ -125,7 +127,7 @@ private:
     int64_t buffer_start_sample_ = 0;
     int64_t received_samples_ = 0;
     runtime::AudioBuffer streaming_audio_;
-    std::unique_ptr<BarkStreamingFrontend> bark_frontend_;
+    std::unique_ptr<WindowFrontend> window_frontend_;
     ParakeetDecodeOptions streaming_decode_options_;
     std::vector<int32_t> token_ids_;
     std::vector<int32_t> token_frame_indices_;

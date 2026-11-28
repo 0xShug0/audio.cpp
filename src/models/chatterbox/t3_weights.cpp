@@ -14,11 +14,7 @@ namespace engine::models::chatterbox {
 
 namespace {
 
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-constexpr size_t kDefaultWeightStoreBytes = 1024ull * 1024ull * 1024ull;
-#else
-constexpr size_t kDefaultWeightStoreBytes = 4096ull * 1024ull * 1024ull;
-#endif
+constexpr size_t kDefaultWeightStoreBytes = 8ull * 1024ull * 1024ull;
 
 T3GraphWeight load_t3_graph_weight(
     engine::core::BackendWeightStore & store,

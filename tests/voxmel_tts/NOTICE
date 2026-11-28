@@ -1,0 +1,14 @@
+VoxMel native integration and independent replay tests.
+
+Original model and reference implementation:
+https://github.com/VoxDance-Lab/VoxMel (Apache-2.0)
+https://huggingface.co/VoxDance-Lab/VoxMel-0.6B (Apache-2.0)
+
+Bundled model components retain their original terms:
+Qwen2.5-0.5B tokenizer/backbone: Apache-2.0
+https://huggingface.co/Qwen/Qwen2.5-0.5B
+Vocos Mel 24 kHz: MIT
+https://huggingface.co/charactr/vocos-mel-24khz
+
+No model weights, reference audio or captured tensor fixtures are distributed
+in this source directory. Conversion does not change model license terms.

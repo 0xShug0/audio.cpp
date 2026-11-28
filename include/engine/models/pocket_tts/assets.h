@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/models/pocket_tts/routing.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/tokenizers/sentencepiece.h"
@@ -9,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace engine::models::pocket_tts {
@@ -21,6 +23,7 @@ struct PocketTTSModelConfig {
     int64_t flow_layers = 6;
     int64_t flow_depth = 6;
     int64_t flow_dim = 1024;
+    int64_t flow_condition_dim = 1024;
     int64_t flow_heads = 16;
     int64_t flow_hidden_size = 512;
     int64_t flow_intermediate_size = 4096;
@@ -37,6 +40,11 @@ struct PocketTTSModelConfig {
     int64_t mimi_encoder_upsample_stride = 16;
     bool pad_with_spaces_for_short_inputs = false;
     bool remove_semicolons = false;
+    // upstream `capitalize_first_letter` (false for models that read IPA or other lowercase input)
+    bool capitalize_first_letter = true;
+    // upstream `replace_characters`: characters absent from the training data, each mapped to its
+    // replacement (often empty), as UTF-8 strings of one code point.
+    std::vector<std::pair<std::string, std::string>> replace_characters;
     bool insert_bos_before_voice = false;
     std::optional<int> model_recommended_frames_after_eos = std::nullopt;
     // Added to the word-count guess (3 or 1) for the default frames_after_eos, which counts
@@ -67,7 +75,10 @@ struct PocketTTSAssets {
     PocketTTSModelConfig model_config;
     std::vector<tokenizers::SentencePiecePiece> tokenizer_pieces;
     std::string language;
-    std::string family = "pocket_tts";
+    // Selected once by the asset loader; model and sessions reuse this descriptor.
+    const PocketTTSImplementation * impl = nullptr;
+
+    std::string family() const { return std::string(impl->family); }
     // Voice used when a request selects none.
     std::optional<std::filesystem::path> default_voice_path;
 };

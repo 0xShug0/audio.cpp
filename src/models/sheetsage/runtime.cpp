@@ -885,6 +885,7 @@ private:
         ggml_set_output(mixed_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
         ggml_build_forward_expand(graph_, mixed_);
+        debug::timing_log_context_reservation("sheetsage2.encoder.graph", ctx_.get());
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("SheetSage2 encoder backend buffer allocation failed");
@@ -1078,6 +1079,7 @@ private:
         ggml_set_output(logits_);
         graph_ = ggml_new_graph_custom(ctx_.get(), 524288, false);
         ggml_build_forward_expand(graph_, logits_);
+        debug::timing_log_context_reservation("sheetsage2.decoder.graph", ctx_.get());
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("SheetSage2 decoder backend buffer allocation failed");

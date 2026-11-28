@@ -1,5 +1,8 @@
 # CrisperWhisper 2.0
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 [CrisperWhisper 2.0 Large](https://huggingface.co/nyralabs/CrisperWhisper2.0_large)
 is a Whisper encoder-decoder model for verbatim and intended transcription.
 The model weights and generated outputs use the upstream non-commercial research

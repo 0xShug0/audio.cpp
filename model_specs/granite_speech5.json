@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "family": "granite_speech5",
+  "display_name": "Granite Speech 5.0 2B",
+  "description": "IBM Granite Speech 5.0 2B autoregressive multilingual ASR (Conformer encoder, Q-Former projector, Granite text decoder). Transcribes English, French, German, Spanish, Portuguese, and Japanese with punctuation and capitalization.",
+  "category": "asr",
+  "status": "community",
+  "tasks": [
+    "asr"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "pt",
+    "ja"
+  ],
+  "runtime": {
+    "tags": [
+      "server",
+      "cpu"
+    ]
+  },
+  "capabilities": {
+    "asr": [
+      "vad_chunking"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Source language hint: en, fr, de, es, pt, or ja (case-insensitive ASCII). The explicit request option wins over text_input.language. Blank (or omitted) means automatic recognition: no hint text and no language label.",
+        "required": false
+      },
+      {
+        "name": "target_language",
+        "type": "string",
+        "description": "Translation target: en, fr, de, es, pt, ja, it, or zh (case-insensitive ASCII; Italian and Mandarin render as Italian and Mandarin in the prompt). Blank (or omitted) means ASR transcription; setting a target selects speech translation. Source speech is described by language; keyword biasing terms travel in text_input.text (CLI --text, JSON text, multipart prompt|text) and combine with either mode.",
+        "required": false
+      },
+      {
+        "name": "max_tokens",
+        "type": "int",
+        "description": "Maximum generated tokens per audio chunk. The processor-derived context bound prompt_len + max_tokens <= 16384 (from actual token IDs and resampled audio) is enforced per chunk; hitting the budget returns the generated prefix.",
+        "required": false,
+        "min": 1,
+        "max": 16383,
+        "default": 512
+      },
+      {
+        "name": "audio_chunk_mode",
+        "type": "enum",
+        "description": "Offline chunk mode: auto (short inputs whole, long inputs VAD when a VAD model is configured, else fixed), fixed, vad (requires granite_speech5.vad_model_path), or none.",
+        "values": [
+          "auto",
+          "fixed",
+          "vad",
+          "none"
+        ],
+        "required": false,
+        "default": "auto"
+      },
+      {
+        "name": "audio_chunk_duration_sec",
+        "type": "float",
+        "description": "Positive maximum audio chunk duration in seconds, in (0, 120]. Ignored in none mode.",
+        "required": false,
+        "max": 120,
+        "default": 120
+      }
+    ],
+    "session": [
+      {
+        "name": "vad_model_path",
+        "type": "path",
+        "description": "Path to a VAD weight file of any built-in VAD family (e.g. silero_vad_16k.safetensors), not a directory; VAD runs only when this path is a regular file. Defaults to assets/framework/models/silero_vad.",
+        "required": false
+      },
+      {
+        "name": "encoder_graph_arena_mb",
+        "type": "int",
+        "description": "Maximum encoder graph metadata budget in MiB; allocation is shape-sized. Must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "projector_graph_arena_mb",
+        "type": "int",
+        "description": "Maximum projector graph metadata budget in MiB; allocation is shape-sized. Must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "prefill_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder prefill graph arena size in MB. Must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      },
+      {
+        "name": "decode_graph_arena_mb",
+        "type": "int",
+        "description": "Decoder step graph arena size in MB. Must be positive.",
+        "required": false,
+        "min": 1,
+        "default": 1024
+      }
+    ],
+    "load": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Shared model weight storage type. Native keeps the stored dtype (checkpoint or GGUF package mixed types); f32 upcasts the BF16 snapshot for parity.",
+        "values": [
+          "native",
+          "f32"
+        ],
+        "required": false,
+        "default": "native"
+      }
+    ]
+  },
+  "packages": [
+    {
+      "id": "granite_speech5_2b_safetensors",
+      "display_name": "Granite Speech 5.0 2B HF Safetensors",
+      "default": false,
+      "format": "safetensors",
+      "precision": "bf16",
+      "target_directory": "Granite-Speech-5.0-2B-hf",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "processor_config.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "model.safetensors"
+      ],
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "ibm-granite/granite-speech-5.0-2b",
+        "revision": "ec49ca6b1a5e7e9176127e09cb303ab78cbacdf7",
+        "gated": false
+      }
+    },
+    {
+      "id": "granite_speech5_2b_q8_0",
+      "display_name": "Granite Speech 5.0 2B Q8_0 GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "q8_0",
+      "target_directory": "Granite-Speech-5.0-2B-GGUF",
+      "files": [
+        "Granite-Speech-5.0-2B-GGUF/granite-speech-5.0-2b-q8_0.gguf"
+      ],
+      "strip_prefix": "Granite-Speech-5.0-2B-GGUF",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "audio-cpp/audio.cpp-gguf",
+        "revision": "main",
+        "gated": false
+      }
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "granite_speech5_2b_q8_0",
+    "tags": [
+      "ASR"
+    ],
+    "docs": [
+      "docs/models/granite_speech5.md",
+      "docs/asr.md",
+      "docs/gguf.md"
+    ],
+    "summary": "IBM Granite Speech 5.0 2B multilingual offline transcription (native weights, local GGUF conversion, or prebuilt Q8_0 package)."
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "generation_config": "model:generation_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": "weights:"
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "preprocessor_config": "model:preprocessor_config.json",
+        "processor_config": "model:processor_config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json",
+        "generation_config": "model:generation_config.json",
+        "special_tokens_map": "model:special_tokens_map.json",
+        "chat_template": "model:chat_template.jinja"
+      },
+      "tensors": {
+        "weights": {
+          "source": "model:model.safetensors"
+        }
+      }
+    }
+  ]
+}

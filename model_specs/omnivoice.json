@@ -191,7 +191,12 @@
         "name": "audio_tokenizer_codebook_weight_type",
         "type": "enum",
         "description": "Storage type for the audio tokenizer codebooks, codebook score matrix, semantic feature projection, and fc2; default f32.",
-        "values": ["native", "f32", "f16", "bf16"],
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16"
+        ],
         "required": false,
         "default": "f32"
       },
@@ -249,6 +254,34 @@
         "preset": "perf_mode_flash_attention",
         "required": false,
         "default": "off"
+      },
+      {
+        "name": "packed_cfg",
+        "type": "bool",
+        "description": "Give every guidance (unconditional) sequence only its target frames and pack batched requests without padding; default true. false restores the padded layout.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "device_scoring",
+        "type": "bool",
+        "description": "Score greedy (class_temperature=0) decoding steps on the backend and read back only the best tokens; default true. Ignored with mem_saver=true.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "packed_projections",
+        "type": "bool",
+        "description": "Load q/k/v and gate/up as one packed weight each: one GEMM per group and a fused SwiGLU; default true. false keeps separate projections.",
+        "required": false,
+        "default": true
+      },
+      {
+        "name": "exec_plan",
+        "type": "string",
+        "description": "JSON object of component execution plans. Component: generator. Each plan accepts impl, backend, artifacts, and params. impl is default/ggml/rknn/rknn_zeroop. GGML keeps the session backend. RKNN requires artifacts.main, a comma-separated ladder of diffusion-LM step-graph engines compiled one per total-token length (tools/rknn/prepare_omnivoice_rknn_generator.py), and ENGINE_ENABLE_RKNN; omit backend. RKNN_ZEROOP runs the same trunk on the vendor rknn_matmul_api zero-op matmul calls, linking only librknnrt (ENGINE_ENABLE_RKNN), takes no artifacts, and caches packed weights under <model dir>/rknn-zeroop-cache (override with AUDIOCPP_RKNN_ZEROOP_CACHE). A request longer than the largest engine runs the CPU graph. None of the implementations takes params.",
+        "required": false,
+        "default": "{}"
       }
     ],
     "load": []
@@ -365,6 +398,50 @@
       "download": {
         "kind": "huggingface_snapshot",
         "repo": "mohammedaly22/VoiceTut-TTS-GGUF"
+      }
+    },
+    {
+      "id": "omnivoice_generator_rk3588",
+      "display_name": "OmniVoice NPU Generator Step-Graph Ladder (RK3588)",
+      "format": "rknn",
+      "precision": "f16",
+      "target_directory": "OmniVoice-GGUF",
+      "files": [
+        "rk3588/omnivoice/omnivoice_generator_seq256_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq384_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq512_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq768_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_seq1024_fp16.rknn"
+      ],
+      "strip_prefix": "rk3588/omnivoice",
+      "description": "Pre-compiled RK3588 step-graph ladder (256 to 1024 token buckets) for the omnivoice RKNN generator (omnivoice.exec_plan, artifacts.main); installs beside the OmniVoice GGUF weights and is named by bare file name. Built by tools/rknn from the OmniVoice checkpoint; see docs/build/rockchip-npu.md.",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "wOvANAI/rknn-tts-engines",
+        "revision": "main",
+        "gated": false
+      }
+    },
+    {
+      "id": "omnivoice_generator_front_rk3588",
+      "display_name": "OmniVoice NPU Generator Front-Shard Ladder (RK3588)",
+      "format": "rknn",
+      "precision": "f16",
+      "target_directory": "OmniVoice-GGUF",
+      "files": [
+        "rk3588/omnivoice/omnivoice_generator_front28_seq256_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_front28_seq384_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_front28_seq512_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_front28_seq768_fp16.rknn",
+        "rk3588/omnivoice/omnivoice_generator_front28_seq1024_fp16.rknn"
+      ],
+      "strip_prefix": "rk3588/omnivoice",
+      "description": "Pre-compiled RK3588 front-shard ladder: all 28 backbone layers on the NPU, the CFG tail (final norm, audio heads, guidance combine) stays fp32 on the host, so guidance > 0 is usable on the NPU (omnivoice.exec_plan, artifacts.main); installs beside the OmniVoice GGUF weights and is named by bare file name. Built by tools/rknn --front-k 28 from the OmniVoice checkpoint; see docs/build/rockchip-npu.md.",
+      "download": {
+        "kind": "huggingface_snapshot",
+        "repo": "wOvANAI/rknn-tts-engines",
+        "revision": "main",
+        "gated": false
       }
     }
   ],

@@ -15,9 +15,10 @@
 | Mel-Band RoFormer | `mel_band_roformer` | `sep` | [Mel-Band RoFormer](#mel-band-roformer) |
 | Ming 3.0 Audio Tiny | `ming3_audio` | `s2s` spoken responses (also `asr`, `tts`, `clon`) | [Ming Audio](models/ming3_audio.md#spoken-response) |
 | MioCodec | `miocodec` | `vc`, `s2s` | [MioCodec](#miocodec) |
-| MossFormer2 | `mossformer2` | `sep` | [MossFormer2](models/mossformer2.md) |
+| MossFormer2 | `mossformer2` | `sep` speech separation, `s2s` enhancement/super-resolution | [MossFormer2](models/mossformer2.md) |
 | MuScriptor | `muscriptor` | audio to MIDI/events | [MuScriptor](#muscriptor) |
 | PersonaPlex | `personaplex` | `s2s` | [PersonaPlex](#personaplex) |
+| Real-time RE-USE | `realtime_reuse` | Offline / streaming `s2s` speech restoration | [Real-time RE-USE](models/realtime_reuse.md) |
 | RE-USE | `reuse` | `s2s` speech restoration | [RE-USE](models/reuse.md) |
 | RVC | `rvc` | `vc` | [RVC](#rvc) |
 | SAM Audio | `sam_audio` | `s2s` prompt-conditioned separation | [SAM Audio](models/sam_audio.md) |
@@ -29,6 +30,7 @@
 | Tone Color VC | `tone_color_vc` | `vc` | [Tone Color VC](models/tone_color_vc.md) |
 | UniverSR | `universr` | `s2s` audio/speech super-resolution | [UniverSR](models/universr.md) |
 | VeVo2 | `vevo2` | TTS, SVC, VC, editing | [VeVo2](#vevo2) |
+| Voice Isolator | `voice_isolator` | Offline / streaming `s2s` voice isolation | [Voice Isolator](models/voice_isolator.md) |
 
 This page covers voice conversion, codec, audio enhancement, Foley generation,
 audio-to-symbolic, and source-separation families. These models do not share one
@@ -89,9 +91,9 @@ Converted SafeTensors package:
 audiocpp_cli --task sep --family bs_roformer --model models/BS-RoFormer-ep368 --backend cuda --audio song_44k.wav --out-dir stems
 ```
 
-CUDA uses F32-accumulating Flash Attention while CPU and other backends keep
-the explicit attention path. The packaged overlap count remains the
-quality-oriented default. Lower overlap is an opt-in speed/quality tradeoff:
+CUDA and Vulkan use F32-accumulating Flash Attention while CPU and other
+backends keep the explicit attention path. The packaged overlap count remains
+the quality-oriented default. Lower overlap is an opt-in speed/quality tradeoff:
 
 | Session option | Default | Notes |
 |---|---:|---|
@@ -108,7 +110,7 @@ The conversion helper preserves the checkpoint's fused QKV weights, explicit
 `freqs_per_bands` layout, global final RMSNorm, and mask-estimator depth:
 
 ```bash
-python tests/bs_roformer/convert_reference_ckpt.py \
+python tools/gguf/bs_roformer_weights_prepare.py \
   --ckpt model_bs_roformer.ckpt \
   --config-path model_bs_roformer.yaml \
   --output-dir models/BS-RoFormer
@@ -262,7 +264,7 @@ curl -fL \
   https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/5c90dfd2-34c22ccb.th \
   -o models/htdemucs_6stems_source/5c90dfd2-34c22ccb.th
 
-python tests/demucs/convert_reference_ckpt.py \
+python tools/gguf/demucs_weights_prepare.py \
   --name htdemucs_6s \
   --repo models/htdemucs_6stems_source \
   --output-dir models/htdemucs_6stems_source
@@ -341,7 +343,7 @@ Mel-Band RoFormer is wired as a vocal/source-separation model. The CLI uses the 
 | Modes | `offline` |
 | Input | 44.1 kHz music mixture WAV through `--audio` |
 | Output | Named separated artifacts under `--out-dir` |
-| Notes | Uses the package overlap count by default; `mel_band_roformer.num_overlap` can lower the overlap for faster inference with a quality tradeoff |
+| Notes | Uses the package overlap count by default; `mel_band_roformer.num_overlap` can lower the overlap for faster inference with a quality tradeoff. CUDA and Vulkan use F32-accumulating Flash Attention; CPU and other backends use the explicit attention path |
 
 ```bash
 audiocpp_cli --task sep --family mel_band_roformer --model models/mel-roformer-mlx --backend cuda --audio song_44k.wav --out-dir stems
@@ -404,11 +406,18 @@ audiocpp_cli --task s2s --family miocodec --model models/MioCodec-25Hz-44.1kHz-v
 | Option | Values | Default | Meaning |
 |---|---|---:|---|
 | `miocodec.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `f32` | Weight storage type. |
-| `miocodec.weight_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `miocodec.constant_context_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `miocodec.content_graph_arena_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
-| `miocodec.global_graph_arena_mb` | integer >= 1 | `256` | Context or graph arena size in MiB. |
-| `miocodec.wave_graph_arena_mb` | integer >= 1 | `512` | Context or graph arena size in MiB. |
+| `miocodec.weight_context_mb` | integer >= 1 | `8` | Context or graph arena size in MiB. |
+| `miocodec.constant_context_mb` | integer >= 1 | `16` | Context or graph arena size in MiB. |
+| `miocodec.content_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
+| `miocodec.global_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
+| `miocodec.wave_graph_arena_mb` | integer >= 1 | `32` | Context or graph arena size in MiB. |
+
+## Dettato
+
+[Dettato](models/dettato.md) is an experimental multi-instrument audio-to-MIDI
+transcriber with instrument grouping and drum transcription. Its F16 package
+location is `audio-cpp/audio.cpp-gguf/Dettato-GGUF`. See its model guide for conversion,
+options and numerical-parity limitations.
 
 ## MuScriptor
 

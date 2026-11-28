@@ -306,7 +306,7 @@ void ggml_cuda_op_im2col(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
         const auto buft = ggml_backend_cuda_buffer_type(ctx.device);
         if (ggml_backend_buffer_get_type(dst->src[1]->buffer) == buft &&
             ggml_backend_buffer_get_type(dst->buffer) == buft &&
-            ctx.impl->im2col(dst->src[1], dst, ctx.stream())) {
+            ctx.impl->im2col(dst->src[1], dst, ctx.stream(), ggml_cuda_info().devices[ctx.device].nsm)) {
             return;
         }
     }

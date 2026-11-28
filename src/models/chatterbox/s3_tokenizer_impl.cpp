@@ -355,7 +355,7 @@ public:
         const float attn_scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
 
         ggml_init_params params = {};
-        params.mem_size = 512ull * 1024ull * 1024ull;
+        params.mem_size = 32ull * 1024ull * 1024ull;
         params.mem_buffer = nullptr;
         params.no_alloc = true;
         ggml_ = ggml_init(params);
@@ -389,6 +389,13 @@ public:
             ctx,
             GGML_TYPE_F32,
             engine::core::TensorShape::from_dims({1, time_, 1, head_dim}));
+        // The RoPE tables are written once, after allocation, and the graph is reused for every
+        // clip of the same length. ggml-alloc frees and reuses the memory of any tensor that is
+        // not an output after its last use, so keep them as outputs.
+        ggml_set_input(cos_.tensor);
+        ggml_set_output(cos_.tensor);
+        ggml_set_input(sin_.tensor);
+        ggml_set_output(sin_.tensor);
 
         auto seq = bct_to_btc(ctx, x);
         for (const auto & block : weights.blocks) {

@@ -10,8 +10,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -55,6 +57,151 @@ std::filesystem::path write_config(
         throw std::runtime_error("failed to write test config: " + path.string());
     }
     return path;
+}
+
+void apply_cli(minitts::server::ServerConfig & config, std::initializer_list<const char *> arguments) {
+    std::vector<char *> argv;
+    for (const auto * value : arguments) argv.push_back(const_cast<char *>(value));
+    minitts::server::apply_model_cli_options(config, static_cast<int>(argv.size()), argv.data());
+}
+
+void test_model_cli_startup() {
+    minitts::server::ServerConfig config;
+    apply_cli(config, {"server", "--ui", "--model", "model.gguf", "--family", "pocket_tts",
+        "--model-id", "voice", "--task", "clon", "--mode", "streaming",
+        "--load-option", "language=english", "--session-option", "pocket_tts.voice_state_cache_slots=2",
+        "--request-option", "num_inference_steps=12", "--seed", "42", "--temperature", "0.7",
+        "--voice-ref", "reference.wav", "--reference-text", "Reference transcript."});
+    require(config.models.size() == 1, "CLI creates one model");
+    const auto & model = config.models.front();
+    require(model.id == "voice" && model.family == "pocket_tts" && model.task == "clon" &&
+        model.mode == "streaming", "CLI model selection fields");
+    require(model.path == std::filesystem::absolute("model.gguf"), "CLI model path uses working directory");
+    require(model.load_options.at("language") == "english", "CLI load options");
+    require(model.session_options.at("pocket_tts.voice_state_cache_slots") == "2", "CLI session options");
+    require(model.default_request_options.at("seed") == "42" &&
+        model.default_request_options.at("temperature") == "0.7" &&
+        model.default_request_options.at("num_inference_steps") == "12", "shared request flag mappings");
+    require(model.default_voice_preset->voice_ref == std::filesystem::absolute("reference.wav") &&
+        model.default_voice_preset->reference_text == "Reference transcript.", "CLI default reference");
+
+    minitts::server::ServerConfig automatic_id;
+    apply_cli(automatic_id, {"server", "--model", "model.gguf", "--family", "pocket_tts", "--voice-id", "alba"});
+    require(automatic_id.models.front().id == "pocket_tts", "family is the default model id");
+    require(automatic_id.models.front().default_voice_preset->voice_id == "alba", "CLI default built-in voice");
+}
+
+void test_model_cli_overrides() {
+    const auto root = make_temp_root();
+    const auto path = write_config(root, "override.json", R"JSON({
+      "default_session_options":{"pocket_tts.inherited":"yes"},
+      "models":[
+        {"id":"first","family":"pocket_tts","path":"first.gguf","session_options":{"keep":"first"}},
+        {"id":"second","family":"pocket_tts","path":"old.gguf",
+         "load_options":{"language":"old","keep":"load"},
+         "session_options":{"change":"old","keep":"session"},
+         "default_request_options":{"temperature":"0.1","keep":"request"},
+         "voice_presets":{"saved":{"voice_id":"alba","options":{"temperature":"0.2","keep":"preset"}}},
+         "default_voice_preset":"saved"}
+      ]})JSON");
+    auto config = minitts::server::load_server_config(path);
+    apply_cli(config, {"server", "--config", "ignored.json", "--model-id", "second", "--model", "new.gguf",
+        "--load-option", "language=english", "--session-option", "change=new", "--temperature", "0.9"});
+    require(config.models[0].path == root / "first.gguf" &&
+        config.models[0].session_options.at("keep") == "first", "unselected model is unchanged");
+    auto & model = config.models[1];
+    require(model.id == "second" && model.family == "pocket_tts" && model.task == "tts" && model.mode == "offline",
+        "omitted selection fields retain configured values");
+    require(model.path == std::filesystem::absolute("new.gguf"), "CLI path is not relative to config file");
+    require(model.load_options.at("language") == "english" && model.load_options.at("keep") == "load",
+        "load options merge by key");
+    require(model.session_options.at("change") == "new" && model.session_options.at("keep") == "session" &&
+        model.session_options.at("pocket_tts.inherited") == "yes", "session options merge by key");
+    require(model.default_request_options.at("temperature") == "0.9" &&
+        model.default_request_options.at("keep") == "request", "request defaults merge by key");
+    require(!model.default_voice_preset_id && model.default_voice_preset->voice_id == "alba" &&
+        model.default_voice_preset->options.count("temperature") == 0 &&
+        model.default_voice_preset->options.at("keep") == "preset", "CLI defaults override automatic preset defaults");
+    require(model.voice_presets.at("saved").options.at("temperature") == "0.2", "named preset is not modified");
+    apply_cli(config, {"server", "--model-id", "second", "--voice-ref", "new.wav", "--reference-text", "New text."});
+    require(!model.default_voice_preset->voice_id &&
+        model.default_voice_preset->voice_ref == std::filesystem::absolute("new.wav") &&
+        model.default_voice_preset->reference_text == "New text." && model.default_voice_preset->options.empty(),
+        "new voice replaces the old preset without inheriting its voice-specific options");
+    apply_cli(config, {"server", "--model-id", "second", "--voice-id", "cosette"});
+    require(model.default_voice_preset->voice_id == "cosette" && !model.default_voice_preset->voice_ref &&
+        !model.default_voice_preset->reference_text, "voice id replaces default reference");
+}
+
+void test_model_cli_noop_and_errors() {
+    minitts::server::ServerConfig config;
+    minitts::server::ServerModelConfig model;
+    model.id = "original";
+    model.family = "pocket_tts";
+    model.path = "original.gguf";
+    model.default_request_options["seed"] = "99";
+    config.models.push_back(model);
+    apply_cli(config, {"server", "--config", "server.json", "--backend", "cpu", "--threads", "8", "--ui", "--log"});
+    require(config.models.size() == 1 && config.models[0].path == model.path &&
+        config.models[0].default_request_options == model.default_request_options, "existing server flags leave model config untouched");
+    apply_cli(config, {"server", "--instruct", "--model", "--moe-cpu-share", "0"});
+    require(config.models[0].path == model.path &&
+        config.models[0].default_request_options.at("instruct") == "--model" &&
+        config.models[0].session_options.at("moe_cpu_share") == "0", "flag-like text stays a value and shared session mappings work");
+
+    for (const auto arguments : {
+        std::initializer_list<const char *>{"server", "--model-id", "missing"},
+        {"server", "--model"}, {"server", "--family", ""},
+        {"server", "--session-option", "bad"}, {"server", "--load-option", "=bad"},
+        {"server", "--request-option", "seed="}, {"server", "--text", "Hello"},
+        {"server", "--seed", "1", "--request-option", "seed=2"}}) {
+        bool rejected = false;
+        try { apply_cli(config, arguments); }
+        catch (const std::runtime_error &) { rejected = true; }
+        require(rejected, "invalid model CLI arguments are rejected");
+    }
+    config.models.push_back(model);
+    bool ambiguous = false;
+    try { apply_cli(config, {"server", "--temperature", "0.8"}); }
+    catch (const std::runtime_error & error) { ambiguous = std::string(error.what()).find("--model-id") != std::string::npos; }
+    require(ambiguous, "multi-model overrides must select an id");
+    minitts::server::ServerConfig empty;
+    apply_cli(empty, {"server", "--ui", "--backend", "cpu"});
+    require(empty.models.empty(), "UI-only startup remains model-free");
+    bool incomplete = false;
+    try { apply_cli(empty, {"server", "--model", "model.gguf"}); }
+    catch (const std::runtime_error &) { incomplete = true; }
+    require(incomplete, "new model requires a family");
+}
+
+void test_models_root() {
+    const auto root = make_temp_root();
+    const auto omitted = write_config(root, "omitted.json", R"({"ui_management":true,"models":[]})");
+    require(!minitts::server::load_server_config(omitted).models_root.has_value(),
+            "omitted models_root keeps the executable-local default");
+
+    const auto relative = write_config(
+        root, "relative.json", R"({"ui_management":true,"models_root":"shared models","models":[]})");
+    require(minitts::server::load_server_config(relative).models_root == root / "shared models",
+            "relative models_root is resolved against the config directory");
+
+    const auto absolute = write_config(root, "absolute.json",
+        "{\"ui_management\":true,\"models\":[],\"models_root\":" +
+        engine::io::json::stringify_string((root / "absolute models").generic_string()) + "}");
+    require(minitts::server::load_server_config(absolute).models_root == root / "absolute models",
+            "absolute models_root is preserved");
+
+    for (const auto * value : {"null", "true", "[]", "42", "\"\""}) {
+        const auto invalid = write_config(root, "invalid.json",
+            std::string("{\"ui_management\":true,\"models\":[],\"models_root\":") + value + "}");
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(invalid);
+        } catch (const std::runtime_error & error) {
+            rejected = std::string(error.what()).find("models_root") != std::string::npos;
+        }
+        require(rejected, "invalid models_root must be rejected");
+    }
 }
 
 void test_inline_default_and_named_presets() {
@@ -1138,10 +1285,126 @@ void test_per_model_devices() {
     require(rejected, "negative per-model device is rejected with the model id");
 }
 
+void test_device_name_selection_in_server_config() {
+    auto make_dev = [](std::string reg, std::string opt, int idx, std::string dev_name, std::string desc) {
+        engine::core::BackendDeviceInfo d;
+        d.backend = std::move(reg);
+        d.backend_option = std::move(opt);
+        d.index = idx;
+        d.device_name = std::move(dev_name);
+        d.description = std::move(desc);
+        d.name = d.description;
+        d.type = opt == "cpu" ? "CPU" : "GPU";
+        return d;
+    };
+    const std::vector<engine::core::BackendDeviceInfo> devices = {
+        make_dev("CUDA", "cuda", 0, "CUDA0", "NVIDIA GeForce RTX 5090"),
+        make_dev("CUDA", "cuda", 1, "CUDA1", "NVIDIA GeForce RTX 4090"),
+        make_dev("Vulkan", "vulkan", 0, "Vulkan0", "NVIDIA GeForce RTX 5090"),
+        make_dev("Vulkan", "vulkan", 1, "Vulkan1", "Intel(R) Arc(TM) A770"),
+        make_dev("CPU", "cpu", 0, "CPU", "CPU"),
+    };
+
+    const auto root = make_temp_root();
+
+    // Top-level device_name without explicit backend resolves both backend and device,
+    // and per-model device_name resolves against that resolved backend.
+    {
+        const auto path = write_config(root, "device-name-inferred.json", R"JSON({
+          "device_name": "Vulkan1",
+          "models": [
+            {"id":"inherited","family":"kokoro_tts","path":"a.gguf"},
+            {"id":"gpu0","family":"kokoro_tts","path":"b.gguf","device_name":"RTX 5090"}
+          ]
+        })JSON");
+        const auto config = minitts::server::load_server_config(path, false, devices);
+        require(config.backend == engine::core::BackendType::Vulkan, "top-level device_name infers Vulkan backend");
+        require(config.device == 1, "top-level device_name resolves Vulkan1 to index 1");
+        require(!config.device_name.has_value(), "resolved top-level device_name is cleared");
+        require(!config.models[0].device.has_value(), "model without device_name still inherits server device");
+        require(config.models[1].device == 0, "per-model device_name resolves RTX 5090 within Vulkan");
+        require(!config.models[1].device_name.has_value(), "resolved per-model device_name is cleared");
+    }
+
+    // Explicit backend disambiguates top-level device_name across CUDA and Vulkan.
+    {
+        const auto path = write_config(root, "device-name-filtered.json", R"JSON({
+          "backend": "cuda",
+          "device_name": "RTX 5090",
+          "models": [
+            {"id":"secondary","family":"kokoro_tts","path":"b.gguf","device_name":"4090"}
+          ]
+        })JSON");
+        const auto config = minitts::server::load_server_config(path, false, devices);
+        require(config.backend == engine::core::BackendType::Cuda, "explicit cuda backend preserved");
+        require(config.device == 0, "RTX 5090 resolves to CUDA0");
+        require(config.models[0].device == 1, "4090 resolves to CUDA1");
+    }
+
+    // Deferred resolution allows CLI --backend or --device to override config before resolving.
+    {
+        const auto path = write_config(root, "device-name-cli-override.json", R"JSON({
+          "device_name": "RTX 5090",
+          "models": [{"id":"m","family":"kokoro_tts","path":"a.gguf"}]
+        })JSON");
+        auto config = minitts::server::parse_server_config(path);
+        config.backend = engine::core::BackendType::Vulkan;
+        config.backend_explicit = true;
+        minitts::server::resolve_server_devices(config, devices);
+        require(config.backend == engine::core::BackendType::Vulkan && config.device == 0,
+            "CLI --backend disambiguates config device_name");
+
+        auto numeric_override = minitts::server::parse_server_config(path);
+        numeric_override.backend = engine::core::BackendType::Cpu;
+        numeric_override.backend_explicit = true;
+        numeric_override.device = 0;
+        numeric_override.device_name.reset();
+        minitts::server::resolve_server_devices(numeric_override, {make_dev("CPU", "cpu", 0, "CPU", "CPU")});
+        require(numeric_override.backend == engine::core::BackendType::Cpu && numeric_override.device == 0,
+            "CLI --device overrides config device_name without requiring the config GPU");
+    }
+
+    // Per-model device_name targeting a different backend than the server's backend must fail with model id.
+    {
+        const auto path = write_config(root, "device-name-wrong-backend.json", R"JSON({
+          "backend": "vulkan",
+          "models": [{"id":"mismatch","family":"kokoro_tts","path":"a.gguf","device_name":"CUDA0"}]
+        })JSON");
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(path, false, devices);
+        } catch (const std::runtime_error & error) {
+            const std::string msg = error.what();
+            rejected = msg.find("mismatch") != std::string::npos && msg.find("vulkan") != std::string::npos;
+        }
+        require(rejected, "per-model device_name from wrong backend is rejected with model id");
+    }
+
+    // Mutual exclusion and non-string validation at top level and per model.
+    for (const auto & [name, body] : std::vector<std::pair<std::string, std::string>>{
+             {"both-top.json", R"({"device":0,"device_name":"CPU","models":[{"id":"a","family":"kokoro_tts","path":"a.gguf"}]})"},
+             {"both-model.json", R"({"models":[{"id":"a","family":"kokoro_tts","path":"a.gguf","device":0,"device_name":"CPU"}]})"},
+             {"bad-top-type.json", R"({"device_name":0,"models":[{"id":"a","family":"kokoro_tts","path":"a.gguf"}]})"},
+             {"bad-model-type.json", R"({"models":[{"id":"a","family":"kokoro_tts","path":"a.gguf","device_name":true}]})"},
+         }) {
+        const auto path = write_config(root, name, body);
+        bool rejected = false;
+        try {
+            (void) minitts::server::load_server_config(path, false, devices);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        require(rejected, "invalid device_name config rejected: " + name);
+    }
+}
+
 }  // namespace
 
 int main() {
     try {
+        test_model_cli_startup();
+        test_model_cli_overrides();
+        test_model_cli_noop_and_errors();
         {
             const auto root = make_temp_root();
             const auto path = write_config(root, "implementation.json", R"({"backend":"hip","backend_impl":"gfx1151_v1","ui_management":true,"models":[]})");
@@ -1151,6 +1414,7 @@ int main() {
         }
 
         test_per_model_devices();
+        test_device_name_selection_in_server_config();
         test_model_slots();
         test_inline_default_and_named_presets();
         test_model_spec_override_selection();
@@ -1177,6 +1441,7 @@ int main() {
         test_per_model_busy_timeout();
         test_negative_per_model_busy_timeout_is_rejected();
         test_ui_configuration();
+        test_models_root();
         test_configured_model_fields_are_inherited();
         test_empty_models_require_ui_management();
         test_request_timeout_is_clamped_to_policy();

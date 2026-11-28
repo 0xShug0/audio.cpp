@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/framework/core/execution_context.h"
+#include <chrono>
 #include "engine/framework/model_spec/metadata.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/models/meanvc2/assets.h"
@@ -67,6 +68,7 @@ private:
     MeanVC2GtmMemory streaming_speaker_memory_;
     uint64_t streaming_seed_ = 42;
     runtime::StreamEventCallback stream_event_sink_;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool stream_started_ = false;
 };
 

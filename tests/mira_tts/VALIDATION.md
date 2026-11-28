@@ -1,5 +1,10 @@
 # MiraTTS local validation record
 
+Historical harness documentation: the removed runner and original commands
+are preserved in the [pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/VALIDATION.md).
+Reported measurements, hashes and limitations are unchanged. These recipes
+are not instructions for the current tree.
+
 Date: 2026-09-02
 
 Model: `mira-tts-q8.gguf`
@@ -104,7 +109,7 @@ This isolates the native processor/decoder path from autoregressive sampling.
 | Vulkan, AMD integrated GPU | Passed | Deterministic, but generated only 0.10 s for the 5.12 s CUDA case | Not parity-clean |
 | CPU | Not run | No runtime measurement recorded | Untested |
 
-`mira_tts_warm_bench` builds successfully with the Vulkan configuration. It is
+[`mira_tts_warm_bench`](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/mira_tts/mira_tts_warm_bench.cpp) built successfully with the Vulkan configuration during this validation. It is
 not parity-clean in this test:
 
 - AMD integrated Vulkan device: deterministic repeats, but only 0.10 seconds

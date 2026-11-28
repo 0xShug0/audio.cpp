@@ -4,6 +4,7 @@
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/audio/resampling.h"
 #include "engine/framework/debug/trace.h"
+#include "engine/framework/decoders/ctc_host_decoder.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/partial_text.h"
 #include "engine/framework/runtime/session_base.h"
@@ -92,11 +93,7 @@ private:
         auto mono = audio::convert_interleaved_audio_to_mono_linear_resampled(
             input.samples, input.sample_rate, input.channels, input.sample_rate);
         if (input.sample_rate != 16000) {
-            const auto resampled = audio::try_resample_mono_soxr(mono, input.sample_rate, 16000, {});
-            if (!resampled) {
-                throw std::runtime_error("OWSM-CTC v4 requires SOXR for resampling; provide 16 kHz audio");
-            }
-            mono = *resampled;
+            mono = audio::resample_mono_soxr_or_sinc(mono, input.sample_rate, 16000, {});
         }
         if (mono.empty()) {
             throw std::runtime_error("OWSM-CTC v4 audio input is empty");
@@ -118,12 +115,8 @@ private:
         runtime::PartialTextPublisher publisher;
         const auto decode_frames = [&]() {
             std::vector<int32_t> tokens;
-            int32_t previous = -1;
-            for (const auto token : frames) {
-                if (token != previous && token != assets_->config.blank_id) {
-                    tokens.push_back(token);
-                }
-                previous = token;
+            for (const auto & span : decoders::CtcHostDecoder(assets_->config.blank_id).decode(frames)) {
+                tokens.push_back(span.id);
             }
             return assets_->decode_visible(tokens);
         };

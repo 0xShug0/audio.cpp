@@ -1,4 +1,6 @@
 #include "engine/models/roformer/assets.h"
+#include "engine/models/roformer/routing.h"
+#include "engine/framework/runtime/model_routing.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/audio/dsp.h"
@@ -45,7 +47,8 @@ assets::ResourceBundle load_resources(
 
 void fill_mel_band_layout(
     RoformerArchitectureConfig & config,
-    int num_bands) {
+    const json::Value & parsed) {
+    const int num_bands = json::require_i32(parsed, "num_bands");
     engine::audio::MelFilterbankConfig mel_config;
     mel_config.sample_rate = config.sample_rate;
     mel_config.n_fft = config.n_fft;
@@ -106,7 +109,8 @@ void fill_mel_band_layout(
 
 void fill_bs_band_layout(
     RoformerArchitectureConfig & config,
-    const std::vector<int64_t> & freqs_per_band) {
+    const json::Value & parsed) {
+    const auto freqs_per_band = json::require_i64_array(parsed, "freqs_per_bands");
     if (freqs_per_band.size() < 2) {
         throw std::runtime_error("bs_roformer requires at least two frequency bands");
     }
@@ -146,13 +150,14 @@ void fill_bs_band_layout(
 
 RoformerArchitectureConfig parse_config(
     const json::Value & parsed,
-    std::string_view family) {
+    const RoformerImplementation & impl) {
+    const auto & family = impl.family;
     if (!parsed.is_object()) {
         throw std::runtime_error(std::string(family) + " config root must be an object");
     }
     validate_config(parsed, family);
     RoformerArchitectureConfig config;
-    config.family = std::string(family);
+    config.impl = &impl;
     config.sample_rate = json::require_i32(parsed, "sample_rate");
     config.stereo = json::optional_bool(parsed, "stereo", true);
     config.channels = config.stereo ? 2 : 1;
@@ -186,7 +191,7 @@ RoformerArchitectureConfig parse_config(
     // its output projection. Mel-Band RoFormer counts only the hidden
     // Linear+Tanh blocks and appends a separate output projection.
     config.mask_estimator_linear_layers =
-        config.mask_estimator_depth + (family == kMelBandRoformerFamily ? 1 : 0);
+        config.mask_estimator_depth + impl.mask_output_projection_layers;
     config.mlp_expansion_factor = json::optional_i32(parsed, "mlp_expansion_factor", 4);
     config.skip_connection = json::optional_bool(parsed, "skip_connection", false);
     if (config.skip_connection) {
@@ -197,22 +202,59 @@ RoformerArchitectureConfig parse_config(
     config.chunk_frames = 1 + config.chunk_size / config.hop_length;
     config.instruments = {"vocals"};
     config.target_instrument = std::string("vocals");
-    if (family == kBsRoformerFamily) {
-        config.fused_qkv = true;
-        config.transformer_output_norm = false;
-        config.has_final_norm = true;
-        fill_bs_band_layout(config, json::require_i64_array(parsed, "freqs_per_bands"));
-    } else {
-        config.num_bands = json::require_i32(parsed, "num_bands");
-        config.fused_qkv = false;
-        config.transformer_output_norm = true;
-        config.has_final_norm = json::optional_bool(parsed, "has_final_norm", false);
-        fill_mel_band_layout(config, config.num_bands);
-    }
+    config.fused_qkv = impl.fused_qkv;
+    config.transformer_output_norm = impl.transformer_output_norm;
+    config.has_final_norm = impl.required_final_norm ||
+        json::optional_bool(parsed, "has_final_norm", false);
+    impl.fill_band_layout(config, parsed);
     return config;
 }
 
+// Implementation registrations
+
+const RoformerImplementation mel_band = [] {
+    RoformerImplementation impl{};
+    impl.family = std::string(kMelBandRoformerFamily);
+    impl.mask_output_projection_layers = 1;
+    impl.fused_qkv = false;
+    impl.transformer_output_norm = true;
+    impl.required_final_norm = false;
+    impl.cuda_strided_norm_and_residual = false;
+    impl.cuda_packed_qkv_gates = false;
+    impl.cuda_packed_qk_rope = false;
+    impl.cuda_batched_mask = false;
+    impl.fill_band_layout = fill_mel_band_layout;
+    return impl;
+}();
+
+const RoformerImplementation bs = [] {
+    RoformerImplementation impl{};
+    impl.family = std::string(kBsRoformerFamily);
+    impl.mask_output_projection_layers = 0;
+    impl.fused_qkv = true;
+    impl.transformer_output_norm = false;
+    impl.required_final_norm = true;
+    impl.cuda_strided_norm_and_residual = true;
+    impl.cuda_packed_qkv_gates = true;
+    impl.cuda_packed_qk_rope = true;
+    impl.cuda_batched_mask = true;
+    impl.fill_band_layout = fill_bs_band_layout;
+    return impl;
+}();
+
+using Entry = runtime::ModelRouteEntry<std::string_view, RoformerImplementation>;
+const Entry entries[] = {
+    {mel_band.family, &mel_band},
+    {bs.family, &bs},
+};
+const runtime::ModelRouteTable<std::string_view, RoformerImplementation> table(
+    "RoFormer", entries);
+
 }  // namespace
+
+const std::string & RoformerArchitectureConfig::family() const {
+    return impl->family;
+}
 
 std::shared_ptr<const RoformerAssets> load_mel_band_roformer_assets(
     const runtime::ModelLoadRequest & request) {
@@ -227,11 +269,12 @@ std::shared_ptr<const RoformerAssets> load_bs_roformer_assets(
 std::shared_ptr<const RoformerAssets> load_roformer_assets(
     const runtime::ModelLoadRequest & request,
     std::string_view family) {
+    const auto & impl = table.require(family);
     auto assets = std::make_shared<RoformerAssets>();
-    assets->resources = load_resources(request, family);
+    assets->resources = load_resources(request, impl.family);
     assets->tensor_source = assets->resources.open_tensor_source("weights");
     const auto parsed = assets->resources.parse_json("config");
-    assets->config = parse_config(parsed, family);
+    assets->config = parse_config(parsed, impl);
     return assets;
 }
 

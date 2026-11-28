@@ -1,10 +1,14 @@
 #include "engine/framework/audio/resampling.h"
+#include "engine/framework/audio/streaming_resampler.h"
+
+#include <array>
 
 #include "engine/framework/debug/trace.h"
 #include "engine/framework/io/dynamic_library.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -127,13 +131,13 @@ public:
         return runtime_spec_;
     }
 
-private:
     template <typename Fn>
-    Fn load_symbol(const char * name) {
+    Fn load_symbol(const char * name) const {
         void * symbol = io::dynamic_library_symbol(handle_, name);
         return reinterpret_cast<Fn>(symbol);
     }
 
+private:
     io::DynamicLibraryHandle handle_ = nullptr;
     OneShotFn oneshot_ = nullptr;
     IoSpecFn io_spec_ = nullptr;
@@ -162,10 +166,11 @@ void log_soxr_fallback(const SoxrResampleOptions & options, const std::string & 
     message += options.fallback_description;
     message += ": ";
     message += reason;
-    debug::log_message(
-        debug::LogLevel::Warning,
-        "audio.resample.soxr",
-        message);
+    if (debug::log_enabled()) {
+        debug::log_message(debug::LogLevel::Warning, "audio.resample.soxr", message);
+    } else {
+        std::fprintf(stderr, "[warning][audio.resample.soxr] %s\n", message.c_str());
+    }
 }
 
 struct TorchaudioSincHannResampleKey {
@@ -349,6 +354,68 @@ std::shared_ptr<const TorchaudioSincHannResampleKernel> get_cached_torchaudio_si
 
 }  // namespace
 
+class StreamingSoxrResampler::Impl {
+public:
+    using Create = void * (*)(double, double, unsigned, const char **, const SoxrIoSpec *, const SoxrQualitySpec *, const SoxrRuntimeSpec *);
+    using Process = const char * (*)(void *, const void *, size_t, size_t *, void *, size_t, size_t *);
+    using Delete = void (*)(void *);
+    Impl(int source, int target) : passthrough(source == target) {
+        if (source <= 0 || target <= 0) throw std::runtime_error("streaming resampling requires positive sample rates");
+        if (passthrough) return;
+        const auto & api = get_soxr_api();
+        if (!api.available() || !api.supports_profile(SoxrResampleProfile::ExplicitFloat32Runtime))
+            throw std::runtime_error("streaming resampling requires libsoxr");
+        const auto create = api.load_symbol<Create>("soxr_create");
+        process = api.load_symbol<Process>("soxr_process");
+        destroy = api.load_symbol<Delete>("soxr_delete");
+        if (!create || !process || !destroy) throw std::runtime_error("libsoxr is missing streaming entry points");
+        const auto io = api.io_spec()(kSoxrFloat32Interleaved, kSoxrFloat32Interleaved);
+        const auto quality = api.quality_spec()(4, 0);
+        const auto runtime = api.runtime_spec()(1);
+        const char * error = nullptr;
+        handle = create(source, target, 1, &error, &io, &quality, &runtime);
+        if (error || !handle) {
+            if (handle) destroy(handle);
+            throw std::runtime_error(std::string("soxr_create: ") + (error ? error : "no resampler"));
+        }
+    }
+    ~Impl() { if (handle) destroy(handle); }
+    void * handle = nullptr;
+    Process process = nullptr;
+    Delete destroy = nullptr;
+    bool passthrough, finished = false;
+};
+
+StreamingSoxrResampler::StreamingSoxrResampler(int source, int target) : impl_(std::make_unique<Impl>(source, target)) {}
+StreamingSoxrResampler::~StreamingSoxrResampler() = default;
+std::vector<float> StreamingSoxrResampler::process(const std::vector<float> & samples, bool final) {
+    if (impl_->finished) throw std::runtime_error("streaming resampler is already finalized");
+    if (impl_->passthrough) { impl_->finished = final; return samples; }
+    std::vector<float> output;
+    std::array<float, 4096> block;
+    size_t offset = 0;
+    while (offset < samples.size()) {
+        size_t used = 0, made = 0;
+        const auto error = impl_->process(impl_->handle, samples.data() + offset, samples.size() - offset,
+            &used, block.data(), block.size(), &made);
+        if (error) throw std::runtime_error(std::string("soxr_process: ") + error);
+        if (!used && !made) throw std::runtime_error("soxr_process made no progress");
+        offset += used;
+        output.insert(output.end(), block.begin(), block.begin() + made);
+    }
+    if (final) {
+        size_t made;
+        do {
+            made = 0;
+            const auto error = impl_->process(impl_->handle, nullptr, 0, nullptr, block.data(), block.size(), &made);
+            if (error) throw std::runtime_error(std::string("soxr flush: ") + error);
+            output.insert(output.end(), block.begin(), block.begin() + made);
+        } while (made);
+        impl_->finished = true;
+    }
+    return output;
+}
+
 std::optional<std::vector<float>> try_resample_mono_soxr(
     const std::vector<float> & mono_samples,
     int source_sample_rate_hz,
@@ -441,6 +508,20 @@ std::vector<float> resample_mono_soxr_or_linear(
         return *output;
     }
     return resample_mono_linear(mono_samples, source_sample_rate_hz, target_sample_rate_hz);
+}
+
+std::vector<float> resample_mono_soxr_or_sinc(
+    const std::vector<float> & mono_samples,
+    int source_sample_rate_hz,
+    int target_sample_rate_hz,
+    const SoxrResampleOptions & options) {
+    auto soxr_options = options;
+    soxr_options.fallback_description = "torchaudio-compatible sinc resampling";
+    if (auto output = try_resample_mono_soxr(
+            mono_samples, source_sample_rate_hz, target_sample_rate_hz, soxr_options)) {
+        return std::move(*output);
+    }
+    return resample_mono_torchaudio_sinc_hann(mono_samples, source_sample_rate_hz, target_sample_rate_hz);
 }
 
 std::vector<float> resample_mono_linear(

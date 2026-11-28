@@ -33,6 +33,102 @@ namespace audio = engine::audio;
 namespace core = engine::core;
 namespace modules = engine::modules;
 
+namespace cpu_detail {
+// Match ggml's F32 mean (sequential double accumulation, then float division)
+// while evaluating independent channels in parallel and reusing the output as
+// scratch for centered values. Keep every F32 rounding step explicit.
+inline void kitten_adain_cpu(
+    ggml_tensor * dst,
+    const ggml_tensor * x,
+    const ggml_tensor * gamma,
+    const ggml_tensor * beta,
+    int ith,
+    int nth,
+    void * userdata) {
+    const float eps = *static_cast<const float *>(userdata);
+    const int64_t frames = x->ne[0];
+    const int64_t rows = x->ne[1] * x->ne[2];
+    for (int64_t row = rows * ith / nth; row < rows * (ith + 1) / nth; ++row) {
+        const auto * src = static_cast<const float *>(x->data) + row * frames;
+        auto * out = static_cast<float *>(dst->data) + row * frames;
+        double sum = 0.0;
+        for (int64_t t = 0; t < frames; ++t) sum += static_cast<double>(src[t]);
+        const float mean = static_cast<float>(sum) / static_cast<float>(frames);
+        double squares = 0.0;
+        for (int64_t t = 0; t < frames; ++t) {
+            const float centered = src[t] - mean;
+            out[t] = centered;
+            const float square = centered * centered;
+            squares += static_cast<double>(square);
+        }
+        const float variance = static_cast<float>(squares) / static_cast<float>(frames);
+        const float stddev = std::sqrt(variance + eps);
+        const float scale = static_cast<const float *>(gamma->data)[row % x->ne[1]];
+        const float shift = static_cast<const float *>(beta->data)[row % x->ne[1]];
+        for (int64_t t = 0; t < frames; ++t) {
+            const float normalized = out[t] / stddev;
+            const float scaled = normalized * scale;
+            out[t] = scaled + shift;
+        }
+    }
+}
+
+inline void kitten_snake_cpu(
+    ggml_tensor * dst,
+    const ggml_tensor * x,
+    const ggml_tensor * alpha,
+    int ith,
+    int nth,
+    void *) {
+    const int64_t rows = x->ne[1] * x->ne[2];
+    for (int64_t row = rows * ith / nth; row < rows * (ith + 1) / nth; ++row) {
+        const float a = static_cast<const float *>(alpha->data)[row % x->ne[1]];
+        const auto * src = reinterpret_cast<const float *>(static_cast<const char *>(x->data) +
+            (row % x->ne[1]) * x->nb[1] + (row / x->ne[1]) * x->nb[2]);
+        auto * out = static_cast<float *>(dst->data) + row * x->ne[0];
+        for (int64_t t = 0; t < x->ne[0]; ++t) {
+            const float ax = src[t] * a;
+            const float s = std::sin(ax);
+            const float square = s * s;
+            const float fraction = square / a;
+            out[t] = src[t] + fraction;
+        }
+    }
+}
+
+// Partition complete output rows, avoiding inter-thread cache-line sharing.
+// This only copies/pads F32 samples; convolution reduction order is unchanged.
+template <typename ConvWeightsT>
+void kitten_im2col_rows(ggml_tensor * dst, int ith, int nth, void * userdata) {
+    const auto & conv = *static_cast<const ConvWeightsT *>(userdata);
+    const ggml_tensor * input = dst->src[0];
+    const int64_t begin = dst->ne[1] * ith / nth;
+    const int64_t end = dst->ne[1] * (ith + 1) / nth;
+    auto * out = static_cast<float *>(dst->data);
+    for (int64_t frame = begin; frame < end; ++frame) {
+        const int64_t base = frame * conv.stride - conv.padding;
+        const bool interior = base >= 0 && base + (conv.kernel - 1) * conv.dilation < input->ne[0];
+        for (int64_t channel = 0; channel < conv.in_channels; ++channel) {
+            const auto * src = reinterpret_cast<const float *>(
+                static_cast<const char *>(input->data) + channel * input->nb[1]);
+            float * row = out + frame * dst->ne[0] + channel * conv.kernel;
+            if (conv.dilation == 1 && interior) {
+                std::memcpy(row, src + base, conv.kernel * sizeof(float));
+            } else if (interior) {
+                for (int64_t k = 0; k < conv.kernel; ++k) {
+                    row[k] = src[base + k * conv.dilation];
+                }
+            } else {
+                for (int64_t k = 0; k < conv.kernel; ++k) {
+                    const int64_t index = base + k * conv.dilation;
+                    row[k] = index >= 0 && index < input->ne[0] ? src[index] : 0.0f;
+                }
+            }
+        }
+    }
+}
+}
+
 constexpr float kPi = 3.14159265358979323846f;
 
 using engine::debug::measure_ms;
@@ -144,10 +240,34 @@ void upload_time_masks(const std::vector<TimeMaskInputs> &masks, int64_t valid_b
     }
 }
 
+ggml_tensor * build_snake1d_bct_decoder(
+    ggml_context * ctx,
+    ggml_tensor * x,
+    const core::TensorValue & alpha,
+    bool use_cpu_fastpath) {
+    if (use_cpu_fastpath && x->type == GGML_TYPE_F32 &&
+        alpha.type == GGML_TYPE_F32 && ggml_is_contiguous(x) && ggml_is_contiguous(alpha.tensor)) {
+        return ggml_map_custom2(ctx, x, alpha.tensor, cpu_detail::kitten_snake_cpu, GGML_N_TASKS_MAX, nullptr);
+    }
+    core::ModuleBuildContext build_ctx = {};
+    build_ctx.ggml = ctx;
+    const int64_t batch = x->ne[2];
+    const int64_t channels = x->ne[1];
+    const int64_t frames = x->ne[0];
+    const auto input = core::wrap_tensor(x, core::TensorShape::from_dims({batch, channels, frames}), GGML_TYPE_F32);
+    modules::Snake1dWeights weights = {};
+    weights.alpha = core::wrap_tensor(
+        ggml_reshape_1d(ctx, alpha.tensor, channels),
+        core::TensorShape::from_dims({channels}),
+        alpha.type);
+    const auto output = modules::Snake1dModule({channels}).build(build_ctx, input, weights);
+    return output.tensor;
+}
+
 ggml_tensor *build_adaptive_instance_norm_bct_decoder(ggml_context *ctx, ggml_tensor *x,
                                                       const KittenWeights::AdaIn1dWeights &weights,
                                                       const core::TensorValue &style,
-                                                      std::vector<TimeMaskInputs> &masks, bool use_time_masks) {
+                                                      std::vector<TimeMaskInputs> &masks, bool use_time_masks, bool use_cpu_fastpath = false) {
     const int64_t channels = x->ne[1];
     core::ModuleBuildContext build_ctx = {};
     build_ctx.ggml = ctx;
@@ -165,6 +285,10 @@ ggml_tensor *build_adaptive_instance_norm_bct_decoder(ggml_context *ctx, ggml_te
                                          core::TensorShape::from_dims({channels}), GGML_TYPE_F32);
     const auto beta = core::wrap_tensor(ggml_reshape_1d(ctx, shift.tensor, channels),
                                         core::TensorShape::from_dims({channels}), GGML_TYPE_F32);
+    if (use_cpu_fastpath && !use_time_masks && x->type == GGML_TYPE_F32 && ggml_is_contiguous(x)) {
+        return ggml_map_custom3(ctx, x, gamma.tensor, beta.tensor,
+            cpu_detail::kitten_adain_cpu, GGML_N_TASKS_MAX, const_cast<float *>(&weights.eps));
+    }
     if (use_time_masks) {
         return build_masked_adain_bct(build_ctx, x, gamma, beta, channels, weights.eps, masks);
     }
@@ -185,7 +309,7 @@ template <typename ConvWeightsT> modules::Conv1dWeights make_conv1d_weights(cons
 modules::ConvTranspose1dWeights
 make_conv_transpose1d_weights(const KittenWeights::WeightNormConvTranspose1dWeights &conv) {
     modules::ConvTranspose1dWeights weights = {};
-    weights.weight = conv.groups == 1 ? conv.weight : conv.dense_weight;
+    weights.weight = conv.weight;
     if (conv.use_bias) {
         weights.bias = conv.bias;
     }
@@ -193,14 +317,43 @@ make_conv_transpose1d_weights(const KittenWeights::WeightNormConvTranspose1dWeig
 }
 
 template <typename ConvWeightsT>
-ggml_tensor *build_decoder_conv1d_bct(ggml_context *ctx, ggml_tensor *input, const ConvWeightsT &conv) {
+ggml_tensor *build_decoder_conv1d_bct(ggml_context *ctx, ggml_tensor *input, const ConvWeightsT &conv, bool allow_cpu_fastpath = false) {
     if (conv.groups != 1) {
         throw std::runtime_error("kitten decoder conv1d requires groups == 1");
     }
     core::ModuleBuildContext build_ctx = {};
     build_ctx.ggml = ctx;
+    if (allow_cpu_fastpath && conv.kernel == 1 && conv.stride == 1 && conv.padding == 0 && conv.dilation == 1 && input->ne[2] == 1) {
+        auto * x = ggml_is_contiguous(input) ? input : ggml_cont(ctx, input);
+        auto * x_tc = ggml_cont(ctx, ggml_transpose(ctx, ggml_reshape_2d(ctx, x, input->ne[0], conv.in_channels)));
+        const auto x_value = core::wrap_tensor(x_tc, core::TensorShape::from_dims({input->ne[0], conv.in_channels}), GGML_TYPE_F32);
+        const auto weight = core::wrap_tensor(ggml_reshape_2d(ctx, conv.weight.tensor, conv.in_channels, conv.out_channels),
+            core::TensorShape::from_dims({conv.out_channels, conv.in_channels}), conv.weight.type);
+        const auto projected = modules::LinearModule({conv.in_channels, conv.out_channels, conv.use_bias})
+            .build(build_ctx, x_value, {weight, conv.bias});
+        auto * y = ggml_cont(ctx, ggml_transpose(ctx, projected.tensor));
+        return ggml_reshape_3d(ctx, y, input->ne[0], conv.out_channels, 1);
+    }
+    if (allow_cpu_fastpath && input->ne[2] == 1 &&
+        input->type == GGML_TYPE_F32 && conv.weight.tensor->type == GGML_TYPE_F32) {
+        const int64_t frames = (input->ne[0] + 2 * conv.padding -
+            conv.dilation * (conv.kernel - 1) - 1) / conv.stride + 1;
+        // im2col understands channel strides; only the time axis must be packed.
+        ggml_tensor * args[] = {input->nb[0] == sizeof(float) ? input : ggml_cont(ctx, input)};
+        ggml_tensor * columns = ggml_custom_4d(ctx, GGML_TYPE_F32,
+            conv.in_channels * conv.kernel, frames, 1, 1, args, 1,
+            cpu_detail::kitten_im2col_rows<ConvWeightsT>, GGML_N_TASKS_MAX, const_cast<ConvWeightsT *>(&conv));
+        ggml_tensor * weights = ggml_reshape_2d(ctx, conv.weight.tensor,
+            conv.in_channels * conv.kernel, conv.out_channels);
+        ggml_tensor * y = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, columns, weights),
+            frames, conv.out_channels, 1);
+        if (conv.use_bias) {
+            y = ggml_add(ctx, y, ggml_reshape_3d(ctx, conv.bias->tensor, 1, conv.out_channels, 1));
+        }
+        return y;
+    }
     const auto input_bct = core::wrap_tensor(
-        ggml_cont(ctx, input), core::TensorShape::from_dims({input->ne[2], input->ne[1], input->ne[0]}), GGML_TYPE_F32);
+        input, core::TensorShape::from_dims({input->ne[2], input->ne[1], input->ne[0]}), GGML_TYPE_F32);
     return modules::Conv1dModule({conv.in_channels, conv.out_channels, conv.kernel, static_cast<int>(conv.stride),
                                   static_cast<int>(conv.padding), static_cast<int>(conv.dilation), conv.use_bias})
         .build(build_ctx, input_bct, make_conv1d_weights(conv))
@@ -225,6 +378,31 @@ ggml_tensor *build_conv_transpose1d_bct_decoder(ggml_context *ctx, ggml_tensor *
                                     output_bct.tensor->nb[2], static_cast<size_t>(conv.padding) * sizeof(float))),
         core::TensorShape::from_dims({1, conv.out_channels, cropped_len}), GGML_TYPE_F32);
     return cropped.tensor;
+}
+
+bool can_use_phase_shuffle_conv_transpose1d(const KittenWeights::WeightNormConvTranspose1dWeights & conv) {
+    return conv.groups == 1 &&
+        conv.output_padding == 0 &&
+        conv.kernel == conv.stride * 2 &&
+        conv.padding > 0 &&
+        conv.padding < conv.stride;
+}
+
+ggml_tensor * build_phase_shuffle_conv_transpose1d_bct_decoder(
+    ggml_context * ctx,
+    ggml_tensor * input,
+    const KittenWeights::WeightNormConvTranspose1dWeights & conv, bool allow_cpu_fastpath) {
+    if (!can_use_phase_shuffle_conv_transpose1d(conv)) {
+        throw std::runtime_error("kitten decoder phase-shuffle conv transpose shape is unsupported");
+    }
+    if (!conv.phase_shuffle_conv) {
+        throw std::runtime_error("kitten decoder phase-shuffle conv was not prepared");
+    }
+
+    ggml_tensor * phases = build_decoder_conv1d_bct(ctx, input, *conv.phase_shuffle_conv, allow_cpu_fastpath);
+    phases = ggml_reshape_4d(ctx, phases, phases->ne[0], conv.stride, conv.out_channels, 1);
+    ggml_tensor * interleaved = ggml_cont(ctx, ggml_permute(ctx, phases, 1, 0, 2, 3));
+    return ggml_reshape_3d(ctx, interleaved, input->ne[0] * conv.stride, conv.out_channels, 1);
 }
 
 struct DeterministicRng {
@@ -644,28 +822,18 @@ struct GeneratorGraphStage {
 ggml_tensor *build_generator_resblock(ggml_context *ctx, ggml_tensor *x,
                                       const KittenWeights::GeneratorResBlockWeights &block,
                                       const core::TensorValue &style, std::vector<TimeMaskInputs> &time_masks,
-                                      bool use_time_masks) {
+                                      bool use_time_masks, bool allow_cpu_fastpath) {
     ggml_tensor *current = x;
     core::ModuleBuildContext build_ctx = {};
     build_ctx.ggml = ctx;
     for (size_t i = 0; i < block.convs1.size(); ++i) {
         ggml_tensor *xt =
-            build_adaptive_instance_norm_bct_decoder(ctx, current, block.adain1[i], style, time_masks, use_time_masks);
-        xt = modules::Snake1dModule({xt->ne[1]})
-                 .build(build_ctx,
-                        core::wrap_tensor(xt, core::TensorShape::from_dims({xt->ne[2], xt->ne[1], xt->ne[0]}),
-                                          GGML_TYPE_F32),
-                        {core::reshape_tensor(build_ctx, block.alpha1[i], core::TensorShape::from_dims({xt->ne[1]}))})
-                 .tensor;
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i]);
-        xt = build_adaptive_instance_norm_bct_decoder(ctx, xt, block.adain2[i], style, time_masks, use_time_masks);
-        xt = modules::Snake1dModule({xt->ne[1]})
-                 .build(build_ctx,
-                        core::wrap_tensor(xt, core::TensorShape::from_dims({xt->ne[2], xt->ne[1], xt->ne[0]}),
-                                          GGML_TYPE_F32),
-                        {core::reshape_tensor(build_ctx, block.alpha2[i], core::TensorShape::from_dims({xt->ne[1]}))})
-                 .tensor;
-        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i]);
+            build_adaptive_instance_norm_bct_decoder(ctx, current, block.adain1[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        xt = build_snake1d_bct_decoder(ctx, xt, block.alpha1[i], allow_cpu_fastpath);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs1[i], allow_cpu_fastpath);
+        xt = build_adaptive_instance_norm_bct_decoder(ctx, xt, block.adain2[i], style, time_masks, use_time_masks, allow_cpu_fastpath);
+        xt = build_snake1d_bct_decoder(ctx, xt, block.alpha2[i], allow_cpu_fastpath);
+        xt = build_decoder_conv1d_bct(ctx, xt, block.convs2[i], allow_cpu_fastpath);
         const auto xt_value =
             core::wrap_tensor(xt, core::TensorShape::from_dims({xt->ne[2], xt->ne[1], xt->ne[0]}), GGML_TYPE_F32);
         const auto current_value = core::wrap_tensor(
@@ -690,6 +858,8 @@ struct GeneratorGraphSession {
     ggml_cgraph *graph = nullptr;
     ggml_backend_t backend = nullptr;
     ggml_gallocr_t *gallocr = nullptr;
+    std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> blas{nullptr, ggml_backend_free};
+    std::unique_ptr<ggml_backend_sched, decltype(&ggml_backend_sched_free)> scheduler{nullptr, ggml_backend_sched_free};
 
     GeneratorGraphSession(const KittenWeights::GeneratorWeights &weights_in, ggml_backend_t backend_in,
                           const std::vector<GeneratorGraphStage> &stages, int64_t decoder_frame_capacity_in,
@@ -709,6 +879,17 @@ struct GeneratorGraphSession {
         }
 
         try {
+            if (core::uses_host_graph_plan(backend) && weights->conv_post.weight.type == GGML_TYPE_F32 &&
+                ggml_backend_reg_by_name("BLAS")) {
+                blas.reset(ggml_backend_init_by_name("BLAS", nullptr));
+                if (!blas) throw std::runtime_error("Kitten generator BLAS initialization failed");
+                auto reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(blas.get()));
+                auto set_threads = reinterpret_cast<ggml_backend_set_n_threads_t>(ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads"));
+                if (!set_threads) throw std::runtime_error("Kitten BLAS backend has no thread control");
+                set_threads(blas.get(), n_threads);
+            }
+            engine::debug::trace_log_scalar("kitten.decoder.generator.blas_enabled", static_cast<bool>(blas));
+            const bool allow_cpu_fastpath = core::uses_host_graph_plan(backend);
             const double define_ms = measure_ms([&]() {
                 decoder_x_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, decoder_frame_capacity, 512, 1);
                 conditioning_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, conditioning_frame_capacity, 22, 1);
@@ -722,11 +903,13 @@ struct GeneratorGraphSession {
                 ggml_tensor *current = decoder_x_in;
                 for (size_t i = 0; i < stages.size(); ++i) {
                     const GeneratorGraphStage &stage = stages[i];
-                    ggml_tensor *source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv);
-                    source = build_generator_resblock(ctx, source, *stage.noise_res, style, time_masks, false);
+                    ggml_tensor *source = build_decoder_conv1d_bct(ctx, conditioning_in, *stage.noise_conv, allow_cpu_fastpath);
+                    source = build_generator_resblock(ctx, source, *stage.noise_res, style, time_masks, false, allow_cpu_fastpath);
 
                     ggml_tensor *x = ggml_leaky_relu(ctx, current, 0.1f, false);
-                    x = build_conv_transpose1d_bct_decoder(ctx, x, *stage.up);
+                    x = stage.up->phase_shuffle_conv
+                        ? build_phase_shuffle_conv_transpose1d_bct_decoder(ctx, x, *stage.up, allow_cpu_fastpath)
+                        : build_conv_transpose1d_bct_decoder(ctx, x, *stage.up);
                     core::ModuleBuildContext add_ctx = {};
                     add_ctx.ggml = ctx;
                     if (stage.reflect_pad) {
@@ -746,7 +929,7 @@ struct GeneratorGraphSession {
                     ggml_tensor *stage_sum = nullptr;
                     for (size_t j = 0; j < stage.resblocks.size(); ++j) {
                         ggml_tensor *block =
-                            build_generator_resblock(ctx, x, *stage.resblocks[j], style, time_masks, false);
+                            build_generator_resblock(ctx, x, *stage.resblocks[j], style, time_masks, false, allow_cpu_fastpath);
                         if (stage_sum == nullptr) {
                             stage_sum = block;
                         } else {
@@ -767,7 +950,7 @@ struct GeneratorGraphSession {
                 }
 
                 current = ggml_leaky_relu(ctx, current, 0.01f, false);
-                output = build_decoder_conv1d_bct(ctx, current, weights->conv_post);
+                output = build_decoder_conv1d_bct(ctx, current, weights->conv_post, allow_cpu_fastpath);
                 output = ggml_cont(ctx, output);
                 set_graph_output(output);
 
@@ -777,6 +960,13 @@ struct GeneratorGraphSession {
 
             core::set_backend_threads(backend, n_threads);
             const double alloc_ms = measure_ms([&]() {
+                if (blas) {
+                    ggml_backend_t backends[] = {blas.get(), backend};
+                    scheduler.reset(ggml_backend_sched_new(backends, nullptr, 2, ggml_graph_size(graph), false, false));
+                    if (!scheduler || !ggml_backend_sched_alloc_graph(scheduler.get(), graph))
+                        throw std::runtime_error("Kitten generator scheduled allocation failed");
+                    return;
+                }
                 if (*gallocr == nullptr) {
                     *gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
                 }
@@ -787,8 +977,17 @@ struct GeneratorGraphSession {
                     }
                 }
             });
-            if (*gallocr == nullptr) {
+            if (!scheduler && *gallocr == nullptr) {
                 throw std::runtime_error("failed to allocate Kitten generator graph tensors");
+            }
+            if (scheduler) {
+                int blas_nodes = 0;
+                for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+                    auto * node = ggml_graph_node(graph, i);
+                    blas_nodes += node->op == GGML_OP_MUL_MAT &&
+                        ggml_backend_sched_get_tensor_backend(scheduler.get(), node) == blas.get();
+                }
+                engine::debug::trace_log_scalar("kitten.decoder.generator.blas_matmul_nodes", blas_nodes);
             }
             engine::debug::timing_log_scalar("kitten.graph.build.decoder_generator_define_ms", define_ms);
             const double materialize_ms = measure_ms([&]() {
@@ -811,6 +1010,7 @@ struct GeneratorGraphSession {
             engine::debug::timing_log_scalar("kitten.graph.build.decoder_generator_alloc_ms", alloc_ms);
             engine::debug::timing_log_scalar("kitten.graph.build.decoder_generator_materialize_ms", materialize_ms);
         } catch (...) {
+            scheduler.reset();
             core::release_backend_graph_resources(backend, graph);
             if (ctx) {
                 ggml_free(ctx);
@@ -821,6 +1021,7 @@ struct GeneratorGraphSession {
     }
 
     ~GeneratorGraphSession() {
+        scheduler.reset();
         core::release_backend_graph_resources(backend, graph);
         if (ctx) {
             ggml_free(ctx);
@@ -885,7 +1086,7 @@ struct GeneratorGraphSession {
         engine::debug::timing_log_scalar("kitten.decoder.generator.style_upload_ms", style_upload_ms);
         core::set_backend_threads(backend, n_threads);
         ggml_status status = GGML_STATUS_SUCCESS;
-        const double compute_ms = measure_ms([&]() { status = engine::core::compute_backend_graph(backend, graph); });
+        const double compute_ms = measure_ms([&]() { status = scheduler ? ggml_backend_sched_graph_compute(scheduler.get(), graph) : engine::core::compute_backend_graph(backend, graph); });
         engine::debug::timing_log_scalar("kitten.decoder.generator.graph.compute_ms", compute_ms);
         if (status != GGML_STATUS_SUCCESS) {
             throw std::runtime_error(std::string("kitten generator graph compute failed: ") +
@@ -1055,7 +1256,9 @@ std::vector<float> KittenStyleTTS2DecoderRuntime::decode(const PredictorOutputs 
         std::vector<float> complex_spec(static_cast<size_t>(bins * frames * 2), 0.0f);
         for (int64_t f = 0; f < bins; ++f) {
             for (int64_t c = 0; c < frames; ++c) {
-                const float mag = std::exp(generator_output[static_cast<size_t>(f * generated_frames + c)]);
+                const float value = generator_output[static_cast<size_t>(f * generated_frames + c)];
+                const float mag = impl_->weights->variant == KittenVariant::Mini2 ?
+                    std::max(value, 0.0f) + std::log1p(std::exp(-std::abs(value))) : std::exp(value);
                 const float phase = std::sin(generator_output[static_cast<size_t>((f + bins) * generated_frames + c)]);
                 const size_t base = static_cast<size_t>((f * frames + c) * 2);
                 complex_spec[base] = mag * std::cos(phase);
@@ -1066,19 +1269,23 @@ std::vector<float> KittenStyleTTS2DecoderRuntime::decode(const PredictorOutputs 
         const int64_t samples = impl_->inverse_stft_config.hop_length * (frames - 1);
         waveform =
             audio::ISTFT().compute(complex_spec, window, 1, bins, frames, samples, impl_->inverse_stft_config).values;
-        const int64_t n_fft = impl_->inverse_stft_config.n_fft;
-        const int64_t hop = impl_->inverse_stft_config.hop_length;
-        const int64_t center_pad = n_fft / 2;
-        std::vector<float> overlap_scale(static_cast<size_t>(samples + 2 * center_pad), 0.0f);
-        for (int64_t frame = 0; frame < frames; ++frame) {
-            const int64_t start = frame * hop;
-            for (int64_t i = 0; i < n_fft; ++i) {
-                const float value = window[static_cast<size_t>(i)];
-                overlap_scale[static_cast<size_t>(start + i)] += value * value;
+        // Mini 0.8's exported decoder omits overlap normalization. The TTS2
+        // Mini training implementation uses torch.istft's normalized synthesis.
+        if (impl_->weights->variant == KittenVariant::Mini08) {
+            const int64_t n_fft = impl_->inverse_stft_config.n_fft;
+            const int64_t hop = impl_->inverse_stft_config.hop_length;
+            const int64_t center_pad = n_fft / 2;
+            std::vector<float> overlap_scale(static_cast<size_t>(samples + 2 * center_pad), 0.0f);
+            for (int64_t frame = 0; frame < frames; ++frame) {
+                const int64_t start = frame * hop;
+                for (int64_t i = 0; i < n_fft; ++i) {
+                    const float value = window[static_cast<size_t>(i)];
+                    overlap_scale[static_cast<size_t>(start + i)] += value * value;
+                }
             }
-        }
-        for (int64_t i = 0; i < samples; ++i) {
-            waveform[static_cast<size_t>(i)] *= overlap_scale[static_cast<size_t>(i + center_pad)];
+            for (int64_t i = 0; i < samples; ++i) {
+                waveform[static_cast<size_t>(i)] *= overlap_scale[static_cast<size_t>(i + center_pad)];
+            }
         }
     });
     const int64_t valid_waveform_samples =

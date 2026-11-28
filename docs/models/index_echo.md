@@ -20,7 +20,7 @@ then create the GGUF with the debug converter and the model-specific conversion
 script. The resulting file includes the model configuration and tokenizer.
 
 ```bash
-conda run -n qwen3-tts python tests/index_echo/convert_s2tt_gguf.py \
+conda run -n qwen3-tts python tools/gguf/index_echo_s2tt_convert.py \
   --source-dir /path/to/Index-Echo-S2TT-2B \
   --output-dir /path/to/Index-Echo-S2TT-GGUF
 ```
@@ -29,7 +29,7 @@ To convert the [official 9B checkpoint](https://huggingface.co/IndexTeam/Index-E
 pass its source directory and a storage type:
 
 ```bash
-conda run -n qwen3-tts python tests/index_echo/convert_s2tt_gguf.py \
+conda run -n qwen3-tts python tools/gguf/index_echo_s2tt_convert.py \
   --source-dir /path/to/Index-Echo-S2TT-9B \
   --output-dir /path/to/Index-Echo-S2TT-GGUF --type q8_0
 ```

@@ -31,7 +31,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 8
       },
       {
         "name": "constant_context_mb",
@@ -39,7 +39,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 16
       },
       {
         "name": "content_graph_arena_mb",
@@ -47,7 +47,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 32
       },
       {
         "name": "global_graph_arena_mb",
@@ -55,7 +55,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 256
+        "default": 32
       },
       {
         "name": "wave_graph_arena_mb",
@@ -63,7 +63,7 @@
         "description": "Context or graph arena size in MiB.",
         "required": false,
         "min": 1,
-        "default": 512
+        "default": 32
       }
     ],
     "load": []

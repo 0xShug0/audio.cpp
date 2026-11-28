@@ -1,6 +1,7 @@
 #include "engine/models/omnivoice/session.h"
 
 #include "engine/framework/debug/profiler.h"
+#include "engine/framework/rknn/engine.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/text/chunking.h"
@@ -10,6 +11,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <random>
+#include <sstream>
+#include <string>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -62,6 +67,27 @@ OmniVoiceGeneratorPerfMode perf_mode_from_options(const runtime::SessionOptions 
         throw std::runtime_error("Invalid omnivoice.perf_mode: " + *value);
     }
     return OmniVoiceGeneratorPerfMode::Standard;
+}
+
+bool packed_cfg_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"omnivoice.packed_cfg"})) {
+        return runtime::parse_bool_option(*value, "omnivoice.packed_cfg");
+    }
+    return true;
+}
+
+bool device_scoring_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"omnivoice.device_scoring"})) {
+        return runtime::parse_bool_option(*value, "omnivoice.device_scoring");
+    }
+    return true;
+}
+
+bool packed_projections_from_options(const runtime::SessionOptions & options) {
+    if (const auto value = runtime::find_option(options.options, {"omnivoice.packed_projections"})) {
+        return runtime::parse_bool_option(*value, "omnivoice.packed_projections");
+    }
+    return true;
 }
 
 std::string_view perf_mode_name(OmniVoiceGeneratorPerfMode mode) {
@@ -210,6 +236,50 @@ void append_cross_faded_chunk(
     }
 }
 
+// The Rockchip NPU sidecar for the diffusion-LM step: one compiled engine per total-token
+// bucket, registered up front because an engine takes seconds to init and the step loop needs
+// it ~32 times per utterance. The ladder travels as the exec_plan component's main artifact,
+// comma-separated, because the roles of an exec_plan artifact block are a closed vocabulary
+// while the ladder is not.
+std::vector<std::string> generator_rknn_engines_from_options(
+    const runtime::SessionOptions & options,
+    const OmniVoiceAssets & assets) {
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "omnivoice.exec_plan",
+        {{"generator", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}, {}},
+           {"rknn", {}, {"main"}, {}, {}},
+           {"rknn_zeroop", {}, {}, {}, {}}}}});
+    const auto & generator_plan = exec_plan.at("generator");
+    if (generator_plan.impl != "rknn") {
+        return {};
+    }
+    std::vector<std::string> engines;
+    std::istringstream paths(generator_plan.artifacts.at("main"));
+    std::string declared;
+    while (std::getline(paths, declared, ',')) {
+        if (!declared.empty()) {
+            engines.push_back(
+                engine::rknn::resolve_engine_path(declared, assets.resources.model_directory()));
+        }
+    }
+    return engines;
+}
+
+// The generator component's impl key ("rknn_zeroop" selects the vendor
+// rknn_matmul_api zero-op engine; no artifacts, no compiled ladders).
+std::string generator_rknn_impl_from_options(const runtime::SessionOptions & options) {
+    const auto exec_plan = runtime::parse_exec_plan(
+        options.options,
+        "omnivoice.exec_plan",
+        {{"generator", "ggml",
+          {{"ggml", {options.backend.type}, {}, {}, {}},
+           {"rknn", {}, {"main"}, {}, {}},
+           {"rknn_zeroop", {}, {}, {}, {}}}}});
+    return exec_plan.at("generator").impl;
+}
+
 }  // namespace
 
 OmniVoiceSession::OmniVoiceSession(
@@ -240,6 +310,9 @@ OmniVoiceSession::OmniVoiceSession(
               option_weight_type(options, "omnivoice.weight_type", engine::assets::TensorStorageType::Native))),
       mem_saver_(mem_saver_from_options(options)),
       generator_perf_mode_(perf_mode_from_options(options, mem_saver_)),
+      generator_packed_cfg_(packed_cfg_from_options(options)),
+      generator_device_scoring_(device_scoring_from_options(options)),
+      generator_packed_projections_(packed_projections_from_options(options)),
       tokenizer_(assets_),
       audio_tokenizer_(
           assets_,
@@ -249,6 +322,8 @@ OmniVoiceSession::OmniVoiceSession(
           audio_tokenizer_weight_storage_type_,
           audio_tokenizer_codebook_weight_storage_type_),
       prompt_builder_(assets_, tokenizer_),
+      generator_rknn_engines_(generator_rknn_engines_from_options(options, *assets_)),
+      generator_rknn_zeroop_(generator_rknn_impl_from_options(options) == "rknn_zeroop"),
       generator_(
           assets_,
           execution_context(),
@@ -257,7 +332,12 @@ OmniVoiceSession::OmniVoiceSession(
           generator_weight_context_bytes_,
           generator_weight_storage_type_,
           mem_saver_,
-          generator_perf_mode_) {
+          generator_perf_mode_,
+          generator_packed_cfg_,
+          generator_device_scoring_,
+          generator_packed_projections_,
+          generator_rknn_engines_,
+          generator_rknn_zeroop_) {
     engine::debug::trace_log_scalar("omnivoice.perf_mode", perf_mode_name(generator_perf_mode_));
     if (task_.task != runtime::VoiceTaskKind::Tts &&
         task_.task != runtime::VoiceTaskKind::VoiceCloning &&
@@ -452,7 +532,8 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
                 prompt.reference_audio_tokens.has_value()
                     ? std::make_optional(prompt.reference_audio_tokens->frames)
                     : std::optional<int64_t>(),
-                1.0F);
+                1.0F,
+                prompt.language);
             const int64_t duration_target = std::max<int64_t>(
                 1,
                 static_cast<int64_t>(std::llround(
@@ -546,6 +627,194 @@ runtime::TaskResult OmniVoiceSession::run(const runtime::TaskRequest & request) 
     engine::debug::timing_log_scalar("omnivoice.session.postprocess_ms", engine::debug::elapsed_ms(postprocess_start, postprocess_end));
     engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, postprocess_end));
     return task_result;
+}
+
+std::vector<runtime::TaskResult> OmniVoiceSession::run_batch(const std::vector<runtime::TaskRequest> & requests) {
+    require_prepared("OmniVoice run_batch()");
+    if (task_.mode != runtime::RunMode::Offline) {
+        throw std::runtime_error("OmniVoice run_batch() requires an offline session");
+    }
+    if (requests.empty()) {
+        return {};
+    }
+    const auto wall_start = Clock::now();
+
+    // Per-request state. Requests longer than the chunk threshold are split
+    // into text chunks as in run(); round k then batches chunk k of every
+    // request that has one, so a request without reference audio can use its
+    // own first chunk as the reference for later chunks.
+    struct BatchItem {
+        OmniVoiceRequest request;
+        OmniVoicePrompt prompt;
+        bool chunked = false;
+        std::vector<std::string> text_chunks;
+        OmniVoiceRequest chunk_request;
+        bool has_reference_audio = false;
+        std::optional<OmniVoiceAudioTokens> first_chunk_reference;
+        std::string first_chunk_text;
+        int64_t chunk_codebooks = 0;
+        runtime::AudioBuffer audio;
+        std::mt19937 rng;
+    };
+    std::vector<BatchItem> items(requests.size());
+    const auto prompt_start = Clock::now();
+    for (size_t index = 0; index < requests.size(); ++index) {
+        auto & item = items[index];
+        item.request = make_request(requests[index]);
+        item.rng = generator_.make_request_rng(item.request.generation.seed);
+        if (item.request.reference_audio.has_value()) {
+            auto reference_tokens = resolve_reference_audio_tokens(
+                *item.request.reference_audio,
+                item.request.generation.preprocess_prompt,
+                !item.request.reference_text.empty());
+            item.request.reference_rms = reference_tokens.reference_rms;
+            item.request.reference_audio_tokens = std::move(reference_tokens);
+            item.request.reference_audio.reset();
+            if (mem_saver_) {
+                audio_tokenizer_.release_runtime_graphs();
+            }
+        }
+        item.prompt = prompt_builder_.build(item.request);
+        item.has_reference_audio = item.request.reference_audio_tokens.has_value();
+        const int64_t chunk_threshold = static_cast<int64_t>(std::llround(
+            static_cast<double>(item.request.generation.audio_chunk_threshold_seconds) *
+            static_cast<double>(prompt_builder_.frame_rate())));
+        item.chunked = item.request.generation.text_chunk_size.has_value() ||
+            item.prompt.target_audio_tokens > chunk_threshold;
+        if (!item.chunked) {
+            continue;
+        }
+        item.text_chunks = plan_text_chunks(item.request, item.prompt);
+        item.chunk_request = item.request;
+        item.chunk_request.generation.duration_seconds.reset();
+        if (item.request.generation.duration_seconds.has_value()) {
+            const int64_t full_estimate = prompt_builder_.estimate_target_tokens(
+                item.prompt.text,
+                item.prompt.reference_text.empty() ? std::optional<std::string>()
+                                                   : std::make_optional(item.prompt.reference_text),
+                item.prompt.reference_audio_tokens.has_value()
+                    ? std::make_optional(item.prompt.reference_audio_tokens->frames)
+                    : std::optional<int64_t>(),
+                1.0F,
+                item.prompt.language);
+            const int64_t duration_target = std::max<int64_t>(
+                1,
+                static_cast<int64_t>(std::llround(
+                    static_cast<double>(*item.request.generation.duration_seconds) *
+                    static_cast<double>(prompt_builder_.frame_rate()))));
+            item.chunk_request.generation.speed =
+                static_cast<float>(full_estimate) / static_cast<float>(duration_target);
+        }
+    }
+    const double prompt_ms = engine::debug::elapsed_ms(prompt_start, Clock::now());
+
+    size_t rounds = 0;
+    for (const auto & item : items) {
+        rounds = std::max(rounds, item.chunked ? item.text_chunks.size() : size_t{1});
+    }
+    double generate_ms = 0.0;
+    double decode_ms = 0.0;
+    double generator_rebuild_ms = 0.0;
+    bool any_generator_graph_rebuilt = false;
+    std::vector<size_t> round_items;
+    std::vector<OmniVoicePrompt> round_prompts;
+    std::vector<OmniVoiceGenerationOptions> round_options;
+    std::vector<std::mt19937> round_rngs;
+    for (size_t round = 0; round < rounds; ++round) {
+        round_items.clear();
+        round_prompts.clear();
+        round_options.clear();
+        round_rngs.clear();
+        for (size_t index = 0; index < items.size(); ++index) {
+            auto & item = items[index];
+            if (!item.chunked) {
+                if (round == 0) {
+                    round_items.push_back(index);
+                    round_prompts.push_back(item.prompt);
+                    round_options.push_back(item.request.generation);
+                    round_rngs.push_back(item.rng);
+                }
+                continue;
+            }
+            if (round >= item.text_chunks.size()) {
+                continue;
+            }
+            item.chunk_request.text = item.text_chunks[round];
+            if (!item.has_reference_audio && round > 0) {
+                item.chunk_request.reference_audio_tokens = *item.first_chunk_reference;
+                item.chunk_request.reference_text = item.first_chunk_text;
+            }
+            round_items.push_back(index);
+            round_prompts.push_back(prompt_builder_.build(item.chunk_request));
+            round_options.push_back(item.chunk_request.generation);
+            round_rngs.push_back(item.rng);
+        }
+
+        const auto generate_start = Clock::now();
+        auto round_tokens = generator_.generate_batch(round_prompts, round_options, round_rngs);
+        generate_ms += engine::debug::elapsed_ms(generate_start, Clock::now());
+        const auto & round_timing = round_tokens.front();
+        engine::debug::timing_log_scalar("omnivoice.generator.upload_ms", round_timing.upload_ms);
+        engine::debug::timing_log_scalar("omnivoice.generator.compute_ms", round_timing.compute_ms);
+        engine::debug::timing_log_scalar("omnivoice.generator.readback_ms", round_timing.readback_ms);
+        engine::debug::timing_log_scalar("omnivoice.generator.scoring_ms", round_timing.scoring_ms);
+        engine::debug::timing_log_scalar("omnivoice.generator.update_ms", round_timing.update_ms);
+        const auto & generator_stats = generator_.last_stats();
+        any_generator_graph_rebuilt = any_generator_graph_rebuilt || generator_stats.graph_rebuilt;
+        generator_rebuild_ms += generator_stats.rebuild_ms;
+        if (mem_saver_) {
+            generator_.release_runtime_graphs();
+        }
+
+        const auto decode_start = Clock::now();
+        for (size_t slot = 0; slot < round_items.size(); ++slot) {
+            auto & item = items[round_items[slot]];
+            item.rng = round_rngs[slot];
+            auto & tokens = round_tokens[slot];
+            if (item.chunk_codebooks == 0) {
+                item.chunk_codebooks = tokens.codebooks;
+            } else if (item.chunk_codebooks != tokens.codebooks) {
+                throw std::runtime_error("OmniVoice chunk token codebook mismatch");
+            }
+            if (item.chunked && !item.has_reference_audio && round == 0) {
+                OmniVoiceAudioTokens chunk_ref = {};
+                chunk_ref.frames = tokens.frames;
+                chunk_ref.codebooks = tokens.codebooks;
+                chunk_ref.token_ids = tokens.token_ids;
+                item.first_chunk_reference = std::move(chunk_ref);
+                item.first_chunk_text = item.text_chunks.front();
+            }
+            auto chunk_audio = audio_tokenizer_.decode_audio_tokens(tokens);
+            if (mem_saver_) {
+                audio_tokenizer_.release_runtime_graphs();
+            }
+            if (item.chunked) {
+                append_cross_faded_chunk(item.audio, chunk_audio);
+            } else {
+                item.audio = std::move(chunk_audio);
+            }
+        }
+        decode_ms += engine::debug::elapsed_ms(decode_start, Clock::now());
+    }
+
+    const auto postprocess_start = Clock::now();
+    std::vector<runtime::TaskResult> results(items.size());
+    for (size_t index = 0; index < items.size(); ++index) {
+        results[index].audio_output = postprocessor_.finalize(items[index].audio, items[index].request).audio;
+    }
+    const auto postprocess_end = Clock::now();
+    engine::debug::timing_log_scalar("omnivoice.batch.size", static_cast<int64_t>(items.size()));
+    engine::debug::timing_log_scalar("omnivoice.batch.rounds", static_cast<int64_t>(rounds));
+    engine::debug::timing_log_scalar("omnivoice.session.prompt_ms", prompt_ms);
+    engine::debug::timing_log_scalar("omnivoice.session.generate_ms", generate_ms);
+    engine::debug::timing_log_scalar("omnivoice.generator.graph.rebuilt", any_generator_graph_rebuilt);
+    engine::debug::timing_log_scalar("omnivoice.generator.graph.rebuild_ms", generator_rebuild_ms);
+    engine::debug::timing_log_scalar("omnivoice.session.decode_ms", decode_ms);
+    engine::debug::timing_log_scalar(
+        "omnivoice.session.postprocess_ms",
+        engine::debug::elapsed_ms(postprocess_start, postprocess_end));
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start, postprocess_end));
+    return results;
 }
 
 runtime::StreamingPolicy OmniVoiceSession::streaming_policy() const {
@@ -798,7 +1067,8 @@ void OmniVoiceSession::initialize_streaming_request(const runtime::TaskRequest &
             prompt.reference_audio_tokens.has_value()
                 ? std::make_optional(prompt.reference_audio_tokens->frames)
                 : std::optional<int64_t>(),
-            1.0F);
+            1.0F,
+            prompt.language);
         const int64_t duration_target = std::max<int64_t>(
             1,
             static_cast<int64_t>(std::llround(

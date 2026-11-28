@@ -97,6 +97,7 @@ public:
     DotsLatentMatrix decode_next_meanflow(const DotsFlowDecodeRequest & request) const;
 
     void release_runtime_graphs();
+    void release_decode_cache();
 
 private:
     struct Impl;

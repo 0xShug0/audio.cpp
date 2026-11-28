@@ -1,8 +1,11 @@
+import SoulXSingerPanel from './soulx_singer/SoulXSingerPanel.svelte';
 import AuKPanel from './auk/AuKPanel.svelte';
 import Lfm2AudioPanel from './lfm2_audio/Lfm2AudioPanel.svelte';
 import LiveAvatarPanel from './liveavatar/LiveAvatarPanel.svelte';
 import Yue2Panel from './yue2/Yue2Panel.svelte';
 import Drama3Panel from './fish_drama3/Drama3Panel.svelte';
+import D1OmniPanel from './lfm_d1_omni/D1OmniPanel.svelte';
+import SoulXFlashHeadPanel from './soulx_flashhead/SoulXFlashHeadPanel.svelte';
 import LatentSyncPanel from './latentsync/LatentSyncPanel.svelte';
 
 export interface GenericControlReplacements {
@@ -20,6 +23,25 @@ export interface GenericControlReplacements {
 }
 
 export const modelStudioPanels = {
+  soulx_singer: {
+    component: SoulXSingerPanel,
+    tasks: ['gen'],
+    requestMode: 'panel',
+    blocksRunWhileUploading: false,
+    replacesGenericControls: { text: true, genSource: true, language: true, voice: true, duration: true }
+  },
+  lfm_d1_omni: {
+    component: D1OmniPanel,
+    requestMode: 'panel',
+    blocksRunWhileUploading: false,
+    replacesGenericControls: { text: true, language: true, voice: true, seed: true, duration: true, chunking: true }
+  },
+  soulx_flashhead: {
+    component: SoulXFlashHeadPanel,
+    requestMode: 'panel',
+    blocksRunWhileUploading: false,
+    replacesGenericControls: { text: true, language: true, duration: true, voice: true, chunking: true }
+  },
   latentsync: {
     component: LatentSyncPanel,
     requestMode: 'panel',

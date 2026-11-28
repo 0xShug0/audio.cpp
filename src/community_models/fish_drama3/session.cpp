@@ -1,3 +1,4 @@
+#include <mutex>
 #include "engine/community_models/fish_drama3/session.h"
 
 #include "engine/framework/audio/wav_reader.h"
@@ -93,6 +94,8 @@ runtime::VoiceTaskKind Drama3Session::task_kind() const { return task_.task; }
 runtime::RunMode Drama3Session::run_mode() const { return task_.mode; }
 
 void Drama3Session::prepare(const runtime::SessionPreparationRequest & request) {
+    std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+    if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
     defaults_ = {};
     defaults_.text_input = request.text;
     defaults_.voice = request.voice;
@@ -124,6 +127,8 @@ runtime::TaskResult Drama3Session::run(const runtime::TaskRequest & request) { r
 runtime::TaskResult Drama3Session::generate_stream(const runtime::TaskRequest & request) { return synthesize(request, true); }
 
 runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & request, bool streaming) {
+    std::unique_lock<std::mutex> execution(request_mutex_, std::try_to_lock);
+    if (!execution.owns_lock()) throw std::runtime_error("overlapping requests on this model session are not supported");
     require_prepared("Fish Drama 3 generation");
     auto effective = defaults_;
     if (request.text_input) effective.text_input = request.text_input;
@@ -202,6 +207,8 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
             append_take(descriptors);
         }
     }
+    const auto skip_empty = runtime::find_option(effective.options, {"skip_empty_chunks"});
+    const bool skip_empty_chunks = skip_empty && runtime::parse_bool_option(*skip_empty, "skip_empty_chunks");
     const int64_t chunk_size = runtime::parse_positive_i64_option(effective.options, {"text_chunk_size"}, 128);
     const auto mode = engine::text::parse_text_chunk_mode_override(effective.options).value_or(engine::text::TextChunkMode::TagAware);
     const auto chunks = runtime::chunk_text_request(effective, chunk_size, mode);
@@ -213,8 +220,6 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
     for (size_t index = 0; index < chunks.size(); ++index) {
         auto chunk_sampling = sampling;
         chunk_sampling.seed += static_cast<uint32_t>(index);
-        auto context = history;
-        if (!generated_takes.empty()) context.push_back(generated_takes.back());
         std::function<void(const runtime::AudioBuffer &)> callback;
         if (streaming && stream_event_sink()) {
             callback = [&](const runtime::AudioBuffer & audio) {
@@ -224,10 +229,14 @@ runtime::TaskResult Drama3Session::synthesize(const runtime::TaskRequest & reque
             };
         }
         const auto & text = chunks[index].text_input->text;
-        auto generated = generator_->generate(text, references, context, chunk_sampling, streaming, callback, index > 0);
+        auto generated = generator_->generate(text, references, history, chunk_sampling, streaming, callback, index > 0, generated_takes, skip_empty_chunks);
+        if (generated.codes.frames == 0) continue;
         runtime::append_audio_buffer(merged, generated.audio);
         limited = limited || generated.reached_limit;
         generated_takes.push_back({text, std::move(generated.codes)});
+    }
+    if (generated_takes.empty()) {
+        throw std::runtime_error("Drama 3 produced no audio: all text chunks were empty");
     }
     Drama3Take take{effective.text_input->text, join_codes(generated_takes)};
     result.output_artifacts.push_back(runtime::make_text_artifact(runtime::ArtifactKind::AcousticTokens,

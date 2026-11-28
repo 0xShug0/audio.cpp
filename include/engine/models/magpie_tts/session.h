@@ -39,8 +39,8 @@ private:
     MagpieTextTokenizer tokenizer_;
     std::unique_ptr<MagpieTTSRuntime> runtime_;
     std::optional<MagpieTTSRequest> prepared_defaults_;
-    size_t graph_arena_bytes_ = 1024ull * 1024ull * 1024ull;
-    size_t weight_context_bytes_ = 2048ull * 1024ull * 1024ull;
+    size_t graph_arena_bytes_ = 32ull * 1024ull * 1024ull;
+    size_t weight_context_bytes_ = 8ull * 1024ull * 1024ull;
     engine::assets::TensorStorageType matmul_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     engine::assets::TensorStorageType conv_weight_storage_type_ = engine::assets::TensorStorageType::Native;
 };

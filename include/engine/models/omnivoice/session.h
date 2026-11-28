@@ -24,6 +24,7 @@ namespace engine::models::omnivoice {
 class OmniVoiceSession final
     : public runtime::RuntimeSessionBase
     , public runtime::IOfflineVoiceTaskSession
+    , public runtime::IBatchedOfflineVoiceTaskSession
     , public runtime::IStreamingVoiceTaskSession {
 public:
     OmniVoiceSession(
@@ -36,6 +37,12 @@ public:
     runtime::RunMode run_mode() const override;
     void prepare(const runtime::SessionPreparationRequest & request) override;
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
+    // Native batch: the requests share every generator forward pass (see
+    // OmniVoiceQwen3DiffusionRuntime::generate_batch). Each result matches
+    // run() of the same request with the same seed, up to floating-point
+    // differences of the batched kernels.
+    using runtime::IBatchedOfflineVoiceTaskSession::run_batch;
+    std::vector<runtime::TaskResult> run_batch(const std::vector<runtime::TaskRequest> & requests) override;
     runtime::StreamingPolicy streaming_policy() const override;
     void start_stream(const runtime::TaskRequest & request) override;
     std::optional<runtime::StreamEvent> next_stream_event() override;
@@ -89,9 +96,17 @@ private:
     engine::assets::TensorStorageType generator_weight_storage_type_ = engine::assets::TensorStorageType::Native;
     bool mem_saver_ = false;
     OmniVoiceGeneratorPerfMode generator_perf_mode_ = OmniVoiceGeneratorPerfMode::Standard;
+    bool generator_packed_cfg_ = true;
+    bool generator_device_scoring_ = true;
+    bool generator_packed_projections_ = true;
     OmniVoiceTextTokenizer tokenizer_;
     OmniVoiceHiggsAudioV2TokenizerRuntime audio_tokenizer_;
     OmniVoicePromptBuilder prompt_builder_;
+    // Rockchip NPU ladder for the generator step (exec_plan component "generator"); empty
+    // when the plan is ggml. Declared before generator_, which consumes it.
+    std::vector<std::string> generator_rknn_engines_;
+    // Vendor zero-op matmul generator (exec_plan generator impl "rknn_zeroop").
+    bool generator_rknn_zeroop_ = false;
     OmniVoiceQwen3DiffusionRuntime generator_;
     OmniVoicePostprocessor postprocessor_;
     SessionDefaults session_defaults_;

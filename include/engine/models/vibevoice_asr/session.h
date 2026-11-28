@@ -4,6 +4,7 @@
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/sampling/torch_random.h"
 #include "engine/models/vibevoice_asr/assets.h"
+#include "engine/models/vibevoice_asr/routing.h"
 #include "engine/models/vibevoice_asr/frontend.h"
 #include "engine/models/vibevoice_asr/postprocess.h"
 #include "engine/models/vibevoice_asr/speech_encoder.h"
@@ -48,6 +49,8 @@ public:
     runtime::TaskResult finalize() override;
 
 private:
+    friend struct VibeVoiceASRImplementation;
+    runtime::TaskResult run_offline_request(const runtime::TaskRequest & request);
     struct AudioChunkPlan {
         runtime::TimeSpan source_span;
         runtime::TimeSpan keep_span;
@@ -57,7 +60,7 @@ private:
     std::vector<AudioChunkPlan> audio_chunk_plan(const runtime::TaskRequest & request);
     runtime::IOfflineVoiceTaskSession & vad_session();
     runtime::TaskResult run_single(const VibeVoiceASRRequest & request);
-    runtime::TaskResult run_streaming_model(const VibeVoiceASRRequest & request);
+    runtime::TaskResult run_streaming_model(const runtime::TaskRequest & request);
     runtime::StreamEvent process_streaming_model_normalized_chunk(
         const VibeVoiceASRRequest & request,
         const runtime::AudioBuffer & audio,
@@ -101,13 +104,9 @@ private:
 
     runtime::TaskSpec task_;
     std::shared_ptr<const VibeVoiceASRAssets> assets_;
-    size_t tokenizer_weight_context_bytes_ = 512ull * 1024ull * 1024ull;
-    size_t connector_weight_context_bytes_ = 128ull * 1024ull * 1024ull;
-#if defined(INTPTR_MAX) && (INTPTR_MAX == INT32_MAX)
-    size_t decoder_weight_context_bytes_ = 1024ull * 1024ull * 1024ull;
-#else
-    size_t decoder_weight_context_bytes_ = 4096ull * 1024ull * 1024ull;
-#endif
+    size_t tokenizer_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
+    size_t connector_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
+    size_t decoder_weight_context_bytes_ = 8ull * 1024ull * 1024ull;
     int64_t max_history_steps_ = 0;
     assets::TensorStorageType tokenizer_weight_storage_type_ = assets::TensorStorageType::Native;
     assets::TensorStorageType connector_weight_storage_type_ = assets::TensorStorageType::Native;

@@ -8,6 +8,7 @@
 #include "engine/community_models/parakeet_tdt/hotwords.h"
 
 #include <cstdint>
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -68,6 +69,7 @@ private:
     std::shared_ptr<const ParakeetWeights> weights_;
     engine::core::ExecutionContext * execution_context_ = nullptr;
     size_t graph_arena_bytes_ = 0;
+    std::array<int64_t, 2> state_widths_{};
     std::unique_ptr<StepGraph> step_graph_;
     std::unique_ptr<JointGraph> joint_graph_;
     std::vector<float> logits_scratch_;

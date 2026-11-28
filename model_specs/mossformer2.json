@@ -2,11 +2,12 @@
   "schema_version": 1,
   "family": "mossformer2",
   "display_name": "MossFormer2",
-  "description": "MossFormer2 overlapping speech separation at 16 kHz.",
+  "description": "MossFormer2 two-speaker separation at 16 kHz, speech enhancement and super-resolution at 48 kHz.",
   "category": "audio_tools",
   "status": "supported",
   "tasks": [
-    "sep"
+    "sep",
+    "s2s"
   ],
   "modes": [
     "offline"
@@ -17,6 +18,9 @@
   "capabilities": {
     "sep": [
       "stems"
+    ],
+    "s2s": [
+      "audio_enhancement"
     ]
   },
   "runtime": {
@@ -29,24 +33,21 @@
       {
         "name": "audio_chunk_duration_sec",
         "type": "float",
-        "description": "Separation window duration; zero selects whole-file inference.",
+        "description": "Window duration; zero processes the whole input. SS defaults to 2 seconds. SE/SR default to whole-file inference up to 20 seconds and 4-second windows for longer input. SR windows round up to a vocoder hop.",
         "min": 0,
-        "default": 2,
         "required": false
       },
       {
         "name": "audio_chunk_overlap_sec",
         "type": "float",
-        "description": "Overlap between adjacent audio chunks, in seconds; must be smaller than audio_chunk_duration_sec when chunking is enabled. Recommended: 25% of audio_chunk_duration_sec, matching the official Python settings. Overlapping edges are trimmed rather than averaged. Ignored for whole-file inference.",
+        "description": "Overlap between windows; must be nonnegative and smaller than the window. Defaults to 0.5 seconds for SS and one quarter of the window for SE/SR. Overlapping edges are trimmed, not averaged. Ignored for whole-file inference.",
         "min": 0,
-        "default": 0.5,
         "required": false
       },
       {
         "name": "normalize_output",
         "type": "bool",
-        "description": "Match each trimmed track RMS to the input as in ClearVoice's NumPy interface.",
-        "default": true,
+        "description": "Match output RMS to input. Defaults to true for SS and false for SE/SR, following ClearVoice.",
         "required": false
       }
     ],
@@ -83,6 +84,30 @@
       "target_directory": "MossFormer2-GGUF",
       "files": [
         "MossFormer2-GGUF/mossformer2-ss-16k-f16.gguf"
+      ],
+      "strip_prefix": "MossFormer2-GGUF"
+    },
+    {
+      "id": "mossformer2_se_48k_f32",
+      "display_name": "MossFormer2 Speech Enhancement 48K F32",
+      "default": false,
+      "format": "gguf",
+      "precision": "f32",
+      "target_directory": "MossFormer2-GGUF",
+      "files": [
+        "MossFormer2-GGUF/mossformer2-se-48k-f32.gguf"
+      ],
+      "strip_prefix": "MossFormer2-GGUF"
+    },
+    {
+      "id": "mossformer2_sr_48k_f16",
+      "display_name": "MossFormer2 Speech Super-Resolution 48K F16",
+      "default": false,
+      "format": "gguf",
+      "precision": "f16",
+      "target_directory": "MossFormer2-GGUF",
+      "files": [
+        "MossFormer2-GGUF/mossformer2-sr-48k-f16.gguf"
       ],
       "strip_prefix": "MossFormer2-GGUF"
     }

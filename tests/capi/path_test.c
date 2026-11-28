@@ -22,6 +22,18 @@
 #include <string.h>
 
 static int g_failures = 0;
+static int g_log_callback_called = 0;
+static int g_log_last_level = -1;
+static int g_print_logs = 0;
+
+static void test_log_callback(audiocpp_log_level level, const char * text, void * user_data) {
+    int * count = (int *)user_data;
+    if (count != NULL) {
+        (*count)++;
+    }
+    g_log_last_level = (int)level;
+    if (g_print_logs) fprintf(stderr, "%s\n", text);
+}
 
 #define CHECK(cond, ...)                                         \
     do {                                                         \
@@ -174,6 +186,8 @@ static void run_once(audiocpp_session * session, const audio_clip * clip, segmen
         /* A VAD result carries no audio or text; NOT_AVAILABLE, not a crash. */
         CHECK(audiocpp_result_audio(result, NULL, NULL, NULL, NULL)
               == AUDIOCPP_ERR_NOT_AVAILABLE, "vad result claimed to have audio");
+        CHECK(audiocpp_result_custom_schema(result, NULL, NULL)
+              == AUDIOCPP_ERR_NOT_AVAILABLE, "vad result claimed to have custom schema output");
     }
 
     audiocpp_result_free(result);
@@ -203,6 +217,7 @@ int main(int argc, char ** argv) {
     size_t families, options, i;
     int found_family = 0;
 
+    g_print_logs = argc > 4 && strcmp(argv[4], "--log") == 0;
     memset(&clip, 0, sizeof(clip));
 
     printf("abi=%u build=%s backend=%s\n",
@@ -211,6 +226,8 @@ int main(int argc, char ** argv) {
                                      ((uint32_t)AUDIOCPP_ABI_VERSION_MINOR << 8) |
                                      (uint32_t)AUDIOCPP_ABI_VERSION_PATCH),
           "abi version mismatch between header and library");
+    CHECK(audiocpp_result_custom_schema(NULL, NULL, NULL) == AUDIOCPP_ERR_INVALID_ARGUMENT,
+          "NULL custom schema result was not rejected");
 
     /* Freeing NULL is documented as a no-op; cleanup paths rely on it. */
     audiocpp_registry_free(NULL);
@@ -220,6 +237,7 @@ int main(int argc, char ** argv) {
     audiocpp_request_free(NULL);
     audiocpp_options_free(NULL);
     audiocpp_event_free(NULL);
+
 
     if (!load_wav(audio_path, &clip)) return 1;
     printf("audio=%s frames=%zu rate=%d ch=%d\n",
@@ -244,8 +262,39 @@ int main(int argc, char ** argv) {
               "NULL out parameter was not rejected");
     }
 
+    /* Logging callback verification: assert that backend logs are intercepted */
+    {
+        audiocpp_model * dummy_model = NULL;
+        const char * dummy_path = "test_corrupt.gguf";
+        FILE * f = fopen(dummy_path, "wb");
+        CHECK(f != NULL, "failed to create temporary dummy GGUF file");
+        if (f != NULL) {
+            const char dummy_data[16] = {'G', 'G', 'U', 'F', 0};
+            fwrite(dummy_data, 1, sizeof(dummy_data), f);
+            fclose(f);
+
+            g_log_callback_called = 0;
+            g_log_last_level = -1;
+            audiocpp_log_set(test_log_callback, &g_log_callback_called);
+
+            /* Loading an invalid GGUF causes GGML to log error messages */
+            CHECK(audiocpp_model_load(registry, dummy_path, NULL, NULL, &dummy_model) != AUDIOCPP_OK,
+                  "corrupt model load unexpectedly succeeded");
+            CHECK(dummy_model == NULL, "model pointer was not NULL after failed load");
+            CHECK(g_log_callback_called > 0,
+                  "log callback was not invoked during invalid GGUF load (count=%d)",
+                  g_log_callback_called);
+            CHECK(g_log_last_level == AUDIOCPP_LOG_LEVEL_ERROR, "expected AUDIOCPP_LOG_LEVEL_ERROR (%d), got %d", AUDIOCPP_LOG_LEVEL_ERROR, g_log_last_level);
+
+            /* Restore default stderr logger */
+            audiocpp_log_set(NULL, NULL);
+            remove(dummy_path);
+        }
+    }
+
     /* An unknown family must be reported as such, not as a generic failure,
      * and must leave a message behind. */
+    if (g_print_logs) audiocpp_log_set(test_log_callback, NULL);
     {
         audiocpp_model * bogus = NULL;
         audiocpp_model_config bogus_config;

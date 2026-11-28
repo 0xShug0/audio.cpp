@@ -5,6 +5,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/text_encoders/t5_gemma_encoder.h"
 #include "engine/models/irodori_tts/assets.h"
 #include "engine/models/irodori_tts/types.h"
 
@@ -106,6 +107,7 @@ struct IrodoriConditionEncoderWeights {
   std::vector<IrodoriTextBlockWeights> text_blocks;
   core::TensorValue text_norm;
   IrodoriModernBertWeights pretrained_text;
+  modules::T5GemmaEncoderWeights pretrained_t5gemma;
   IrodoriPretrainedProjectorWeights text_projector;
   modules::LinearWeights speaker_in_proj;
   std::vector<IrodoriTextBlockWeights> speaker_blocks;

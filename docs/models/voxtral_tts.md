@@ -92,7 +92,7 @@ Concatenate their decoded audio bytes in order; do not replace preceding chunks.
 ## Conversion
 
 ```bash
-python tests/voxtral_tts/convert_gguf.py \
+python tools/gguf/voxtral_tts_convert.py \
   --model-dir /path/to/Voxtral-4B-TTS-2603 \
   --output-dir /path/to/Voxtral-4B-TTS-2603-GGUF
 ```

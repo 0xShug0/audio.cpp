@@ -19,7 +19,7 @@ silero_vad for audio segmentation instead of the reference FSMN-VAD.
 | Modes | `offline`, buffered `streaming` |
 | Languages | `auto`, `zh`, `en`, `yue`, `ja`, `ko`, `pt`, `ru`, `es`, `it`, `fr`, `de`, `nl`, `pl`, `tr`, `ar`, `hi`, `vi`, `th`, `id`, `ms`, `fa`, `nospeech` |
 | Input | WAV; audio.cpp converts to 16 kHz mono |
-| Output | Transcript, detected language, event/emotion tags |
+| Output | Transcript, detected language, event/emotion tags, optional word timestamps |
 | Frontend | 80-mel filterbank + LFR (140ms context), Kaldi-compatible |
 | Encoder | SAN-M, 1 stem + 49 main blocks + 20 timestamp-prediction blocks, 4 heads, 512-wide, kernel 11 |
 | Decoding | CTC greedy collapse with SentencePiece detok |
@@ -51,6 +51,29 @@ audiocpp_cli --task asr --family sense_asr \
 VAD; `audio_chunk_mode=fixed` splits on `audio_chunk_duration_sec`; `none` runs the
 whole clip as one encoder pass. Chunk transcripts are joined at ASCII word
 boundaries so CJK output stays space-free.
+
+### Word timestamps
+
+`return_timestamps=true` (set automatically by `--words-out`) returns word
+timestamps:
+
+```bash
+audiocpp_cli --task asr --family sense_asr \
+  --model models/SenseVoice-Small-GGUF/sensevoice-small-q8-audiocpp-v1.gguf \
+  --backend cpu --audio samples/zh.wav --words-out words.json
+```
+
+Times come from the frames where CTC emitted each token, at the encoder's
+60 ms resolution, with the four query-token frames removed. They are not a
+forced alignment: starts land close to the word onsets, while ends mark the
+last emission frame and so fall before the sound ends. Use starts or
+midpoints when matching words to other timelines, such as diarization turns.
+
+Chinese, Japanese kana and Thai produce one entry per character. Other
+scripts join SentencePiece pieces into words at `▁` boundaries.
+Punctuation joins the preceding word without extending its time. Chunked
+offline runs and streaming windows shift times to the whole input, in its
+sample rate.
 
 ## Run (streaming)
 
@@ -109,6 +132,7 @@ curl -X POST http://127.0.0.1:8080/v1/audio/transcriptions/live \
 | `language` | auto\|zh\|en\|yue\|ja\|ko\|pt\|ru\|... | `auto` | Recognition language; `auto` lets the model infer it |
 | `enable_itn` | true\|false | `true` | Inverse text normalization via the withitn query token |
 | `keep_tags` | true\|false | `false` | Keep `<|...|>` meta tags inline |
+| `return_timestamps` | true\|false | `false` | Return word timestamps (one per character for Chinese, Japanese and Thai); enabled automatically by CLI `--words-out` |
 | `audio_chunk_mode` | `auto`, `fixed`, `vad`, `none` | `auto` | Offline chunk mode: auto, fixed, vad, or none. Streaming always uses fixed-duration windows. |
 | `audio_chunk_duration_sec` | seconds | `30` | Positive duration rounding to at least one sample; sets fixed windows and the VAD maximum chunk length. |
 

@@ -1,4 +1,5 @@
 #include "norm.cuh"
+#include "norm-f16.cuh"
 #include <cstdint>
 
 template <int block_size>
@@ -835,6 +836,15 @@ void ggml_cuda_op_rms_norm_channels(ggml_backend_cuda_context & ctx, ggml_tensor
 }
 
 void ggml_cuda_op_rms_norm_channels_silu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    if (dst->type == GGML_TYPE_F16) {
+        GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F16 || dst->src[0]->type == GGML_TYPE_F32);
+        if (dst->src[0]->type == GGML_TYPE_F16) {
+            rms_norm_channels_silu_f16_cuda<half>(ctx, dst);
+        } else {
+            rms_norm_channels_silu_f16_cuda<float>(ctx, dst);
+        }
+        return;
+    }
     ggml_cuda_op_rms_norm_channels_impl(ctx, dst, true, false);
 }
 

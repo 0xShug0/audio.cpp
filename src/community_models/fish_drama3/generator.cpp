@@ -1,4 +1,7 @@
+#include "engine/framework/runtime/moe_options.h"
 #include "engine/community_models/fish_drama3/generator.h"
+#include "cache_key.h"
+#include "prefill_cache.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/runtime/errors.h"
@@ -11,16 +14,22 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <cstdlib>
 #include <iostream>
+#include <map>
 #include <numeric>
 #include <mutex>
 #include <random>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace engine::models::fish_drama3 {
 namespace {
+
+constexpr size_t kDiskPrefillEntries = 4;
+constexpr uint64_t kDiskPrefillBytes = 1024ULL * 1024 * 1024;
 
 struct PerfPreset {
     std::string_view name;
@@ -88,12 +97,31 @@ std::vector<float> last_hidden(const std::vector<float> & values, int64_t width)
     return {values.end() - width, values.end()};
 }
 
+void cache_backend_identity(Sha256 & hash, const core::ExecutionContext & execution) {
+    const auto & config = execution.config();
+    cache_key_field(hash, std::to_string(static_cast<int>(execution.backend_type())));
+    cache_key_field(hash, std::to_string(config.device));
+    cache_key_field(hash, std::to_string(config.threads));
+    cache_key_field(hash, config.impl);
+    ggml_backend_dev_props props{};
+    ggml_backend_dev_get_props(ggml_backend_get_device(execution.backend()), &props);
+    cache_key_field(hash, props.name ? props.name : "");
+    cache_key_field(hash, props.description ? props.description : "");
+    cache_key_field(hash, props.device_id ? props.device_id : "");
+    for (const auto * name : {"GGML_CUDA_FORCE_CUBLAS_COMPUTE_32F", "GGML_CUDA_FORCE_CUBLAS_COMPUTE_16F",
+             "GGML_CUDA_DISABLE_FUSION", "GGML_CUDA_DISABLE_GRAPHS", "NVIDIA_TF32_OVERRIDE", "CUBLAS_WORKSPACE_CONFIG"}) {
+        const auto * value = std::getenv(name);
+        cache_key_field(hash, value ? ("=" + std::string(value)) : std::string{});
+    }
+}
+
 }  // namespace
 
 Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     core::ExecutionContext & execution, const runtime::SessionOptions & options, bool streaming)
     : assets_(std::move(assets)), tokenizer_(assets_->resources),
-      cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)) {
+      cache_steps_(runtime::parse_positive_i64_option(options.options, {"fish_drama3.context_length"}, 2048)),
+      reference_cache_(parse_reference_cache_slots(options.options)) {
     if (cache_steps_ > 262144) throw std::runtime_error("Drama 3 context_length exceeds the checkpoint's maximum position count");
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.profile_first_audio"})) {
         profile_first_audio_ = runtime::parse_bool_option(*value, "fish_drama3.profile_first_audio");
@@ -102,6 +130,12 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
         options.options, {"fish_drama3.codec_batch_frames"}, 4));
     if (const auto value = runtime::find_option(options.options, {"fish_drama3.codec_async_decode"})) {
         codec_async_decode_ = runtime::parse_bool_option(*value, "fish_drama3.codec_async_decode");
+    }
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.reuse_prefill"})) {
+        reuse_prefill_ = runtime::parse_bool_option(*value, "fish_drama3.reuse_prefill");
+    }
+    if (const auto value = runtime::find_option(options.options, {"fish_drama3.reuse_reference_prefill"})) {
+        reuse_reference_prefill_ = runtime::parse_bool_option(*value, "fish_drama3.reuse_reference_prefill");
     }
     auto backbone_config = assets_->backbone;
     backbone_config.decode_cache_steps = cache_steps_;
@@ -130,26 +164,22 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
     debug::trace_log_scalar("fish_drama3.fused_moe", backbone_config.fused_moe);
     debug::trace_log_scalar("fish_drama3.kv_cache_type", std::string_view(backbone_config.kv_cache_type == GGML_TYPE_F16 ? "f16" : "f32"));
     debug::trace_log_scalar("fish_drama3.kv_cache_alignment", backbone_config.kv_cache_alignment);
-    backbone_config.cpu_expert_layers = runtime::parse_i64_option(options.options, {"fish_drama3.cpu_expert_layers"}).value_or(4);
-    if (const auto value = runtime::find_option(options.options, {"fish_drama3.disk_experts"}))
-        backbone_config.disk_experts = runtime::parse_bool_option(*value, "fish_drama3.disk_experts");
-    if (const auto value = runtime::find_option(options.options, {"fish_drama3.pin_experts"}))
-        backbone_config.pin_experts = runtime::parse_bool_option(*value, "fish_drama3.pin_experts");
-    if (backbone_config.pin_experts && !backbone_config.disk_experts)
+    auto moe_defaults = backbone_config.moe;
+    moe_defaults.cpu_layers = {0, 1, 2, 3};
+    backbone_config.moe = runtime::resolve_moe_options(options.options, "fish_drama3",
+        std::move(moe_defaults), static_cast<size_t>(backbone_config.layers));
+    if (backbone_config.moe.pin_host_weights &&
+        backbone_config.moe.residency != moe::Residency::Staged)
         throw std::runtime_error("fish_drama3.pin_experts requires fish_drama3.disk_experts=true");
-    backbone_config.expert_cache_size = runtime::parse_positive_i64_option(
-        options.options, {"fish_drama3.expert_cache_size"}, 32);
-    backbone_config.disk_expert_read_threads = runtime::parse_positive_i64_option(
-        options.options, {"fish_drama3.disk_expert_read_threads"}, 1);
-    if (backbone_config.disk_expert_read_threads > 64)
-        throw std::runtime_error("Drama 3 disk_expert_read_threads must be between 1 and 64");
     const auto backbone_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.backbone_prefill_cache_mb"}).value_or(256);
     if (backbone_prefill_cache_mb < 0 || backbone_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 backbone_prefill_cache_mb must be between 0 and 4096");
     backbone_config.prefill_cache_bytes = static_cast<size_t>(backbone_prefill_cache_mb) * 1024u * 1024u;
     backbone_config.profile_prefill_cache = profile_first_audio_;
     backbone_ = std::make_unique<Drama3BackboneDecoderRuntime>(assets_->model_weights, backbone_config, execution,
         64 * 1024 * 1024, 8 * 1024 * 1024, assets::TensorStorageType::Native);
-    disk_experts_ = backbone_config.disk_experts;
+    disk_experts_ = backbone_config.moe.residency == moe::Residency::Staged;
+    reuse_prefill_ = reuse_prefill_ && !streaming && !disk_experts_;
+    reuse_reference_prefill_ = reuse_reference_prefill_ && !streaming && !disk_experts_;
     decoder_ = backbone_->create_decode_session(cache_steps_);
     const auto tower_prefill_cache_mb = runtime::parse_i64_option(options.options, {"fish_drama3.tower_prefill_cache_mb"}).value_or(256);
     if (tower_prefill_cache_mb < 0 || tower_prefill_cache_mb > 4096) throw std::runtime_error("Drama 3 tower_prefill_cache_mb must be between 0 and 4096");
@@ -178,30 +208,178 @@ Drama3Generator::Drama3Generator(std::shared_ptr<const Drama3Assets> assets,
         options.options, {"fish_drama3.codec_encoder_chunk_samples"}).value_or(0);
     codec_ = std::make_unique<codecs::FishDacCodecRuntime>(component, codec_backend,
         codec_backend.threads, codec_options.graph_arena_bytes, codec_encoder_f32_accumulation, codec_encoder_chunk_samples);
+    const auto reference_dir = runtime::find_option(options.options, {"fish_drama3.reference_cache_dir"}).value_or("");
+    const auto prefill_dir = runtime::find_option(options.options, {"fish_drama3.prefill_cache_dir"}).value_or("");
+    const bool persist_prefill = reuse_reference_prefill_ && !prefill_dir.empty();
+    if (!reference_dir.empty() || persist_prefill) {
+        try {
+            const auto build_id = drama3_cache_build_id();
+            if (!build_id.empty()) {
+                Sha256 identity;
+                cache_key_field(identity, build_id);
+                cache_file_identity(identity, assets_->codec_weights->source_path());
+                cache_key_field(identity, assets_->resources.read_text("config"));
+                if (!reference_dir.empty()) {
+                    auto encoder = identity;
+                    cache_backend_identity(encoder, *codec_execution_);
+                    cache_key_field(encoder, codec_options.encoder_bf16_compute ? "bf16" : "native");
+                    cache_key_field(encoder, codec_encoder_f32_accumulation ? "f32" : "native");
+                    cache_key_field(encoder, std::to_string(codec_encoder_chunk_samples));
+                    reference_cache_.set_disk_cache(std::filesystem::u8path(reference_dir), encoder.hex(),
+                        assets_->tower.codebook_size);
+                }
+                if (persist_prefill) {
+                    if (assets_->model_weights->source_path() != assets_->codec_weights->source_path()) {
+                        cache_file_identity(identity, assets_->model_weights->source_path());
+                    }
+                    cache_backend_identity(identity, execution);
+                    const std::map<std::string, std::string> sorted_options(options.options.begin(), options.options.end());
+                    for (const auto & [key, value] : sorted_options) {
+                        if (key == "fish_drama3.reference_cache_dir" || key == "fish_drama3.prefill_cache_dir" ||
+                            key == "fish_drama3.reuse_prefill") continue;
+                        cache_key_field(identity, key);
+                        cache_key_field(identity, value);
+                    }
+                    prefill_identity_ = identity.hex();
+                    prefill_disk_cache_.emplace(io::DiskCacheConfig{
+                        std::filesystem::u8path(prefill_dir) / "fish_drama3-prefill", kDiskPrefillEntries, kDiskPrefillBytes});
+                }
+            } else {
+                debug::log_message(debug::LogLevel::Warning, "fish_drama3",
+                    "Disk cache unavailable: could not identify the build");
+            }
+        } catch (const std::exception & error) {
+            debug::log_message(debug::LogLevel::Warning, "fish_drama3",
+                "Disk cache setup failed: " + std::string(error.what()));
+        }
+    }
     assets_->model_weights->release_storage();
     assets_->codec_weights->release_storage();
 }
 
 Drama3Generator::~Drama3Generator() = default;
 
-codecs::FishDacCodes Drama3Generator::encode_reference(const runtime::AudioBuffer & audio) {
-    if (cached_reference_audio_ && cached_reference_audio_->sample_rate == audio.sample_rate &&
-        cached_reference_audio_->channels == audio.channels && cached_reference_audio_->samples == audio.samples) {
-        return cached_reference_codes_;
+std::vector<float> Drama3Generator::embed_prompt(const std::vector<Drama3Frame> & prompt) {
+    std::vector<int32_t> ids;
+    ids.reserve(prompt.size());
+    for (const auto & frame : prompt) ids.push_back(frame[0]);
+    auto embeddings = backbone_->token_embedding(ids);
+    tower_->mix_backbone_embeddings(embeddings, prompt);
+    return embeddings;
+}
+
+Drama3Generator::PromptPrefill Drama3Generator::capture_prefill(const std::vector<Drama3Frame> & prompt,
+    const std::vector<float> & hidden) const {
+    return {prompt, decoder_->capture_prefill(), tower_->capture_prefill(), hidden};
+}
+
+void Drama3Generator::restore_prefill(const PromptPrefill & snapshot) {
+    decoder_->restore_prefill(snapshot.backbone, static_cast<int64_t>(snapshot.prompt.size()));
+    tower_->restore_prefill(snapshot.tower);
+}
+
+std::vector<float> Drama3Generator::prefill_reference_prompt(const std::vector<Drama3Frame> & prompt,
+    size_t reference_end, double & embedding_ms, double & backbone_ms, double & tower_ms) {
+    const bool memory_hit = reference_prefill_ && reference_prefill_->prompt.size() == reference_end &&
+        std::equal(reference_prefill_->prompt.begin(), reference_prefill_->prompt.end(), prompt.begin());
+    std::string disk_key;
+    if (!memory_hit) {
+        reference_prefill_.reset();
+        if (prefill_disk_cache_) {
+            const auto started = std::chrono::steady_clock::now();
+            Sha256 key;
+            cache_key_field(key, prefill_identity_);
+            cache_key_field(key, cache_bytes(prompt.data(), reference_end));
+            disk_key = "fish_drama3/prefill/v1/" + key.hex();
+            try {
+                if (const auto payload = prefill_disk_cache_->get(disk_key)) {
+                    const auto unpack_started = std::chrono::steady_clock::now();
+                    auto state = unpack_prefill(*payload, decoder_->prefill_snapshot_bytes(),
+                        tower_->prefill_snapshot_bytes(), static_cast<size_t>(assets_->backbone.hidden_size));
+                    if (state) {
+                        reference_prefill_ = PromptPrefill{{prompt.begin(), prompt.begin() + reference_end},
+                            std::move(state->backbone), std::move(state->tower), std::move(state->hidden)};
+                        debug::timing_log_scalar("drama3.reference_prefill_disk_unpack_ms", debug::elapsed_ms(unpack_started));
+                    }
+                }
+            } catch (const std::exception & error) {
+                if (!std::exchange(prefill_disk_read_warned_, true))
+                    debug::log_message(debug::LogLevel::Warning, "fish_drama3.prefill_cache",
+                        "Cache read failed, recomputing the reference prefix: " + std::string(error.what()));
+            }
+            debug::trace_log_scalar("drama3.reference_prefill_disk", std::string_view(reference_prefill_ ? "hit" : "miss"));
+            debug::timing_log_scalar("drama3.reference_prefill_disk_read_ms", debug::elapsed_ms(started));
+        }
     }
-    auto result = codec_->encode_codes(audio);
-    codec_->release_encode_graph();
-    validate_drama3_codes(result, assets_->tower.codebook_size);
-    // Keep one short reference in host memory. Exact waveform equality avoids
-    // stale path-based hits when an uploaded file is replaced or re-decoded.
-    constexpr size_t max_cached_samples = 44100 * 30;
-    if (audio.samples.size() <= max_cached_samples) {
-        cached_reference_audio_ = audio;
-        cached_reference_codes_ = result;
+    const auto run_backbone = [&](const std::vector<Drama3Frame> & rows, size_t offset) {
+        auto started = std::chrono::steady_clock::now();
+        auto embeddings = embed_prompt(rows);
+        embedding_ms += debug::elapsed_ms(started);
+        started = std::chrono::steady_clock::now();
+        auto result = decoder_->prefill_embeddings(embeddings, static_cast<int64_t>(rows.size()), static_cast<int64_t>(offset));
+        backbone_ms += debug::elapsed_ms(started);
+        return std::move(result.hidden);
+    };
+    const bool hit = reference_prefill_.has_value();
+    auto started = std::chrono::steady_clock::now();
+    if (hit) {
+        decoder_->restore_prefill(reference_prefill_->backbone, static_cast<int64_t>(reference_end));
+        backbone_ms += debug::elapsed_ms(started);
+        started = std::chrono::steady_clock::now();
+        tower_->restore_prefill(reference_prefill_->tower);
+        tower_ms += debug::elapsed_ms(started);
     } else {
-        cached_reference_audio_.reset();
-        cached_reference_codes_ = {};
+        decoder_->reset();
+        tower_->reset();
+        const std::vector<Drama3Frame> prefix(prompt.begin(), prompt.begin() + reference_end);
+        const auto hidden = run_backbone(prefix, 0);
+        started = std::chrono::steady_clock::now();
+        tower_->prefill(hidden, prefix);
+        tower_ms += debug::elapsed_ms(started);
+        reference_prefill_ = capture_prefill(prefix, last_hidden(hidden, assets_->backbone.hidden_size));
+        if (!disk_key.empty()) {
+            const auto & snapshot = *reference_prefill_;
+            started = std::chrono::steady_clock::now();
+            try {
+                if (snapshot.backbone.size() + snapshot.tower.size() + snapshot.hidden.size() * sizeof(float) >
+                    kDiskPrefillBytes) throw std::invalid_argument("disk cache entry exceeds byte limit");
+                const auto payload = pack_prefill(snapshot.backbone, snapshot.tower, snapshot.hidden);
+                debug::timing_log_scalar("drama3.reference_prefill_disk_pack_ms", debug::elapsed_ms(started));
+                prefill_disk_cache_->put(disk_key, payload);
+            } catch (const std::exception & error) {
+                if (!std::exchange(prefill_disk_write_warned_, true))
+                    debug::log_message(debug::LogLevel::Warning, "fish_drama3.prefill_cache",
+                        "Cache write failed, using the computed reference prefix: " + std::string(error.what()));
+            }
+            debug::timing_log_scalar("drama3.reference_prefill_disk_write_ms", debug::elapsed_ms(started));
+        }
     }
+    debug::trace_log_scalar("drama3.prefill_reused_rows", hit ? reference_end : size_t{0});
+    const auto hidden = run_backbone({prompt.begin() + reference_end, prompt.end()}, reference_end);
+    started = std::chrono::steady_clock::now();
+    // Tower row N is conditioned on row N+1. Resume one row before the backbone.
+    auto tower_hidden = reference_prefill_->hidden;
+    tower_hidden.insert(tower_hidden.end(), hidden.begin(), hidden.end());
+    tower_->prefill(tower_hidden, {prompt.begin() + reference_end - 1, prompt.end()}, static_cast<int64_t>(reference_end - 1));
+    tower_ms += debug::elapsed_ms(started);
+    return last_hidden(hidden, assets_->backbone.hidden_size);
+}
+
+codecs::FishDacCodes Drama3Generator::encode_reference(const runtime::AudioBuffer & audio) {
+    // Keep several short references in host memory. Exact waveform equality avoids
+    // stale path-based hits when an uploaded file is replaced or re-decoded.
+    Drama3ReferenceCache::Outcome outcome = Drama3ReferenceCache::Outcome::Miss;
+    auto result = reference_cache_.lookup_or_encode(audio, [this](const runtime::AudioBuffer & clip) {
+        auto codes = codec_->encode_codes(clip);
+        codec_->release_encode_graph();
+        validate_drama3_codes(codes, assets_->tower.codebook_size);
+        return codes;
+    }, &outcome);
+    const char * label = outcome == Drama3ReferenceCache::Outcome::Hit ? "hit"
+                       : outcome == Drama3ReferenceCache::Outcome::DiskHit ? "disk_hit"
+                       : outcome == Drama3ReferenceCache::Outcome::Skip ? "skip" : "miss";
+    debug::trace_log_scalar("drama3.reference_cache", std::string(label) + " " + std::to_string(reference_cache_.size()) +
+                            "/" + std::to_string(reference_cache_.capacity()));
     return result;
 }
 
@@ -224,7 +402,8 @@ void Drama3Generator::warm_streaming_codec(const codecs::FishDacCodes & referenc
 
 Drama3Generation Drama3Generator::generate(const std::string & text, const std::vector<Drama3Take> & references,
     const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
-    const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation) {
+    const std::function<void(const runtime::AudioBuffer &)> & on_audio, bool continuation,
+    const std::vector<Drama3Take> & generated_history, bool allow_empty) {
     if (!std::isfinite(sampling.temperature) || sampling.temperature < 0 ||
         !std::isfinite(sampling.top_p) || sampling.top_p <= 0 || sampling.top_p > 1 ||
         sampling.top_k <= 0 || sampling.max_frames <= 0) throw runtime::InvalidRequestError("invalid Drama 3 sampling parameters");
@@ -240,10 +419,15 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         first_audio_phases.emplace_back(name, std::chrono::duration<double, std::milli>(now - profile_marked).count());
         profile_marked = now;
     };
-    const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history);
-    if (sampling.max_frames > cache_steps_ ||
-        prompt.size() > static_cast<size_t>(cache_steps_ - sampling.max_frames)) {
-        throw runtime::CapacityError("Drama 3 prompt plus max_tokens exceeds fish_drama3.context_length; increase it or shorten history");
+    size_t reference_end = 0;
+    const auto prompt = build_drama3_prompt(*assets_, tokenizer_, text, references, history,
+        generated_history, static_cast<size_t>(cache_steps_ - 1), reuse_reference_prefill_ ? &reference_end : nullptr);
+    const auto max_frames = std::min(sampling.max_frames, cache_steps_ - static_cast<int64_t>(prompt.size()));
+    debug::trace_log_scalar("drama3.prompt_rows", prompt.size());
+    debug::trace_log_scalar("drama3.generation_budget", max_frames);
+    if (max_frames < sampling.max_frames) {
+        std::cerr << "[fish_drama3] max_tokens reduced from " << sampling.max_frames << " to " << max_frames
+                  << " to fit fish_drama3.context_length after " << prompt.size() << " prompt rows\n";
     }
     auto & decoder = decoder_;
     // A continuation may extend the exact frames already evaluated. Never
@@ -254,40 +438,58 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
     auto prefix_hidden = std::move(cached_hidden_);
     cached_prefix_.clear();
     cached_hidden_.clear();
-    // Start independent requests from the same expert placement, but preserve
-    // LRU reuse between continuation chunks within a request.
-    if (prefix_rows == 0) decoder->reset(disk_experts_ && !continuation);
-    tower_->reset();
-    mark_phase("setup_ms");
-    component_ms[0] += debug::elapsed_ms(component_started);
-    component_started = ProfileClock::now();
-    std::vector<int32_t> ids;
-    for (const auto & frame : prompt) ids.push_back(frame[0]);
-    auto embeddings = backbone_->token_embedding(ids);
-    tower_->mix_backbone_embeddings(embeddings, prompt);
-    mark_phase("embedding_ms");
-    component_ms[1] += debug::elapsed_ms(component_started);
-    component_started = ProfileClock::now();
+    const bool cache_prompt = reuse_prefill_ && !streaming;
+    const bool prompt_hit = cache_prompt && prompt_prefill_ && prompt_prefill_->prompt == prompt;
     Drama3BackboneDecoderForwardResult prefill;
-    if (prefix_rows != 0) {
-        prefill.hidden = std::move(prefix_hidden);
-        prefill.steps = static_cast<int64_t>(prompt.size());
-        for (size_t row = prefix_rows; row < prompt.size(); ++row) {
-            const auto begin = embeddings.begin() + row * assets_->backbone.hidden_size;
-            const auto hidden = decoder->run_embedding_step({begin, begin + assets_->backbone.hidden_size});
-            prefill.hidden.insert(prefill.hidden.end(), hidden.begin(), hidden.end());
-        }
+    std::vector<float> hidden;
+    if (prompt_hit) {
+        restore_prefill(*prompt_prefill_);
+        hidden = prompt_prefill_->hidden;
+        debug::trace_log_scalar("drama3.prefill_reused_rows", prompt.size());
+        mark_phase("restore_prefill_ms");
+        component_ms[0] += debug::elapsed_ms(component_started);
+    } else if (reuse_reference_prefill_ && !streaming && !references.empty()) {
+        component_ms[0] += debug::elapsed_ms(component_started);
+        hidden = prefill_reference_prompt(prompt, reference_end, component_ms[1], component_ms[2], component_ms[3]);
+        mark_phase("reference_prefill_ms");
     } else {
-        prefill = decoder->prefill_embeddings(embeddings, static_cast<int64_t>(prompt.size()));
+        // Start independent requests from the same expert placement, but preserve
+        // LRU reuse between continuation chunks within a request.
+        if (prefix_rows == 0) decoder->reset(disk_experts_ && !continuation);
+        tower_->reset();
+        mark_phase("setup_ms");
+        component_ms[0] += debug::elapsed_ms(component_started);
+        component_started = ProfileClock::now();
+        auto embeddings = embed_prompt(prompt);
+        mark_phase("embedding_ms");
+        component_ms[1] += debug::elapsed_ms(component_started);
+        component_started = ProfileClock::now();
+        if (prefix_rows != 0) {
+            prefill.hidden = std::move(prefix_hidden);
+            prefill.steps = static_cast<int64_t>(prompt.size());
+            for (size_t row = prefix_rows; row < prompt.size(); ++row) {
+                const auto begin = embeddings.begin() + row * assets_->backbone.hidden_size;
+                const auto row_hidden = decoder->run_embedding_step({begin, begin + assets_->backbone.hidden_size});
+                prefill.hidden.insert(prefill.hidden.end(), row_hidden.begin(), row_hidden.end());
+            }
+        } else {
+            prefill = decoder->prefill_embeddings(embeddings, static_cast<int64_t>(prompt.size()));
+        }
+        debug::trace_log_scalar("drama3.prefill_reused_rows", prefix_rows);
+        mark_phase("backbone_prefill_ms");
+        component_ms[2] += debug::elapsed_ms(component_started);
+        component_started = ProfileClock::now();
+        tower_->prefill(prefill.hidden, prompt);
+        mark_phase("tower_prefill_ms");
+        component_ms[3] += debug::elapsed_ms(component_started);
+        hidden = last_hidden(prefill.hidden, assets_->backbone.hidden_size);
     }
-    debug::trace_log_scalar("drama3.prefill_reused_rows", prefix_rows);
-    mark_phase("backbone_prefill_ms");
-    component_ms[2] += debug::elapsed_ms(component_started);
-    component_started = ProfileClock::now();
-    tower_->prefill(prefill.hidden, prompt);
-    mark_phase("tower_prefill_ms");
-    component_ms[3] += debug::elapsed_ms(component_started);
-    auto hidden = last_hidden(prefill.hidden, assets_->backbone.hidden_size);
+    if (cache_prompt && !prompt_hit) {
+        component_started = ProfileClock::now();
+        prompt_prefill_.reset();
+        prompt_prefill_ = capture_prefill(prompt, hidden);
+        component_ms[0] += debug::elapsed_ms(component_started);
+    }
     Drama3Frame current = prompt.back();
     std::mt19937 random(sampling.seed);
     SamplerScratch sampler_scratch;
@@ -369,7 +571,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
             }
         });
     }
-    for (int64_t step = 0; step < sampling.max_frames; ++step) {
+    for (int64_t step = 0; step < max_frames; ++step) {
         component_started = ProfileClock::now();
         auto logits = backbone_->lm_head(hidden);
         component_ms[4] += debug::elapsed_ms(component_started);
@@ -431,7 +633,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
                 streaming_audio_.push({next.begin() + 1, next.end()});
             }
         }
-        if (step + 1 == sampling.max_frames) { result.reached_limit = true; break; }
+        if (step + 1 == max_frames) { result.reached_limit = true; break; }
         current = next;
         component_started = ProfileClock::now();
         auto embedding = backbone_->token_embedding({current[0]});
@@ -448,7 +650,13 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         if (!codec_async_decode_) result.audio = streaming_audio_.finish();
         component_ms[8] += streaming_audio_.decode_ms() + streaming_audio_.publish_ms();
     }
-    if (output_frames.empty()) throw std::runtime_error("Drama 3 ended before producing an audio frame");
+    if (output_frames.empty()) {
+        if (allow_empty) {
+            std::cerr << "[fish_drama3] The model emitted EOS before any audio frame; skipping chunk\n";
+            return result;
+        }
+        throw std::runtime_error("Drama 3 ended before producing an audio frame");
+    }
     if (disk_experts_) {
         cached_prefix_ = prompt;
         cached_prefix_.insert(cached_prefix_.end(), output_frames.begin(), output_frames.end());
@@ -479,7 +687,7 @@ Drama3Generation Drama3Generator::generate(const std::string & text, const std::
         "drama3.backbone_step_ms", "drama3.codec_ms"};
     for (size_t i = 0; i < component_ms.size(); ++i) debug::timing_log_scalar(component_keys[i], component_ms[i]);
     debug::timing_log_scalar("drama3.generated_frames", output_frames.size());
-    if (result.reached_limit) std::cerr << "[fish_drama3] max_tokens reached; audio may be incomplete\n";
+    if (result.reached_limit) std::cerr << "[fish_drama3] generation budget reached; audio may be incomplete\n";
     return result;
 }
 

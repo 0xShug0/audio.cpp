@@ -9,6 +9,7 @@ require the experimental parallel runtime.
 
 - [Quick start: full WebUI](#full-webui-no-config-file)
 - [Quick start: first API request](#configured-api-first-request)
+- [Start a model from command-line arguments](#model-startup-without-a-config-file)
 - [Build and choose a server mode](#build)
 - [Configure models](#config)
 - [Map CLI options to server config](#cli-options-to-server-configuration)
@@ -40,6 +41,26 @@ build/debug/bin/audiocpp_server --ui --ui-management --backend cuda --log --log-
 Open `http://127.0.0.1:8080`, install a model package from the model library,
 then select it in the matching studio tab. Replace `cuda` with a backend your
 binary and selected model support, such as `cpu`, `vulkan`, or `metal`.
+
+Models default to `models/` beside the server executable. To choose another
+startup folder, add `--models-root /path/to/models`, or set it in a config:
+
+```json
+{
+  "ui": true,
+  "ui_management": true,
+  "models_root": "/path/to/models",
+  "models": []
+}
+```
+
+`--models-root` overrides `models_root` in the config. Relative CLI paths use
+the working directory; relative config paths use the config file's directory.
+The WebUI reads the server's current folder on startup; an older browser-saved
+selection does not override it. Explicit changes in **Models** apply to the
+server and all connected clients, while folder history stays browser-local.
+**Use default** restores the startup folder. Restarting the server also restores
+that folder; changing it in the UI does not rewrite the config file.
 
 Use **Lib → Speakers → New speaker preset** to save a model, voice, and
 generation settings together, then select that speaker in **Apps → Text to
@@ -252,6 +273,7 @@ JSON
 | `task` | The model's documented route, such as `tts`, `clon`, `vdes`, `asr`, or `align`. Capabilities such as voice cloning do not imply an identically named route. |
 | `mode` | `offline` or `streaming`, supported by that model. It selects the session created by the server. |
 | `device` | Optional backend device index for this model. When omitted, the top-level `device` is used. |
+| `device_name` | Optional ggml device name (e.g. `CUDA0`, `Vulkan1`) or unique case-insensitive description substring (e.g. `"Intel"`), resolved against the server's backend. Mutually exclusive with `device`. |
 | `load_options` | Options consumed while loading weights/assets. |
 | `session_options` | Options consumed when creating the reusable session. |
 | `default_request_options` | Defaults for the model's inference requests; request values with the same key override them. |
@@ -285,7 +307,7 @@ individual model entries:
 
 The indices use audio.cpp's backend device order; run the server with
 `--list-devices` to inspect it, or `--list-devices --json` for PCI ids and
-free/total memory in [JSON](../../docs/usage.md#listing-devices). Each model remains wholly on one device: this
+free/total memory in [JSON](../../docs/usage.md#listing-devices). You can also select devices by name with `--device-name` on the command line or `"device_name"` at the top level, on individual model entries, or in `POST /v1/models/load` (mutually exclusive with `device`). Each model remains wholly on one device: this
 setting assigns models independently and does not split one model across GPUs.
 `GET /v1/models` reports the effective `device` for every entry. Dynamic loads
 may also send `device`; when a registered model is reloaded and the field is
@@ -333,6 +355,29 @@ match the config's, the model keeps the config's `default_request_options`,
 `voice_presets`, `default_voice_preset`, `busy_timeout_ms` and `live_ingest`;
 a load of another family or task under that `id` gets none of them.
 
+### Loading an installed package by id
+
+A server built with `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=ON` also lets
+`POST /v1/models/load` name an installed package with `package_id` instead of
+`path`, so a client does not need to know where the models root is:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/models/load \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"sep","package_id":"htdemucs_q8_0","task":"sep"}'
+```
+
+The server reads the package's metadata from the package manager and asks the
+family's loader, through `resolve_package_load`, for the path, family, load
+options and session options, the same target the WebUI loads. The request then
+goes through the existing load handler as if it had sent them. `family`
+defaults to the package's family; a different `family` is rejected. A
+`load_options` or `session_options` key the request sends wins over the
+resolved one. Each precision is its own package id, such as `kokoro_82m_q8_0`
+and `kokoro_82m_bf16`. Sending both `path` and `package_id` is rejected with
+400, and an unknown or not-installed package returns 404. Requests with
+`path`, and servers built without the native model manager, are unchanged.
+
 ### Paths and model specs
 
 Relative model and configured voice-library paths resolve against the config
@@ -364,10 +409,44 @@ model coverage differ on other backends. `--backend` overrides the config for
 the process, not for an individual HTTP request. Use separate server processes
 on different ports if clients need different backends simultaneously.
 
+### Model startup without a config file
+
+Configure one model directly, with or without the WebUI:
+
+```bash
+build/debug/bin/audiocpp_server --ui --backend cpu --threads 8 \
+  --task tts --family pocket_tts --model /path/pocket-tts-english-bf16.gguf \
+  --voice-ref assets/resources/sample.wav --seed 42 --log
+```
+
+The default model id is the family name (`pocket_tts` here); use `--model-id`
+to choose another. Send text through the UI or an HTTP request's `input` field.
+`--text` is not a server startup option and does not generate speech at startup.
+
+CLI values override config values only for the selected model, merging option
+maps by key rather than replacing them. A single configured model is selected
+automatically; a multi-model config requires `--model-id`:
+
+```bash
+build/debug/bin/audiocpp_server --config server.json --model-id pocket \
+  --session-option pocket_tts.voice_state_cache_slots=2 --seed 42 --log
+```
+
+`--load-option`, `--session-option` and `--request-option` may be repeated.
+Common request flags such as `--language`, `--temperature` and `--max-tokens`
+set default request options. `--voice-ref`, `--reference-text` and `--voice-id`
+set the default voice. Choosing a new voice source replaces the previous default
+voice preset, including its voice-specific options; supply its matching
+`--reference-text` when needed. Named presets remain available unchanged.
+Explicit HTTP request settings override these defaults.
+Relative CLI model/reference paths resolve against the working directory;
+relative paths in the config retain their config-directory resolution.
+Config-only and UI-only startup retain their existing behavior.
+
 ### CLI options to server configuration
 
-Inference CLI flags are not arbitrary server-config fields. Put each model
-option in its documented scope; request options go in `options` on the speech
+The supported startup flags below populate existing model-config fields. Put each model
+option in its documented scope; per-request options go in `options` on the speech
 endpoint, or `request.options` on generic task endpoints.
 
 | Inference CLI | Server config | Per-request override |
@@ -567,12 +646,35 @@ build/debug/bin/audiocpp_server --config server.json --voice-dir /absolute/path/
 
 Use `--no-ui` for API-only operation. Full model-management UI requires the
 [native-manager build](#choose-a-server-mode) and `--ui --ui-management`.
-Run `audiocpp_server --help` for server flags; inference controls belong in the
-model option maps, not as arbitrary server command-line flags.
+Run `audiocpp_server --help` for startup flags. Model-specific controls use
+`--load-option`, `--session-option` or `--request-option` in their documented scope.
 
 Keep `host` at `127.0.0.1` for local access. `0.0.0.0` binds all interfaces;
 clients connect using the server's actual address, not `0.0.0.0`. Do not expose
 model-management and server-file access to an untrusted network.
+
+### Unix-domain sockets
+
+On Linux and macOS, bind HTTP directly to a filesystem socket instead of TCP:
+
+```bash
+umask 077
+build/debug/bin/audiocpp_server --ui --host unix:/tmp/audiocpp.sock --log --log-file server.log
+curl --unix-socket /tmp/audiocpp.sock http://localhost/health
+curl --unix-socket /tmp/audiocpp.sock http://localhost/v1/models
+```
+
+The JSON server configuration accepts the same `"host": "unix:/tmp/audiocpp.sock"`.
+`--port` is ignored for this transport. Both the default server and `--parallel-jobs`
+support it; HTTP routes, streaming and request limits are unchanged. The parent
+directory must already exist, and socket permissions follow the process umask.
+No TCP listener is created. Browsers need an HTTP reverse proxy to access this socket.
+
+Graceful shutdown removes the socket. Startup never removes an existing path:
+a second server or a stale socket produces an explicit bind error. After an
+unclean exit, remove the stale socket only after confirming its server has stopped.
+Unix listeners are not supported by this implementation on Windows. VSOCK and
+Linux abstract-namespace sockets are not included.
 
 ## Voices
 

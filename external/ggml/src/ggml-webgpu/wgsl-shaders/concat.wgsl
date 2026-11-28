@@ -1,3 +1,7 @@
+#ifdef TYPE_F16
+enable f16;
+#endif
+
 struct Params {
     ne: u32,
 
@@ -18,7 +22,6 @@ struct Params {
     ne0: u32,
     ne1: u32,
     ne2: u32,
-    ne3: u32,
 
     dim: u32,
     src0_nedim: u32
@@ -27,10 +30,23 @@ struct Params {
 #ifdef TYPE_F32
 #define DataType f32
 #endif
+#ifdef TYPE_F16
+#define DataType f16
+#endif
 #ifdef TYPE_I32
 #define DataType i32
 #endif
 
+#ifdef SRC_OVERLAP
+@group(0) @binding(0)
+var<storage, read_write> merged_src: array<DataType>;
+
+@group(0) @binding(1)
+var<storage, read_write> dst: array<DataType>;
+
+@group(0) @binding(2)
+var<uniform> params: Params;
+#else
 @group(0) @binding(0)
 var<storage, read_write> src0: array<DataType>;
 
@@ -42,12 +58,14 @@ var<storage, read_write> dst: array<DataType>;
 
 @group(0) @binding(3)
 var<uniform> params: Params;
-
+#endif
 @compute @workgroup_size(WG_SIZE)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn main(@builtin(num_workgroups) num_wg: vec3<u32>,
+        @builtin(global_invocation_id) gid: vec3<u32>) {
 
-    if (gid.x < params.ne) {
-        var i = gid.x;
+    let gid_i = gid.x + (num_wg.x * u32(WG_SIZE)) * gid.y;
+    if (gid_i < params.ne) {
+        var i = gid_i;
         let i3 = i / (params.ne2 * params.ne1 * params.ne0);
         i = i % (params.ne2 * params.ne1 * params.ne0);
         let i2 = i / (params.ne1 * params.ne0);
@@ -62,14 +80,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                              ni[1] * params.stride_src0_1 +
                              ni[2] * params.stride_src0_2 +
                              ni[3] * params.stride_src0_3;
-            dst[params.offset_dst + gid.x] = src0[params.offset_src0 + src_i];
+#ifdef SRC_OVERLAP
+            dst[params.offset_dst + gid_i] = merged_src[params.offset_src0 + src_i];
+#else
+            dst[params.offset_dst + gid_i] = src0[params.offset_src0 + src_i];
+#endif
         } else {
             ni[params.dim] -= params.src0_nedim;
             let src_i = ni[0] * params.stride_src1_0 +
                              ni[1] * params.stride_src1_1 +
                              ni[2] * params.stride_src1_2 +
                              ni[3] * params.stride_src1_3;
-            dst[params.offset_dst + gid.x] = src1[params.offset_src1 + src_i];
+#ifdef SRC_OVERLAP
+            dst[params.offset_dst + gid_i] = merged_src[params.offset_src1 + src_i];
+#else
+            dst[params.offset_dst + gid_i] = src1[params.offset_src1 + src_i];
+#endif
         }
     }
 }

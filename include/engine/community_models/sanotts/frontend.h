@@ -42,6 +42,10 @@ public:
 
     [[nodiscard]] SanoTtsEncoded encode(const std::string & text) const;
 
+    /** Rewrites an ASCII apostrophe between two ASCII letters to U+2019, so
+     *  punctuation preservation does not split contractions ("don't"). */
+    [[nodiscard]] static std::string keep_contractions(const std::string & text);
+
     /** Long-form splitting on sentence punctuation, then a codepoint budget. */
     [[nodiscard]] static std::vector<std::string> split_text(
         const std::string & text,
@@ -49,6 +53,9 @@ public:
 
     /** Pause inserted between chunks, longer after a sentence end. */
     [[nodiscard]] static double boundary_pause_seconds(const std::string & chunk);
+
+    /** The vocabulary symbol for a token id; empty for specials/unknown ids. */
+    [[nodiscard]] static std::string symbol_for_id(int32_t id);
 
 private:
     struct Impl;

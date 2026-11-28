@@ -35,12 +35,12 @@ core::TensorValue build_global_relative_attention_impl(
 
     const int64_t head_dim = config.hidden_size / config.num_heads;
     const int64_t key_frames = key_value.shape.dims[1];
-    const int64_t required_pos_frames = 2 * key_frames - 1;
+    const int64_t required_pos_frames = config.legacy_position_layout ? key_frames : 2 * key_frames - 1;
     if (projected_pos_emb.has_value()) {
         core::validate_rank_between(*projected_pos_emb, 3, 3, "projected_pos_emb");
         core::validate_last_dim(*projected_pos_emb, config.hidden_size, "projected_pos_emb");
         if (projected_pos_emb->shape.dims[1] != required_pos_frames) {
-            throw std::runtime_error("Relative attention expects projected_pos_emb frames == 2 * key_frames - 1");
+            throw std::runtime_error(config.legacy_position_layout ? "Legacy relative attention expects projected_pos_emb frames == key_frames" : "Relative attention expects projected_pos_emb frames == 2 * key_frames - 1");
         }
     } else {
         if (!pos_emb.has_value()) {
@@ -49,7 +49,7 @@ core::TensorValue build_global_relative_attention_impl(
         core::validate_rank_between(*pos_emb, 3, 3, "pos_emb");
         core::validate_last_dim(*pos_emb, config.hidden_size, "pos_emb");
         if (pos_emb->shape.dims[1] != required_pos_frames) {
-            throw std::runtime_error("Relative attention expects pos_emb frames == 2 * key_frames - 1");
+            throw std::runtime_error(config.legacy_position_layout ? "Legacy relative attention expects pos_emb frames == key_frames" : "Relative attention expects pos_emb frames == 2 * key_frames - 1");
         }
     }
 

@@ -2,6 +2,7 @@
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/linear_module.h"
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -29,17 +31,9 @@ namespace {
 constexpr int64_t kInputDim = 192;
 constexpr int64_t kPosDim = 48;
 constexpr int64_t kPosHeadDim = 4;
-constexpr size_t kWeightContextBytes = 64ull * 1024ull * 1024ull;
-constexpr size_t kGraphContextBytes = 192ull * 1024ull * 1024ull;
-constexpr size_t kGraphNodes = 131072;
-
-struct ContextDeleter {
-    void operator()(ggml_context * value) const noexcept {
-        if (value != nullptr) {
-            ggml_free(value);
-        }
-    }
-};
+constexpr size_t kWeightContextBytes = 2ull * 1024ull * 1024ull;
+constexpr size_t kGraphContextBytes = 32ull * 1024ull * 1024ull;
+constexpr size_t kGraphNodes = 16384;
 
 struct Param {
     std::vector<int64_t> shape;
@@ -113,49 +107,12 @@ core::TensorValue contiguous(
     return core::ensure_backend_addressable_layout(context, value);
 }
 
-core::TensorValue transpose(
-    core::ModuleBuildContext & context,
-    const core::TensorValue & input,
-    const std::array<int, 4> & axes) {
-    const size_t rank = input.shape.rank;
-    core::TensorShape output = {};
-    output.rank = rank;
-    std::array<bool, 4> seen = {false, false, false, false};
-    std::array<int, 4> ggml_axes = {0, 1, 2, 3};
-    for (size_t out_axis = 0; out_axis < rank; ++out_axis) {
-        const int in_axis = axes[out_axis];
-        if (in_axis < 0 ||
-            in_axis >= static_cast<int>(rank) ||
-            seen[static_cast<size_t>(in_axis)]) {
-            throw std::runtime_error(
-                "invalid Kroko Zipformer transpose");
-        }
-        seen[static_cast<size_t>(in_axis)] = true;
-        output.dims[out_axis] = input.shape.dims[in_axis];
-        const int out_ggml =
-            core::logical_axis_to_ggml_axis(rank, out_axis);
-        const int in_ggml =
-            core::logical_axis_to_ggml_axis(rank, in_axis);
-        ggml_axes[in_ggml] = out_ggml;
-    }
-    const auto source = contiguous(context, input);
-    return core::wrap_tensor(
-        ggml_permute(
-            context.ggml,
-            source.tensor,
-            ggml_axes[0],
-            ggml_axes[1],
-            ggml_axes[2],
-            ggml_axes[3]),
-        output,
-        input.type);
-}
-
 core::TensorValue scale(
     core::ModuleBuildContext & context,
     const core::TensorValue & input,
     float value) {
-    const auto source = contiguous(context, input);
+    // Normalize singleton strides too: ggml_scale requires padded-1D layout.
+    const auto source = core::reshape_tensor(context, contiguous(context, input), input.shape);
     return core::wrap_tensor(
         ggml_scale(context.ggml, source.tensor, value),
         input.shape,
@@ -278,7 +235,7 @@ StateTensor state_tensor(
 ValueResult self_attention(
     core::ModuleBuildContext & context,
     const core::TensorValue & input,
-    const std::vector<core::TensorValue> & attention,
+    const core::TensorValue & attention,
     const core::TensorValue & cached_value,
     const std::unordered_map<std::string, Param> & params,
     const std::string & prefix,
@@ -289,29 +246,19 @@ ValueResult self_attention(
     auto values = linear(
         context, input, params, base + ".in_proj");
     const int64_t seq = values.shape.dims[0];
-    const int64_t left_context = cached_value.shape.dims[0];
-    values = modules::ConcatModule({0}).build(
-        context, cached_value, values);
-    auto new_state = modules::SliceModule(
-        {0, seq, left_context})
-                         .build(context, values);
-    std::vector<core::TensorValue> pieces;
-    pieces.reserve(static_cast<size_t>(heads));
-    for (int64_t head = 0; head < heads; ++head) {
-        auto value = modules::SliceModule(
-            {2, head * value_dim, value_dim})
-                         .build(context, values);
-        value = transpose(context, value, {1, 0, 2, 3});
-        auto mixed = modules::MatMulModule().build(
-            context, attention[static_cast<size_t>(head)], value);
-        pieces.push_back(
-            transpose(context, mixed, {1, 0, 2, 3}));
+    core::TensorValue new_state;
+    if (cached_value.valid()) {
+        const int64_t left_context = cached_value.shape.dims[0];
+        values = modules::ConcatModule({0}).build(context, cached_value, values);
+        new_state = modules::SliceModule({0, seq, left_context}).build(context, values);
     }
-    auto joined = pieces.front();
-    for (size_t index = 1; index < pieces.size(); ++index) {
-        joined = modules::ConcatModule({2}).build(
-            context, joined, pieces[index]);
-    }
+    values = core::reshape_tensor(context, contiguous(context, values),
+        core::TensorShape::from_dims({values.shape.dims[0], heads, value_dim}));
+    values = modules::TransposeModule({{1, 0, 2, 3}, 3}).build(context, values);
+    auto joined = modules::MatMulModule().build(context, attention, values);
+    joined = modules::TransposeModule({{1, 0, 2, 3}, 3}).build(context, joined);
+    joined = core::reshape_tensor(context, contiguous(context, joined),
+        core::TensorShape::from_dims({seq, 1, heads * value_dim}));
     return {
         linear(context, joined, params, base + ".out_proj"),
         new_state};
@@ -336,8 +283,41 @@ core::TensorValue feed_forward(
         prefix + "." + module + ".out_proj");
 }
 
+modules::ZipformerStatefulOutputs offline_convolution(
+    core::ModuleBuildContext & context, const core::TensorValue & input,
+    const std::unordered_map<std::string, Param> & params,
+    const std::string & prefix, int64_t kernel) {
+    const int64_t channels = input.shape.last_dim();
+    auto projected = linear(context, input, params, prefix + ".in_proj");
+    auto value = modules::SliceModule({2, 0, channels}).build(context, projected);
+    auto gate = modules::SliceModule({2, channels, channels}).build(context, projected);
+    value = modules::MulModule(false, context.backend_type == core::BackendType::Cpu).build(context, value, modules::SigmoidModule().build(context, gate));
+    const auto weights = zipformer_depthwise_conv_weights(params, prefix + ".depthwise_conv");
+    if (context.backend_type == core::BackendType::Cpu) {
+        value = core::reshape_tensor(context, contiguous(context, value),
+            core::TensorShape::from_dims({1, 1, input.shape.dims[0], channels}));
+        value = modules::Pad2dModule({0, 0, kernel / 2, kernel / 2}).build(context, value);
+        value = core::reshape_tensor(context, value,
+            core::TensorShape::from_dims({1, input.shape.dims[0] + kernel - 1, channels}));
+        value = modules::DepthwiseConv1dModule({channels, kernel, 1, 0, 1, false})
+            .build_time_major(context, value, {weights.weight, std::nullopt});
+        value = modules::AddModule(false, true).build(context, value,
+            core::reshape_tensor(context, *weights.bias, core::TensorShape::from_dims({1, 1, channels})));
+        value = core::reshape_tensor(context, value, input.shape);
+    } else {
+        value = modules::TransposeModule({{1, 2, 0, 3}, 3}).build(context, value);
+        value = modules::DepthwiseConv1dModule({channels, kernel, 1, static_cast<int>(kernel / 2), 1, true})
+            .build(context, value, weights);
+        value = modules::TransposeModule({{2, 0, 1, 3}, 3}).build(context, value);
+    }
+    value = core::reshape_tensor(context, contiguous(context, value), input.shape);
+    value = modules::SwooshRModule().build(context, value);
+    return {linear(context, value, params, prefix + ".out_proj"), {}};
+}
+
 LayerResult zipformer_layer(
     core::ModuleBuildContext & context,
+    core::ModuleBuildContext & constant_context,
     std::vector<GraphConstant> & constants,
     const core::TensorValue & input,
     const LayerStateValue & state,
@@ -352,7 +332,7 @@ LayerResult zipformer_layer(
     modules::ZipformerConstantFactory constant_factory =
         [&](const core::TensorShape & shape, std::vector<float> values) {
             return graph_constant(
-                context,
+                constant_context,
                 constants,
                 shape,
                 std::move(values));
@@ -363,6 +343,7 @@ LayerResult zipformer_layer(
             query_dim,
             kPosDim,
             kPosHeadDim,
+            modules::ZipformerAttentionImpl::Batched,
         }).build(
         context,
         constant_factory,
@@ -387,7 +368,7 @@ LayerResult zipformer_layer(
     const auto attention1 = self_attention(
         context,
         output,
-        attention.weights,
+        attention.batched_weights,
         state.val1,
         params,
         prefix,
@@ -396,8 +377,9 @@ LayerResult zipformer_layer(
         value_dim);
     output = modules::AddModule().build(
         context, output, attention1.output);
-    const auto convolution1 =
-        modules::ZipformerConvolutionModule({kernel}).build(
+    const auto convolution1 = !state.key.valid()
+        ? offline_convolution(context, output, params, prefix + ".conv_module1", kernel)
+        : modules::ZipformerConvolutionModule({kernel}).build(
         context,
         constant_factory,
         output,
@@ -418,7 +400,7 @@ LayerResult zipformer_layer(
     const auto attention2 = self_attention(
         context,
         output,
-        attention.weights,
+        attention.batched_weights,
         state.val2,
         params,
         prefix,
@@ -427,8 +409,9 @@ LayerResult zipformer_layer(
         value_dim);
     output = modules::AddModule().build(
         context, output, attention2.output);
-    const auto convolution2 =
-        modules::ZipformerConvolutionModule({kernel}).build(
+    const auto convolution2 = !state.key.valid()
+        ? offline_convolution(context, output, params, prefix + ".conv_module2", kernel)
+        : modules::ZipformerConvolutionModule({kernel}).build(
         context,
         constant_factory,
         output,
@@ -517,29 +500,25 @@ core::TensorValue downsample(
         static_cast<int64_t>(weights.host.size());
     const int64_t output_frames =
         (input.shape.dims[0] + factor - 1) / factor;
-    std::vector<core::TensorValue> rows;
-    rows.reserve(static_cast<size_t>(output_frames));
-    for (int64_t frame = 0; frame < output_frames; ++frame) {
-        core::TensorValue sum;
-        for (int64_t index = 0; index < factor; ++index) {
-            const int64_t source_frame = std::min(
-                input.shape.dims[0] - 1,
-                frame * factor + index);
-            auto row = modules::SliceModule(
-                {0, source_frame, 1})
-                           .build(context, input);
-            row = scale(
-                context,
-                row,
-                weights.host[static_cast<size_t>(index)]);
-            sum = sum.valid() ? modules::AddModule().build(context, sum, row) : row;
-        }
-        rows.push_back(sum);
+    const int64_t channels = input.shape.last_dim();
+    const int64_t padding = output_frames * factor - input.shape.dims[0];
+    auto padded = input;
+    if (padding != 0) {
+        auto last = modules::SliceModule({0, input.shape.dims[0] - 1, 1})
+                        .build(context, input);
+        last = modules::RepeatModule({core::TensorShape::from_dims({padding, 1, channels})})
+                   .build(context, last);
+        padded = modules::ConcatModule({0}).build(context, input, last);
     }
-    auto output = rows.front();
-    for (size_t index = 1; index < rows.size(); ++index) {
-        output = modules::ConcatModule({0}).build(
-            context, output, rows[index]);
+    auto grouped = core::reshape_tensor(
+        context, contiguous(context, padded),
+        core::TensorShape::from_dims({output_frames, factor, channels}));
+    core::TensorValue output;
+    // Preserve the original ordered weighted sum, but process all frames together.
+    for (int64_t index = 0; index < factor; ++index) {
+        auto phase = modules::SliceModule({1, index, 1}).build(context, grouped);
+        phase = scale(context, phase, weights.host[static_cast<size_t>(index)]);
+        output = output.valid() ? modules::AddModule().build(context, output, phase) : phase;
     }
     return output;
 }
@@ -549,52 +528,32 @@ core::TensorValue upsample(
     const core::TensorValue & input,
     int64_t factor,
     int64_t target_frames) {
-    std::vector<core::TensorValue> rows;
-    rows.reserve(static_cast<size_t>(target_frames));
-    for (int64_t frame = 0;
-         frame < input.shape.dims[0] &&
-         static_cast<int64_t>(rows.size()) < target_frames;
-         ++frame) {
-        auto row =
-            modules::SliceModule({0, frame, 1})
-                .build(context, input);
-        for (int64_t repeat = 0;
-             repeat < factor &&
-             static_cast<int64_t>(rows.size()) < target_frames;
-             ++repeat) {
-            rows.push_back(row);
-        }
-    }
-    auto output = rows.front();
-    for (size_t index = 1; index < rows.size(); ++index) {
-        output = modules::ConcatModule({0}).build(
-            context, output, rows[index]);
-    }
-    return output;
+    auto repeated = core::reshape_tensor(
+        context, contiguous(context, input),
+        core::TensorShape::from_dims({input.shape.dims[0], 1, 1, input.shape.last_dim()}));
+    repeated = modules::RepeatModule({core::TensorShape::from_dims(
+        {input.shape.dims[0], factor, 1, input.shape.last_dim()})}).build(context, repeated);
+    repeated = core::reshape_tensor(
+        context, repeated,
+        core::TensorShape::from_dims({input.shape.dims[0] * factor, 1, input.shape.last_dim()}));
+    return modules::SliceModule({0, 0, target_frames}).build(context, repeated);
 }
 
 class ZipformerGraph {
 public:
     ZipformerGraph(
-        ggml_backend_t backend,
-        core::BackendType backend_type,
+        core::ExecutionContext & execution,
         const KrokoASRConfig & config,
-        const std::unordered_map<std::string, Param> & params)
-        : backend_(backend),
-          input_frames_(config.chunk_shift / 2) {
+        const std::unordered_map<std::string, Param> & params,
+        int64_t input_frames = 0)
+        : backend_(execution.backend()),
+          input_frames_(config.streaming ? config.chunk_shift / 2 : input_frames),
+          prepared_(execution, {"kroko_asr.zipformer", kGraphContextBytes, kGraphNodes, 1024 * 1024}) {
         if (input_frames_ <= 0) {
             throw std::runtime_error(
                 "Kroko Zipformer input frame count is invalid");
         }
-        ggml_init_params init{
-            kGraphContextBytes, nullptr, true};
-        context_.reset(ggml_init(init));
-        if (context_ == nullptr) {
-            throw std::runtime_error(
-                "failed to initialize Kroko Zipformer graph context");
-        }
-        core::ModuleBuildContext build{
-            context_.get(), "kroko_asr.zipformer", backend_type};
+        auto & build = prepared_.build_context();
         auto input = core::make_tensor(
             build,
             GGML_TYPE_F32,
@@ -625,22 +584,26 @@ public:
             }
             const int64_t left_context =
                 config.left_context_len[stack];
-            StackMask stack_mask;
-            stack_mask.value = core::make_tensor(
-                build,
-                GGML_TYPE_F32,
-                core::TensorShape::from_dims(
-                    {1,
-                     current.shape.dims[0],
-                     left_context + current.shape.dims[0]}));
-            stack_mask.input = stack_mask.value.tensor;
-            ggml_set_input(stack_mask.input);
-            stack_mask.frames = current.shape.dims[0];
-            stack_mask.left_context = left_context;
-            stack_mask.downsampling = factor;
-            stack_mask.host.assign(
-                element_count(stack_mask.value.shape), 0.0F);
-            stack_masks_.push_back(std::move(stack_mask));
+            core::TensorValue padding_mask;
+            if (config.streaming) {
+                StackMask stack_mask;
+                stack_mask.value = core::make_tensor(
+                    build,
+                    GGML_TYPE_F32,
+                    core::TensorShape::from_dims(
+                        {1,
+                         current.shape.dims[0],
+                         left_context + current.shape.dims[0]}));
+                stack_mask.input = stack_mask.value.tensor;
+                ggml_set_input(stack_mask.input);
+                stack_mask.frames = current.shape.dims[0];
+                stack_mask.left_context = left_context;
+                stack_mask.downsampling = factor;
+                stack_mask.host.assign(
+                    element_count(stack_mask.value.shape), 0.0F);
+                padding_mask = stack_mask.value;
+                stack_masks_.push_back(std::move(stack_mask));
+            }
             for (int64_t layer = 0;
                  layer < config.num_encoder_layers[stack];
                  ++layer) {
@@ -650,45 +613,48 @@ public:
                     (stack == 0 ? ".layers." : ".encoder.layers.") +
                     std::to_string(layer);
                 LayerState layer_state;
-                layer_state.key = state_tensor(
-                    build,
-                    core::TensorShape::from_dims(
-                        {left_context,
-                         1,
-                         config.num_heads[stack] *
-                             config.query_head_dims[stack]}));
-                layer_state.nonlin = state_tensor(
-                    build,
-                    core::TensorShape::from_dims(
-                        {left_context, 1, 3 * channels / 4}));
-                layer_state.val1 = state_tensor(
-                    build,
-                    core::TensorShape::from_dims(
-                        {left_context,
-                         1,
-                         config.num_heads[stack] *
-                             config.value_head_dims[stack]}));
-                layer_state.val2 = state_tensor(
-                    build,
-                    core::TensorShape::from_dims(
-                        {left_context,
-                         1,
-                         config.num_heads[stack] *
-                             config.value_head_dims[stack]}));
-                layer_state.conv1 = state_tensor(
-                    build,
-                    core::TensorShape::from_dims(
-                        {1,
-                         channels,
-                         config.cnn_module_kernels[stack] / 2}));
-                layer_state.conv2 = state_tensor(
-                    build,
-                    core::TensorShape::from_dims(
-                        {1,
-                         channels,
-                         config.cnn_module_kernels[stack] / 2}));
+                if (config.streaming) {
+                    layer_state.key = state_tensor(
+                        build,
+                        core::TensorShape::from_dims(
+                            {left_context,
+                             1,
+                             config.num_heads[stack] *
+                                 config.query_head_dims[stack]}));
+                    layer_state.nonlin = state_tensor(
+                        build,
+                        core::TensorShape::from_dims(
+                            {left_context, 1, 3 * channels / 4}));
+                    layer_state.val1 = state_tensor(
+                        build,
+                        core::TensorShape::from_dims(
+                            {left_context,
+                             1,
+                             config.num_heads[stack] *
+                                 config.value_head_dims[stack]}));
+                    layer_state.val2 = state_tensor(
+                        build,
+                        core::TensorShape::from_dims(
+                            {left_context,
+                             1,
+                             config.num_heads[stack] *
+                                 config.value_head_dims[stack]}));
+                    layer_state.conv1 = state_tensor(
+                        build,
+                        core::TensorShape::from_dims(
+                            {1,
+                             channels,
+                             config.cnn_module_kernels[stack] / 2}));
+                    layer_state.conv2 = state_tensor(
+                        build,
+                        core::TensorShape::from_dims(
+                            {1,
+                             channels,
+                             config.cnn_module_kernels[stack] / 2}));
+                }
                 const auto layer_result = zipformer_layer(
                     build,
+                    prepared_.persistent_build_context(),
                     constants_,
                     current,
                     {
@@ -699,7 +665,7 @@ public:
                         layer_state.conv1.value,
                         layer_state.conv2.value,
                     },
-                    stack_masks_.back().value,
+                    padding_mask,
                     params,
                     prefix,
                     config.num_heads[stack],
@@ -707,19 +673,21 @@ public:
                     config.value_head_dims[stack],
                     config.cnn_module_kernels[stack]);
                 current = layer_result.output;
-                layer_state.key.output =
-                    layer_result.state.key.tensor;
-                layer_state.nonlin.output =
-                    layer_result.state.nonlin.tensor;
-                layer_state.val1.output =
-                    layer_result.state.val1.tensor;
-                layer_state.val2.output =
-                    layer_result.state.val2.tensor;
-                layer_state.conv1.output =
-                    layer_result.state.conv1.tensor;
-                layer_state.conv2.output =
-                    layer_result.state.conv2.tensor;
-                layer_states_.push_back(std::move(layer_state));
+                if (config.streaming) {
+                    layer_state.key.output =
+                        layer_result.state.key.tensor;
+                    layer_state.nonlin.output =
+                        layer_result.state.nonlin.tensor;
+                    layer_state.val1.output =
+                        layer_result.state.val1.tensor;
+                    layer_state.val2.output =
+                        layer_result.state.val2.tensor;
+                    layer_state.conv1.output =
+                        layer_result.state.conv1.tensor;
+                    layer_state.conv2.output =
+                        layer_result.state.conv2.tensor;
+                    layer_states_.push_back(std::move(layer_state));
+                }
                 ++layer_offset;
             }
             if (factor > 1) {
@@ -796,44 +764,25 @@ public:
             ggml_set_output(state.conv1.output);
             ggml_set_output(state.conv2.output);
         }
-        graph_ = ggml_new_graph_custom(
-            context_.get(), kGraphNodes, false);
-        ggml_build_forward_expand(graph_, output_);
+        auto * graph = prepared_.graph();
+        ggml_build_forward_expand(graph, output_);
         for (const auto & state : layer_states_) {
-            ggml_build_forward_expand(graph_, state.key.output);
+            ggml_build_forward_expand(graph, state.key.output);
             ggml_build_forward_expand(
-                graph_, state.nonlin.output);
-            ggml_build_forward_expand(graph_, state.val1.output);
-            ggml_build_forward_expand(graph_, state.val2.output);
-            ggml_build_forward_expand(graph_, state.conv1.output);
-            ggml_build_forward_expand(graph_, state.conv2.output);
+                graph, state.nonlin.output);
+            ggml_build_forward_expand(graph, state.val1.output);
+            ggml_build_forward_expand(graph, state.val2.output);
+            ggml_build_forward_expand(graph, state.conv1.output);
+            ggml_build_forward_expand(graph, state.conv2.output);
         }
-        allocator_ = ggml_gallocr_new(
-            ggml_backend_get_default_buffer_type(backend_));
-        if (allocator_ == nullptr ||
-            !ggml_gallocr_reserve(allocator_, graph_) ||
-            !ggml_gallocr_alloc_graph(allocator_, graph_)) {
-            throw std::runtime_error(
-                "failed to allocate Kroko Zipformer graph");
-        }
+        prepared_.allocate_persistent();
+        prepared_.allocate();
         for (const auto & constant : constants_) {
             ggml_backend_tensor_set(
                 constant.tensor,
                 constant.values.data(),
                 0,
                 constant.values.size() * sizeof(float));
-        }
-        plan_ =
-            core::create_backend_graph_plan_if_host(backend_, graph_);
-    }
-
-    ~ZipformerGraph() {
-        core::release_backend_graph_resources(backend_, graph_);
-        if (plan_ != nullptr) {
-            core::free_backend_graph_plan(backend_, plan_);
-        }
-        if (allocator_ != nullptr) {
-            ggml_gallocr_free(allocator_);
         }
     }
 
@@ -879,9 +828,7 @@ public:
                      source < mask.left_context - valid_left;
                      ++source) {
                     mask.host[static_cast<size_t>(
-                        target *
-                            (mask.left_context + mask.frames) +
-                        source)] = -1000.0F;
+                        target * mask.value.shape.last_dim() + source)] = -1000.0F;
                 }
             }
             ggml_backend_tensor_set_async(
@@ -891,25 +838,7 @@ public:
                 0,
                 mask.host.size() * sizeof(float));
         }
-        for (const auto & constant : constants_) {
-            ggml_backend_tensor_set_async(
-                backend_,
-                constant.tensor,
-                constant.values.data(),
-                0,
-                constant.values.size() * sizeof(float));
-        }
-        ggml_backend_synchronize(backend_);
-        const auto status = core::compute_backend_graph(
-            backend_,
-            graph_,
-            plan_,
-            "Kroko Zipformer");
-        ggml_backend_synchronize(backend_);
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error(
-                "Kroko Zipformer graph compute failed");
-        }
+        prepared_.compute();
         KrokoEncoderChunk result;
         result.frames = output_frames_;
         result.channels = output_dim_;
@@ -962,7 +891,6 @@ public:
 
 private:
     ggml_backend_t backend_ = nullptr;
-    std::unique_ptr<ggml_context, ContextDeleter> context_;
     std::vector<GraphConstant> constants_;
     std::vector<LayerState> layer_states_;
     std::vector<StackMask> stack_masks_;
@@ -972,9 +900,7 @@ private:
     int64_t output_dim_ = 0;
     ggml_tensor * input_ = nullptr;
     ggml_tensor * output_ = nullptr;
-    ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t allocator_ = nullptr;
-    ggml_backend_graph_plan_t plan_ = nullptr;
+    core::PreparedGraph prepared_;
 };
 
 bool needs_host_values(std::string_view name) {
@@ -1009,6 +935,8 @@ struct KrokoZipformerRuntime::Impl {
     std::shared_ptr<core::BackendWeightStore> store;
     std::unordered_map<std::string, Param> params;
     std::unique_ptr<ZipformerGraph> graph;
+    core::ExecutionContext * execution = nullptr;
+    int64_t input_frames = 0;
 };
 
 KrokoZipformerRuntime::KrokoZipformerRuntime(
@@ -1020,6 +948,8 @@ KrokoZipformerRuntime::KrokoZipformerRuntime(
             "Kroko Zipformer requires tensor assets");
     }
     impl_->assets = std::move(assets);
+    impl_->execution = &execution_context;
+
     impl_->store = std::make_shared<core::BackendWeightStore>(
         execution_context.backend(),
         execution_context.backend_type(),
@@ -1053,9 +983,8 @@ KrokoZipformerRuntime::KrokoZipformerRuntime(
             metadata.name, std::move(value));
     }
     impl_->store->upload();
-    impl_->graph = std::make_unique<ZipformerGraph>(
-        execution_context.backend(),
-        execution_context.backend_type(),
+    if (impl_->assets->config.streaming) impl_->graph = std::make_unique<ZipformerGraph>(
+        execution_context,
         impl_->assets->config,
         impl_->params);
 }
@@ -1065,9 +994,13 @@ KrokoZipformerRuntime::~KrokoZipformerRuntime() = default;
 KrokoEncoderChunk
 KrokoZipformerRuntime::encode_chunk(
     const std::vector<float> & subsampled_features) const {
-    if (impl_ == nullptr || impl_->graph == nullptr) {
-        throw std::runtime_error(
-            "Kroko Zipformer is not initialized");
+    if (!impl_->assets->config.streaming) {
+        const auto frames = static_cast<int64_t>(subsampled_features.size() / kInputDim);
+        if (!impl_->graph || impl_->input_frames != frames) {
+            impl_->graph.reset();
+            impl_->graph = std::make_unique<ZipformerGraph>(*impl_->execution, impl_->assets->config, impl_->params, frames);
+            impl_->input_frames = frames;
+        }
     }
     const auto start = std::chrono::steady_clock::now();
     auto result =
@@ -1079,11 +1012,7 @@ KrokoZipformerRuntime::encode_chunk(
 }
 
 void KrokoZipformerRuntime::reset() const {
-    if (impl_ == nullptr || impl_->graph == nullptr) {
-        throw std::runtime_error(
-            "Kroko Zipformer is not initialized");
-    }
-    impl_->graph->reset();
+    if (impl_->graph) impl_->graph->reset();
 }
 
 }  // namespace engine::models::kroko_asr

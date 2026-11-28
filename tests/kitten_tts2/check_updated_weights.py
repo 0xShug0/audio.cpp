@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from safetensors import safe_open
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/community_models'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/gguf/kitten_tts2'))
 import kitten_tts2_weights as converter
 from test_updated_weights import dequantize
 

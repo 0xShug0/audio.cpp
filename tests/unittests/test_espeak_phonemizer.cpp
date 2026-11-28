@@ -21,6 +21,10 @@ int main(int argc, char ** argv) try {
     require(english.phonemize("", 2).empty(), "empty text");
     require(english.phonemize("hello|world", 7, "/") == "en-us:7:hello/en-us:7:world", "clauses and mode");
     require(fails([&] { EspeakPhonemizer p(argv[1], {}, {"missing"}); }), "missing voice");
+    require(english.phonemize("hello", 2) == "en-us:2:hello", "reselect after missing voice");
+    require(french.phonemize("hello", 2) == "fr:2:hello", "switch voice");
+    require(french.phonemize("hello", 2) == "fr:2:hello", "keep voice");
+    require(english.phonemize("hello", 2) == "en-us:2:hello", "switch voice back");
     require(fails([&] { english.phonemize("stuck", 2); }), "cursor guard");
     require(fails([&] { EspeakPhonemizer p(argv[2], {}, {"en-us"}); }), "failed library switch");
     require(english.phonemize("hello", 2) == "en-us:2:hello", "recovery after failed switch");

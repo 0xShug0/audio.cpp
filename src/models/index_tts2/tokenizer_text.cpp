@@ -213,7 +213,7 @@ std::vector<std::vector<std::string>> split_segments_by_token(
     }
     if (current_segment_tokens_len > 0) {
         if (current_segment_tokens_len > max_text_tokens_per_segment) {
-            throw std::runtime_error("IndexTTS2 text segment exceeds max_text_tokens_per_segment");
+            throw std::runtime_error("IndexTTS2 text segment exceeds text_chunk_tokens");
         }
         segments.push_back(current_segment);
     }
@@ -776,12 +776,16 @@ int32_t IndexTTS2TextTokenizer::lang_to_id(const std::string & lang) {
 IndexTTS2TextEncoding IndexTTS2TextTokenizer::encode_for_inference(
     const std::string & text,
     int max_text_tokens_per_segment,
-    const std::string & lang) const {
+    const std::string & lang,
+    bool text_normalization) const {
     if (max_text_tokens_per_segment <= 0) {
-        throw std::runtime_error("IndexTTS2 max_text_tokens_per_segment must be positive");
+        throw std::runtime_error("IndexTTS2 text_chunk_tokens must be positive");
     }
     if (variant_ == IndexTTS2Variant::kV2_5) {
-        return encode_for_inference_v2_5(text, max_text_tokens_per_segment, lang);
+        return encode_for_inference_v2_5(text, max_text_tokens_per_segment, lang, text_normalization);
+    }
+    if (!text_normalization) {
+        throw std::runtime_error("text_normalization=false is only supported by IndexTTS2.5");
     }
     return encode_for_inference_v2(text, max_text_tokens_per_segment);
 }
@@ -812,14 +816,15 @@ IndexTTS2TextEncoding IndexTTS2TextTokenizer::encode_for_inference_v2(
 IndexTTS2TextEncoding IndexTTS2TextTokenizer::encode_for_inference_v2_5(
     const std::string & text,
     int max_text_tokens_per_segment,
-    const std::string & lang) const {
+    const std::string & lang,
+    bool text_normalization) const {
     std::string resolved_lang = lowercase_ascii(lang);
     if (resolved_lang.empty()) {
         resolved_lang = contains_han(text) ? "zh" : "en";
     }
 
     std::string processed = text;
-    if (resolved_lang == "zh" || resolved_lang == "en") {
+    if (text_normalization && (resolved_lang == "zh" || resolved_lang == "en")) {
         // Protect <word|pronunciation> annotations from the normalizer, as the
         // official TextNormalizer does inside normalize().
         auto protected_text = protect_pronunciation_annotations(processed);

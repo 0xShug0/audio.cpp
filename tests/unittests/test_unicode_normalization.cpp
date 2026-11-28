@@ -417,6 +417,42 @@ void test_supertonic_tokenizer_regression_inputs() {
     }
 }
 
+// Expected strings come from the reference UnicodeProcessor._preprocess_text in
+// supertone-inc/supertonic py/helper.py.
+void test_supertonic_tokenizer_matches_reference_preprocessing() {
+    auto assets = std::make_shared<engine::models::supertonic::SupertonicAssets>();
+    for (uint32_t codepoint = 0; codepoint < 0x10000; ++codepoint) {
+        assets->unicode_indexer.emplace(codepoint, static_cast<int64_t>(codepoint));
+    }
+    const engine::models::supertonic::SupertonicTextTokenizer tokenizer(assets);
+    const struct {
+        const char * language;
+        const char * text;
+        const char * expected;
+    } cases[] = {
+        {"en", "Hello there 😀", "<en>Hello there.</en>"},
+        {"en", "Great job! 🎉🎉", "<en>Great job!</en>"},
+        {"en", "Rocket 🚀 launch", "<en>Rocket launch.</en>"},
+        {"en", "Sunny ☀ day", "<en>Sunny day.</en>"},
+        {"en", "Go Canada 🇨🇦", "<en>Go Canada.</en>"},
+        {"ja", "すごい！", "<ja>すごい!</ja>"},
+        {"ja", "本当？", "<ja>本当?</ja>"},
+        {"ja", "こんにちは。　", "<ja>こんにちは。</ja>"},
+        {"ko", "안녕하세요！", "<ko>안녕하세요!</ko>"},
+        {"na", "你好，世界！", "<na>你好,世界!</na>"},
+        {"en", "Ｈｅｌｌｏ ， world", "<en>Hello, world.</en>"},
+    };
+    for (const auto & test_case : cases) {
+        const auto encoded = tokenizer.encode(test_case.text, test_case.language);
+        const auto expected = engine::text::normalize_nfkd_codepoints(utf8_to_codepoints(test_case.expected));
+        std::vector<uint32_t> actual;
+        for (const int64_t id : encoded.ids) {
+            actual.push_back(static_cast<uint32_t>(id));
+        }
+        require_eq_u32_vector(actual, expected, std::string("Supertonic reference preprocessing: ") + test_case.text);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -426,6 +462,7 @@ int main() {
         test_nfkd_extended_coverage();
         test_supertonic_failure_class_nfkd_mappings();
         test_supertonic_tokenizer_regression_inputs();
+        test_supertonic_tokenizer_matches_reference_preprocessing();
         std::cout << "unicode_normalization_test passed\n";
         return 0;
     } catch (const std::exception & ex) {

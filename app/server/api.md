@@ -18,6 +18,7 @@ refer to entries in your server config, with the task/mode required by the route
 - [Voice discovery](#get-v1audiovoicesmodelid)
 - [Generic tasks and artifacts](#post-v1tasksrun)
 - [Generic streaming](#post-v1tasksstream) and [native batches](#post-v1tasksbatch)
+- [Streaming recipes](#post-v1recipesrun)
 - [Unload selected models](#post-v1tasksunload_models) or [all models](#post-v1tasksunload_all_models)
 
 ## `GET /health`
@@ -201,7 +202,7 @@ Models with revisable hypotheses, currently Phonon-2, may additionally emit
 `{"type":"transcript.text.partial","text":"..."}`. This is a whole provisional
 transcript to replace in the display, never append to the committed deltas.
 For these models, deltas contain finalized segments only. Other models retain
-their existing event behavior. See [Phonon-2](../../docs/models/parakeet_tdt.md#phonon-2-parakeet-tdt-variant).
+their existing event behavior. See [Phonon-2](../../docs/models/phonon2_asr.md).
 
 `stream=true` streams the *output* of an already-uploaded file: the whole
 recording is sent first, and the deltas describe decoding it. It can shorten
@@ -449,6 +450,14 @@ curl http://127.0.0.1:8080/v1/tasks/run \
   }'
 ```
 
+`voice_ref` takes the same shapes as on `/v1/audio/speech`: a server-local
+path, `{"type": "path", "path": "..."}`, or `{"type": "base64", "data": "..."}`
+with a Base64-encoded WAV or `data:audio/wav;base64,...` URI of at most 5 MiB.
+The inline form lets a client send a reference voice, for example the target
+speaker of a voice conversion, without the server having to store it on disk.
+A malformed `voice_ref`, or inline data that is not a readable WAV, returns HTTP 400. CLI request files and the batch and
+stream endpoints share this request format, so they accept it too.
+
 A result's artifacts (opaque payloads such as speaker embeddings or acoustic
 tokens) come back in an `artifacts` array. A request takes artifacts in the
 same shape, so a client can send what one result returned in a later request:
@@ -508,12 +517,19 @@ By default the response is one JSON body, sent once the run is over:
 
 An event has the fields it carries: `partial_text`, `audio` (a WAV of that
 event's samples), `named_audio_outputs`, `word_timestamps` and, for a
-diarization model, `speaker_turns`, and always `is_final`. Events do not carry
-voice activity or artifacts, so an event can be just `{"is_final":false}`.
+diarization model, `speaker_turns`, and always `is_final`. With
+`"include_artifacts": true`, artifact outputs are included in `artifacts`, using
+the same id, kind, Base64 payload and metadata as the final result. Events do not carry voice activity,
+so an event can be just `{"is_final":false}`.
 `result` has the fields of the `/v1/tasks/run` result, except that its `timing`
 holds only `ttft_ms`: the time from the start of the run, after the model is
 free and loaded, to its first output (`null` for a diarization run that found
 no speaker).
+
+Set top-level `"include_artifacts": true` to include model artifacts in streamed
+events and count artifact-only events toward first-output timing. It defaults to
+false, preserving existing event fields and timing. This applies to both JSON
+and SSE streaming responses; final-result artifact serialization is unchanged.
 
 With `"stream_format": "sse"` at the top level of the body, the response is
 server-sent events instead, each written as the model produces it:
@@ -629,3 +645,78 @@ Response:
   "unloaded": ["pocket-tts", "qwen3-asr"]
 }
 ```
+
+## `POST /v1/recipes/run`
+
+Recipes connect named model roles. `GET /v1/recipes` lists available recipes
+and their required tasks and modes. With `stream: true`, this endpoint returns
+the same event/done SSE envelope as `/v1/tasks/stream`; set
+`include_artifacts: true` to include streamed video payloads.
+
+The `speaking-avatar` recipe connects a streaming TTS model to a streaming
+`gen` model through a bounded PCM pipe. It starts avatar generation
+while speech synthesis continues. Example with configured model IDs:
+
+```json
+{
+  "recipe": "speaking-avatar",
+  "stream": true,
+  "include_artifacts": true,
+  "models": {"tts": "chat-voice", "avatar": "chat-avatar"},
+  "request": {
+    "text": "Hello! How can I help you today?",
+    "voice_id": "american_english_female",
+    "options": {"avatar.reference_image_file": "/path/to/portrait.png"}
+  }
+}
+```
+
+Use `tts.` and `avatar.` prefixes for role-specific request options.
+`avatar_sample_rate` defaults to 16000. `speaking_speed` defaults to 1.0 and
+accepts values from 0.5 to 2.0. Other speeds require libsonic for pitch-preserving
+streaming tempo adjustment before both playback and avatar input. Normal speed
+bypasses the processor without loading libsonic. Different producer/consumer rates require
+libsoxr for continuous resampling; missing resampling support raises an error.
+The final response includes the complete synthesized audio for replay, while
+playback can begin from earlier streamed blocks.
+
+The `voice-chat-avatar` recipe connects three streaming roles: `conversation`
+(`s2s`), `tts` (`tts`) and `avatar` (`gen`). Conversation text is forwarded
+immediately and queued incrementally for TTS using the framework's UTF-8/tag-aware
+text chunker. TTS audio feeds the avatar while conversation generation continues;
+there is no complete-reply barrier between stages.
+
+Using model IDs from [the example config](../../examples/server/voice-chat-avatar.json):
+
+```json
+{
+  "recipe": "voice-chat-avatar",
+  "stream": true,
+  "include_artifacts": true,
+  "models": {
+    "conversation": "chat-conversation",
+    "tts": "chat-voice",
+    "avatar": "chat-avatar"
+  },
+  "request": {
+    "audio": "/path/to/question.wav",
+    "voice_id": "american_english_female",
+    "options": {
+      "conversation.return_codes": true,
+      "avatar.reference_image_file": "/path/to/portrait.png"
+    }
+  }
+}
+```
+
+Audio and portrait paths refer to files accessible to the server. Optional
+`request.text` is forwarded to the conversation model; LFM3 uses it as the
+system prompt, not as text to synthesize. Prefix conversation-specific options
+with `conversation.`. For LFM3, set
+`conversation.return_codes: true` to retain its reply artifact. On subsequent
+turns, send the accumulated `lfm3_audio.question` and `lfm3_audio.reply` artifacts
+in `request.artifacts`, as described in the
+[LFM3 conversation guide](../../docs/models/lfm3_audio.md). The recipe forwards
+input artifacts only to the conversation role and retains that role's output
+artifacts in its final response. All three roles require separate streaming
+sessions.

@@ -110,7 +110,8 @@ ParallelServerState::ParallelServerState(
         const auto binary_directory = ui_resource_anchor.empty()
             ? request_base_
             : std::filesystem::absolute(ui_resource_anchor).lexically_normal();
-        default_models_root_ = (binary_directory / "models").lexically_normal();
+        default_models_root_ = std::filesystem::absolute(
+            config_.models_root.value_or(binary_directory / "models")).lexically_normal();
         models_root_ = default_models_root_;
         request_base_ = binary_directory;
         std::filesystem::create_directories(models_root_);
@@ -361,6 +362,13 @@ HttpResponse ParallelServerState::handle_model_load(const std::string & body_tex
         }
     }
     auto requested = model_config_from_json(body, request_base_, false);
+    if (requested.device_name.has_value()) {
+        try {
+            resolve_model_device(config_.backend, requested);
+        } catch (const std::exception & error) {
+            throw engine::runtime::InvalidRequestError(error.what());
+        }
+    }
     if (slots != nullptr) {
         requested.slots = static_cast<int>(slots->as_number());
     }
@@ -488,6 +496,36 @@ HttpResponse ParallelServerState::handle_ui_upload(const HttpRequest & request) 
 }
 
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+// Resolves a "package_id" to the installed package's load target before
+// handing the request to handle_model_load, which only ever sees a path.
+// Path-based loads never touch the installer or its mutex.
+HttpResponse ParallelServerState::handle_package_model_load(const std::string & body_text) {
+    if (!config_.ui_management) {
+        return handle_model_load(body_text);
+    }
+    const auto body = engine::io::json::parse(body_text);
+    std::string package_id;
+    if (auto error = ui_model_load_package_id(body, package_id)) {
+        return *error;
+    }
+    if (package_id.empty()) {
+        return handle_model_load(body_text);
+    }
+    std::optional<engine::package_manager::PackageInfo> info;
+    {
+        std::lock_guard<std::mutex> lock(model_installer_mutex_);
+        if (!model_installer_) {
+            return error_response(403, "UI model management is disabled", "forbidden");
+        }
+        info = model_installer_->package_info(package_id);
+    }
+    std::string resolved_body;
+    if (auto error = resolve_ui_package_model_load(body, package_id, info, resolved_body)) {
+        return *error;
+    }
+    return handle_model_load(resolved_body);
+}
+
 HttpResponse ParallelServerState::handle_model_install(const std::string & body_text) {
     if (!config_.ui_management) {
         return error_response(403, "UI model installation is disabled", "forbidden");
@@ -914,7 +952,7 @@ ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model_im
     const minitts::app::AudioChunkStream * audio,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
     std::optional<int> busy_timeout_ms,
-    RequestLease request_lease) {
+    RequestLease request_lease, bool include_artifacts) {
     std::optional<ModelSlots::Lock> lock;
     if (!request_lease) { lock.emplace(acquire_model_run(model, busy_timeout_ms)); }
     const size_t slot = request_lease ? request_lease->slot() : lock->slot();
@@ -930,7 +968,7 @@ ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model_im
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
     const auto sink = [&](const engine::runtime::StreamEvent & event) {
         if (!timed_result.ttft_ms.has_value() &&
-            (stream_event_has_output(event) || (diarization && !event.speaker_turns.empty()))) {
+            (stream_event_has_output(event, include_artifacts) || (diarization && !event.speaker_turns.empty()))) {
             timed_result.ttft_ms = elapsed_ms(started);
         }
         if (event_sink) {
@@ -958,8 +996,8 @@ ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model(
     const engine::runtime::TaskRequest & request,
     const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
     std::optional<int> busy_timeout_ms,
-    RequestLease request_lease) {
-    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms, std::move(request_lease));
+    RequestLease request_lease, bool include_artifacts) {
+    return run_streaming_model_impl(model, request, nullptr, event_sink, busy_timeout_ms, std::move(request_lease), include_artifacts);
 }
 
 ParallelServerState::TimedTaskResult ParallelServerState::run_streaming_model_from(
@@ -2267,6 +2305,7 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
     const auto body = engine::io::json::parse(body_text);
     auto & model = require_model(body);
     const bool sse = task_stream_sse_requested(body);
+    const bool include_artifacts = bool_field(body, "include_artifacts", false);
     const auto busy_timeout_ms = parse_busy_timeout_override(body);
     auto request_lease = bind_request(model, busy_timeout_ms);
     const auto * request_json = body.find("request");
@@ -2288,15 +2327,15 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
         // response puts in "events", and the result follows as the object it
         // puts under "result". The lease is bound above, before the headers,
         // so a busy model is still a 503 here.
-        return sse_response([this, model_ptr, request = std::move(request), busy_timeout_ms, diarization,
+        return sse_response([this, model_ptr, request = std::move(request), busy_timeout_ms, diarization, include_artifacts,
                              request_lease](HttpStreamWriter & writer) {
             const auto timed_result = run_streaming_model(
                 *model_ptr,
                 request,
                 [&](const engine::runtime::StreamEvent & event) {
-                    write_sse(writer, task_stream_event_line(stream_event_json(event, diarization)));
+                    write_sse(writer, task_stream_event_line(stream_event_json(event, diarization, include_artifacts)));
                 },
-                busy_timeout_ms, request_lease);
+                busy_timeout_ms, request_lease, include_artifacts);
             const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
             write_sse(writer, task_stream_done_line(
                                   silent_diarization
@@ -2312,7 +2351,7 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
         [&](const engine::runtime::StreamEvent & event) {
             events.push_back(event);
         },
-        busy_timeout_ms, request_lease);
+        busy_timeout_ms, request_lease, include_artifacts);
     std::ostringstream out;
     std::shared_lock<std::shared_mutex> metadata_lock(model.metadata_mutex);
     const bool diarization = model.task.task == engine::runtime::VoiceTaskKind::Diarization;
@@ -2321,7 +2360,7 @@ HttpResponse ParallelServerState::handle_generic_stream(const std::string & body
         if (i != 0) {
             out << ",";
         }
-        out << stream_event_json(events[i], diarization);
+        out << stream_event_json(events[i], diarization, include_artifacts);
     }
     const bool silent_diarization = diarization && !timed_result.ttft_ms.has_value();
     out << "],\"result\":" << (silent_diarization

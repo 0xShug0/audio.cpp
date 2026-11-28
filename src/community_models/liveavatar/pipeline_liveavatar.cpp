@@ -2731,7 +2731,7 @@ private:
 
 }  // namespace
 
-LiveAvatarVideoResult generate_liveavatar_blockwise(
+engine::video::RgbVideoBuffer generate_liveavatar_blockwise(
     LiveAvatarPipelineState & state,
     engine::core::ExecutionContext & execution,
     const std::shared_ptr<const LiveAvatarAssets> & assets,
@@ -2918,7 +2918,7 @@ LiveAvatarVideoResult generate_liveavatar_blockwise(
             if (stream_chunk_count == 0) {
                 stream_first_chunk_ms = engine::debug::elapsed_ms(total_start);
             }
-            LiveAvatarVideoResult chunk;
+            engine::video::RgbVideoBuffer chunk;
             chunk.width = request.width;
             chunk.height = request.height;
             chunk.frames = frames;
@@ -3440,7 +3440,7 @@ LiveAvatarVideoResult generate_liveavatar_blockwise(
 
     engine::debug::timing_log_scalar("liveavatar.denoiser_graph_run_ms", denoiser_graph_run_ms);
     engine::debug::timing_log_scalar("liveavatar.denoise_ms", engine::debug::elapsed_ms(denoise_start));
-    LiveAvatarVideoResult result;
+    engine::video::RgbVideoBuffer result;
     result.width = request.width;
     result.height = request.height;
     result.frames = generated_frames;

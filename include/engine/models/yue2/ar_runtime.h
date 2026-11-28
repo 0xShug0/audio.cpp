@@ -41,7 +41,9 @@ public:
         size_t prefill_graph_arena_bytes,
         size_t decode_graph_arena_bytes,
         bool packed_projections = false,
-        int64_t kv_cache_alignment = 1);
+        int64_t kv_cache_alignment = 1,
+        bool nar_prefix_cache = false,
+        bool compact_kv = false);
     ~Yue2ARRuntime();
 
     std::vector<int32_t> generate(
@@ -59,7 +61,9 @@ public:
         const std::vector<int32_t> & forced = {});
 
     runtime::TransformerKVState prefill_state(const std::vector<int32_t> & tokens);
-    Yue2ARDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens);
+    // shared_prefix is how many leading tokens later calls will repeat; with
+    // the NAR prefix cache enabled they are computed once.
+    Yue2ARDevicePrefixState prefill_device_state(const std::vector<int32_t> & tokens, size_t shared_prefix = 0);
 
     void release_runtime_graphs();
 

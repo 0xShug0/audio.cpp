@@ -1,12 +1,11 @@
 #include "engine/framework/codecs/oobleck_audio_vae_runtime.h"
 
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
-
-#include <ggml-alloc.h>
 
 #include <algorithm>
 #include <chrono>
@@ -22,14 +21,6 @@ namespace engine::codecs {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-struct GgmlContextDeleter {
-    void operator()(ggml_context * ctx) const noexcept {
-        if (ctx != nullptr) {
-            ggml_free(ctx);
-        }
-    }
-};
 
 struct OobleckResidualUnitWeights {
     modules::SnakeBeta1dWeights snake_0;
@@ -459,32 +450,30 @@ class OobleckAudioVaeRuntime::Impl::EncodeGraph {
 public:
     EncodeGraph(core::ExecutionContext & execution, const OobleckAudioVaeConfig & config, const OobleckAudioVaeRuntimeOptions & options, const OobleckAudioVaeWeights & weights, int64_t frames)
         : backend_(execution.backend()),
-          backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
           config_(config),
-          options_(options),
           weights_(weights),
-          frames_(frames) {
+          frames_(frames),
+          graph_(execution, {"framework.oobleck_audio_vae.encode", options.graph_arena_bytes, 524288, 0}) {
         if (backend_ == nullptr || frames_ <= 0) {
             throw std::runtime_error("Oobleck audio VAE encode graph initialization failed");
         }
         build();
     }
 
-    ~EncodeGraph() {
-        if (backend_ != nullptr && graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_type_, backend_, graph_);
-        }
-        if (gallocr_ != nullptr) {
-            ggml_gallocr_free(gallocr_);
-        }
-    }
-
     bool matches(int64_t frames) const noexcept {
         return frames == frames_;
     }
 
-    std::vector<float> run(const std::vector<float> & planar_audio) const {
+    void prepare() {
+        if (!graph_.allocated()) graph_.allocate_releasable();
+    }
+
+    void release_buffers() {
+        if (graph_.allocated()) graph_.release_buffers();
+    }
+
+    std::vector<float> run(const std::vector<float> & planar_audio) {
         if (static_cast<int64_t>(planar_audio.size()) != config_.audio_channels * frames_) {
             throw std::runtime_error("Oobleck audio VAE encode input shape mismatch");
         }
@@ -494,11 +483,8 @@ public:
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.encode.input_upload_ms", engine::debug::elapsed_ms(upload_start));
         core::set_backend_threads(backend_, threads_);
         const auto compute_start = Clock::now();
-        const ggml_status status = core::compute_backend_graph(backend_, graph_, nullptr, "framework.oobleck_audio_vae.encode");
+        graph_.compute();
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.encode.graph_compute_ms", engine::debug::elapsed_ms(compute_start));
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Oobleck audio VAE encode graph compute failed");
-        }
         const auto read_start = Clock::now();
         auto out = core::read_tensor_f32(output_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.encode.output_read_ms", engine::debug::elapsed_ms(read_start));
@@ -509,24 +495,13 @@ public:
 private:
     void build() {
         const auto start = Clock::now();
-        ggml_init_params params{options_.graph_arena_bytes, nullptr, true};
-        ctx_.reset(ggml_init(params));
-        if (ctx_ == nullptr) {
-            throw std::runtime_error("Oobleck audio VAE encode ggml context initialization failed");
-        }
-        core::ModuleBuildContext input_ctx{ctx_.get(), "framework.oobleck_audio_vae.encode.inputs", backend_type_};
-        input_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, config_.audio_channels, frames_}));
+        auto & ctx = graph_.build_context();
+        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1, config_.audio_channels, frames_}));
         ggml_set_input(input_.tensor);
-        core::ModuleBuildContext build_ctx{ctx_.get(), "framework.oobleck_audio_vae.encode", backend_type_};
-        auto output = build_graph_output(build_ctx);
+        auto output = build_graph_output(ctx);
         output_ = output.tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 524288, false);
-        ggml_build_forward_expand(graph_, output_);
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
-        if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("Oobleck audio VAE encode backend buffer allocation failed");
-        }
+        ggml_build_forward_expand(graph_.graph(), output_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.encode.graph_frames", frames_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.encode.graph_build_ms", engine::debug::elapsed_ms(start));
     }
@@ -544,50 +519,44 @@ private:
     }
 
     ggml_backend_t backend_ = nullptr;
-    core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     OobleckAudioVaeConfig config_;
-    OobleckAudioVaeRuntimeOptions options_;
     const OobleckAudioVaeWeights & weights_;
     int64_t frames_ = 0;
-    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    core::PreparedGraph graph_;
     core::TensorValue input_;
     ggml_tensor * output_ = nullptr;
-    ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t gallocr_ = nullptr;
 };
 
 class OobleckAudioVaeRuntime::Impl::DecodeGraph {
 public:
     DecodeGraph(core::ExecutionContext & execution, const OobleckAudioVaeConfig & config, const OobleckAudioVaeRuntimeOptions & options, const OobleckAudioVaeWeights & weights, int64_t batch, int64_t latent_frames)
         : backend_(execution.backend()),
-          backend_type_(execution.backend_type()),
           threads_(std::max(1, execution.config().threads)),
           config_(config),
-          options_(options),
           weights_(weights),
           batch_(batch),
-          latent_frames_(latent_frames) {
+          latent_frames_(latent_frames),
+          graph_(execution, {"framework.oobleck_audio_vae.decode", options.graph_arena_bytes, 524288, 0}) {
         if (backend_ == nullptr || batch_ <= 0 || latent_frames_ <= 0) {
             throw std::runtime_error("Oobleck audio VAE decode graph initialization failed");
         }
         build();
     }
 
-    ~DecodeGraph() {
-        if (backend_ != nullptr && graph_ != nullptr) {
-            core::release_backend_graph_resources(backend_type_, backend_, graph_);
-        }
-        if (gallocr_ != nullptr) {
-            ggml_gallocr_free(gallocr_);
-        }
-    }
-
     bool matches(int64_t batch, int64_t latent_frames) const noexcept {
         return batch == batch_ && latent_frames == latent_frames_;
     }
 
-    std::vector<float> run(const std::vector<float> & latents) const {
+    void prepare() {
+        if (!graph_.allocated()) graph_.allocate_releasable();
+    }
+
+    void release_buffers() {
+        if (graph_.allocated()) graph_.release_buffers();
+    }
+
+    std::vector<float> run(const std::vector<float> & latents) {
         if (static_cast<int64_t>(latents.size()) != batch_ * config_.decoder_latent_dim * latent_frames_) {
             throw std::runtime_error("Oobleck audio VAE latent shape mismatch");
         }
@@ -597,11 +566,8 @@ public:
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.input_upload_ms", engine::debug::elapsed_ms(upload_start));
         core::set_backend_threads(backend_, threads_);
         const auto compute_start = Clock::now();
-        const ggml_status status = core::compute_backend_graph(backend_, graph_, nullptr, "framework.oobleck_audio_vae.decode");
+        graph_.compute();
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_compute_ms", engine::debug::elapsed_ms(compute_start));
-        if (status != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Oobleck audio VAE decode graph compute failed");
-        }
         const auto read_start = Clock::now();
         auto out = core::read_tensor_f32(output_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.output_read_ms", engine::debug::elapsed_ms(read_start));
@@ -612,25 +578,14 @@ public:
 private:
     void build() {
         const auto start = Clock::now();
-        ggml_init_params params{options_.graph_arena_bytes, nullptr, true};
-        ctx_.reset(ggml_init(params));
-        if (ctx_ == nullptr) {
-            throw std::runtime_error("Oobleck audio VAE decode ggml context initialization failed");
-        }
-        core::ModuleBuildContext input_ctx{ctx_.get(), "framework.oobleck_audio_vae.decode.inputs", backend_type_};
-        input_ = core::make_tensor(input_ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, config_.decoder_latent_dim, latent_frames_}));
+        auto & ctx = graph_.build_context();
+        input_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_, config_.decoder_latent_dim, latent_frames_}));
         ggml_set_input(input_.tensor);
-        core::ModuleBuildContext build_ctx{ctx_.get(), "framework.oobleck_audio_vae.decode", backend_type_};
-        auto output = build_graph_output(build_ctx);
+        auto output = build_graph_output(ctx);
         output_ = output.tensor;
         output_frames_ = output.shape.dims[2];
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 524288, false);
-        ggml_build_forward_expand(graph_, output_);
-        gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
-        if (gallocr_ == nullptr || !ggml_gallocr_reserve(gallocr_, graph_) || !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
-            throw std::runtime_error("Oobleck audio VAE decode backend buffer allocation failed");
-        }
+        ggml_build_forward_expand(graph_.graph(), output_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_batch", batch_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_latent_frames", latent_frames_);
         engine::debug::timing_log_scalar("framework.oobleck_audio_vae.decode.graph_output_frames", output_frames_);
@@ -662,19 +617,15 @@ private:
     }
 
     ggml_backend_t backend_ = nullptr;
-    core::BackendType backend_type_ = core::BackendType::Cpu;
     int threads_ = 1;
     OobleckAudioVaeConfig config_;
-    OobleckAudioVaeRuntimeOptions options_;
     const OobleckAudioVaeWeights & weights_;
     int64_t batch_ = 0;
     int64_t latent_frames_ = 0;
     int64_t output_frames_ = 0;
-    std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    core::PreparedGraph graph_;
     core::TensorValue input_;
     ggml_tensor * output_ = nullptr;
-    ggml_cgraph * graph_ = nullptr;
-    ggml_gallocr_t gallocr_ = nullptr;
 };
 
 OobleckAudioVaeRuntime::OobleckAudioVaeRuntime(
@@ -689,17 +640,37 @@ OobleckAudioVaeRuntime::OobleckAudioVaeRuntime(OobleckAudioVaeRuntime &&) noexce
 OobleckAudioVaeRuntime & OobleckAudioVaeRuntime::operator=(OobleckAudioVaeRuntime &&) noexcept = default;
 
 void OobleckAudioVaeRuntime::prepare_encode(int64_t frames) {
-    const auto & weights = impl_->require_weights();
+    if (frames <= 0) throw std::runtime_error("Oobleck audio VAE encode graph initialization failed");
+    if (impl_->options.release_inactive_buffers && impl_->decode_graph)
+        impl_->decode_graph->release_buffers();
     if (!impl_->encode_graph || !impl_->encode_graph->matches(frames)) {
-        impl_->encode_graph = std::make_unique<Impl::EncodeGraph>(*impl_->execution, impl_->config, impl_->options, weights, frames);
+        impl_->encode_graph.reset();
+        impl_->encode_graph = std::make_unique<Impl::EncodeGraph>(*impl_->execution, impl_->config,
+            impl_->options, impl_->require_weights(), frames);
+    }
+    try {
+        impl_->encode_graph->prepare();
+    } catch (...) {
+        impl_->encode_graph.reset();
+        throw;
     }
 }
 
 void OobleckAudioVaeRuntime::prepare_decode(int64_t batch, int64_t latent_frames) {
-    const auto & weights = impl_->require_weights();
+    if (batch <= 0 || latent_frames <= 0)
+        throw std::runtime_error("Oobleck audio VAE decode graph initialization failed");
+    if (impl_->options.release_inactive_buffers && impl_->encode_graph)
+        impl_->encode_graph->release_buffers();
     if (!impl_->decode_graph || !impl_->decode_graph->matches(batch, latent_frames)) {
         impl_->decode_graph.reset();
-        impl_->decode_graph = std::make_unique<Impl::DecodeGraph>(*impl_->execution, impl_->config, impl_->options, weights, batch, latent_frames);
+        impl_->decode_graph = std::make_unique<Impl::DecodeGraph>(*impl_->execution, impl_->config,
+            impl_->options, impl_->require_weights(), batch, latent_frames);
+    }
+    try {
+        impl_->decode_graph->prepare();
+    } catch (...) {
+        impl_->decode_graph.reset();
+        throw;
     }
 }
 

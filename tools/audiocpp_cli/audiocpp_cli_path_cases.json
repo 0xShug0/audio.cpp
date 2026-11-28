@@ -1,6 +1,50 @@
 {
   "cases": [
     {
+      "id": "moss_soundeffect_requests",
+      "coverage": "English and Chinese sound effects, changing durations/prompts/seeds and repeated-request determinism",
+      "family": "moss_soundeffect",
+      "model": "models/audio.cpp-gguf/MOSS-SoundEffect-v2-GGUF/moss-soundeffect-v2-q8_0.gguf",
+      "task": "gen",
+      "outputs": [
+        "audio"
+      ],
+      "requests": [
+        {
+          "id": "rain",
+          "text": "Steady rain pattering on a wooden roof, with distant thunder.",
+          "seed": 42,
+          "options": {
+            "duration_sec": 10
+          }
+        },
+        {
+          "id": "fire",
+          "text": "A crackling campfire with occasional sharp pops in a quiet forest.",
+          "seed": 2026,
+          "options": {
+            "duration_sec": 8
+          }
+        },
+        {
+          "id": "birds",
+          "text": "清晨的森林里，鸟儿鸣叫，微风轻轻吹过树叶。",
+          "seed": 1234,
+          "options": {
+            "duration_sec": 6
+          }
+        },
+        {
+          "id": "rain_repeat",
+          "text": "Steady rain pattering on a wooden roof, with distant thunder.",
+          "seed": 42,
+          "options": {
+            "duration_sec": 10
+          }
+        }
+      ]
+    },
+    {
       "id": "plapre_conditioning",
       "coverage": "Danish voices, reference conditioning, speaker-only cloning, chunking, growing decode capacity and repeated requests",
       "family": "plapre",
@@ -107,6 +151,40 @@
       "outputs": ["segments"],
       "requests": [
         {"id": "english", "audio": "resources/wakeword/sherpa/en_0.wav"}
+      ]
+    },
+    {
+      "id": "edda_hurtig_asr",
+      "coverage": "Danish ASR with speculative, greedy, argmax-draft, short-block and beam-search decoding, varying input length and repeated requests",
+      "family": "edda_asr",
+      "model": "models/edda-v0.2-large-hurtig",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "first", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "different", "audio": "resources/hviske_asr/danish_unified_01.wav"},
+        {"id": "third", "audio": "resources/hviske_asr/danish_unified_02.wav"},
+        {"id": "greedy", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"speculative": false}},
+        {"id": "argmax_draft", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"draft_selector": false}},
+        {"id": "block_4", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"draft_block": 4}},
+        {"id": "beam_5", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"num_beams": 5}},
+        {"id": "repeat_first", "audio": "resources/hviske_asr/danish_unified_00.wav"}
+      ]
+    },
+    {
+      "id": "edda_hurtig_longform",
+      "coverage": "Danish longform with silence splitting, fixed and unsplit modes, and repeated requests",
+      "family": "edda_asr",
+      "model": "models/edda-v0.2-large-hurtig",
+      "task": "asr",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "warmup", "audio": "resources/hviske_asr/danish_unified_00.wav"},
+        {"id": "longform", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "fixed_28", "audio": "resources/hviske_asr/da_solen_180s.wav", "options": {"audio_chunk_mode": "fixed", "audio_chunk_duration_sec": 28}},
+        {"id": "none_short", "audio": "resources/hviske_asr/danish_unified_00.wav", "options": {"audio_chunk_mode": "none"}},
+        {"id": "repeat_default", "audio": "resources/hviske_asr/da_solen_180s.wav"},
+        {"id": "short_after_long", "audio": "resources/hviske_asr/danish_unified_00.wav"}
       ]
     },
     {
@@ -1700,7 +1778,7 @@
     },
     {
       "id": "heartmula_music_generation",
-      "coverage": "HeartMuLa text-to-music generation using native model weight types and the warmbench reference request",
+      "coverage": "HeartMuLa 60-second text-to-music generation from structured lyrics with piano/pop tags",
       "family": "heartmula",
       "model": "models/HeartMuLa",
       "task": "gen",
@@ -1710,7 +1788,7 @@
       ],
       "requests": [
         {
-          "id": "warmbench_default",
+          "id": "default",
           "text": "[Intro]\n\n[Verse]\nThe sun creeps in across the floor\nI hear the traffic outside the door\nThe coffee pot begins to hiss\nIt is another morning just like this\n\n[Prechorus]\nThe world keeps spinning round and round\nFeet are planted on the ground\nI find my rhythm in the sound\n\n[Chorus]\nEvery day the light returns\nEvery day the fire burns\nWe keep on walking down this street\nMoving to the same steady beat\nIt is the ordinary magic that we meet\n\n[Verse]\nThe hours tick deeply into noon\nChasing shadows, chasing the moon\nWork is done and the lights go low\nWatching the city start to glow\n\n[Bridge]\nIt is not always easy, not always bright\nSometimes we wrestle with the night\nBut we make it to the morning light\n\n[Chorus]\nEvery day the light returns\nEvery day the fire burns\nWe keep on walking down this street\nMoving to the same steady beat\n\n[Outro]\nJust another day\nEvery single day\n",
           "duration_seconds": 60,
           "temperature": 1.0,
@@ -3552,6 +3630,56 @@
       ]
     },
     {
+      "id": "haas_ja_offline",
+      "coverage": "Haas Japanese KDA predictor, full-context and bounded-window scheduling, state reset",
+      "family": "haas_asr",
+      "model": "models/Haas-ja-v1.0-GGUF/haas-ja-v1.0-q8_0.gguf",
+      "task": "asr",
+      "session_options": {
+        "haas_asr.matmul_weight_type": "q8_0"
+      },
+      "outputs": [
+        "text"
+      ],
+      "requests": [
+        {
+          "id": "full",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"
+        },
+        {
+          "id": "windowed",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav",
+          "options": {
+            "audio_chunk_mode": "fixed"
+          }
+        },
+        {
+          "id": "repeat",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"
+        }
+      ]
+    },
+    {
+      "id": "haas_ja_streaming",
+      "coverage": "Haas Japanese buffered streaming chunk ingestion and finalize",
+      "family": "haas_asr",
+      "model": "models/Haas-ja-v1.0-GGUF/haas-ja-v1.0-q8_0.gguf",
+      "task": "asr",
+      "session_options": {
+        "haas_asr.matmul_weight_type": "q8_0"
+      },
+      "outputs": [
+        "text"
+      ],
+      "mode": "streaming",
+      "requests": [
+        {
+          "id": "stream",
+          "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"
+        }
+      ]
+    },
+    {
       "id": "parakeet_tdt_offline_long",
       "coverage": "Parakeet offline pre-encode, long-context encoder, TDT decoder",
       "family": "parakeet_tdt",
@@ -4912,8 +5040,8 @@
       ]
     },
     {
-      "id": "midashenglm_gen_warmbench_single_paths",
-      "coverage": "MiDashengLM-Gen single-request warmbench paths: mixed speech/music/sfx CFG, music+sfx no speech CFG, and speech no-CFG",
+      "id": "midashenglm_gen_single_paths",
+      "coverage": "MiDashengLM-Gen generation requests: mixed speech/music/sfx with CFG, music+sfx without speech with CFG, and speech without CFG",
       "family": "midashenglm_gen",
       "model": "models/MiDashengLM-Gen",
       "task": "gen",
@@ -5207,6 +5335,44 @@
           "seed": 1234,
           "options": {"voice_id": "english_female"}
         }
+      ]
+    },
+    {
+      "id": "granite_speech5_short_en",
+      "coverage": "Granite Speech 5.0 2B short English transcription with an explicit language hint",
+      "family": "granite_speech5",
+      "model": "build/granite-2b-handoff/hf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "short_en", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "language": "en"},
+        {"id": "short_en_repeat", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav", "language": "en"}
+      ]
+    },
+    {
+      "id": "granite_speech5_japanese_hint",
+      "coverage": "Granite Speech 5.0 2B Japanese transcription with a Japanese hint and an auto repeat",
+      "family": "granite_speech5",
+      "model": "build/granite-2b-handoff/hf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "japanese_hint", "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav", "language": "ja"},
+        {"id": "japanese_auto", "audio": "assets/asr_validation/common_voice_ja/common_voice_ja_20461197.wav"}
+      ]
+    },
+    {
+      "id": "granite_speech5_fixed_chunking",
+      "coverage": "Granite Speech 5.0 2B fixed chunking with input longer than the requested chunk limit",
+      "family": "granite_speech5",
+      "model": "build/granite-2b-handoff/hf",
+      "task": "asr",
+      "mode": "offline",
+      "outputs": ["text"],
+      "requests": [
+        {"id": "fixed_4s", "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0001.wav", "language": "en", "options": {"audio_chunk_mode": "fixed", "audio_chunk_duration_sec": 4}}
       ]
     }
   ],

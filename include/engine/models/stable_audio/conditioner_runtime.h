@@ -33,8 +33,7 @@ public:
     StableAudioConditionerRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const StableAudioAssets> assets,
-        assets::TensorStorageType weight_storage_type,
-        int64_t max_batch);
+        assets::TensorStorageType weight_storage_type);
     ~StableAudioConditionerRuntime();
 
     StableAudioConditionerRuntime(const StableAudioConditionerRuntime &) = delete;

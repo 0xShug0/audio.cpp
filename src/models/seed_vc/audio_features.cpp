@@ -54,11 +54,7 @@ std::vector<float> seed_vc_resample_mono(
     options.output_length_policy = engine::audio::SoxrOutputLengthPolicy::ExactExpected;
     options.require_full_input = true;
     options.warning_context = "Seed-VC";
-    options.fallback_description = "torchaudio-compatible resampling";
-    if (auto output = engine::audio::try_resample_mono_soxr(input, input_sample_rate, output_sample_rate, options)) {
-        return *output;
-    }
-    return engine::audio::resample_mono_torchaudio_sinc_hann(input, input_sample_rate, output_sample_rate);
+    return engine::audio::resample_mono_soxr_or_sinc(input, input_sample_rate, output_sample_rate, options);
 }
 
 }  // namespace

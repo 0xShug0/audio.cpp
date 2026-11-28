@@ -1,5 +1,7 @@
 #include "engine/models/canary_asr/model.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/framework/audio/chunking.h"
 #include "engine/framework/audio/conversion.h"
 #include "engine/framework/runtime/options.h"
@@ -40,6 +42,7 @@ public:
         mark_prepared();
     }
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        const auto wall_start = std::chrono::steady_clock::now();
         require_prepared("Canary run");
         auto validation_options = request.options;
         validation_options.erase("punc");
@@ -119,6 +122,7 @@ public:
             trace(debug::LogLevel::Info, "canary_asr", "chunk=" + std::to_string(chunk.index) +
                 " samples=" + std::to_string(chunk.valid_samples) + " tokens=" + std::to_string(tokens.size()));
         }
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
         return result;
     }
 

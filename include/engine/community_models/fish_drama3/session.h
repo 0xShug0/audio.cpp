@@ -1,5 +1,7 @@
 #pragma once
 
+#include <mutex>
+
 #include "engine/community_models/fish_drama3/generator.h"
 #include "engine/framework/runtime/session_base.h"
 #include "engine/framework/runtime/streaming_tts_session.h"
@@ -20,6 +22,7 @@ public:
     runtime::TaskResult run(const runtime::TaskRequest & request) override;
 
 private:
+    std::mutex request_mutex_;
     runtime::TaskResult generate_stream(const runtime::TaskRequest & request) override;
     void reset_stream_state() override {}
     runtime::TaskResult synthesize(const runtime::TaskRequest & request, bool streaming);

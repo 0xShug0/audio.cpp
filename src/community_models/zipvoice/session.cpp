@@ -1,5 +1,7 @@
 #include "engine/community_models/zipvoice/session.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/community_models/zipvoice/synthesize.h"
 
 #include "engine/framework/assets/tensor_source.h"
@@ -181,6 +183,7 @@ public:
     }
 
     runtime::TaskResult run(const runtime::TaskRequest & request) override {
+        const auto wall_start = std::chrono::steady_clock::now();
         if (run_mode_ != runtime::RunMode::Offline) {
             throw std::runtime_error("ZipVoice run requires an offline session");
         }
@@ -197,6 +200,7 @@ public:
         if (merged.samples.empty()) throw std::invalid_argument("zipvoice: empty text chunks");
         runtime::TaskResult result;
         result.audio_output = std::move(merged);
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
         return result;
     }
 
@@ -208,6 +212,7 @@ public:
     }
 
     void start_stream(const runtime::TaskRequest & request) override {
+        stream_wall_start_ = std::chrono::steady_clock::now();
         if (run_mode_ != runtime::RunMode::Streaming) {
             throw std::runtime_error("ZipVoice start_stream requires a streaming session");
         }
@@ -262,6 +267,7 @@ public:
         runtime::TaskResult result;
         result.audio_output = std::move(stream_merged_audio_);
         reset();
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
         return result;
     }
 
@@ -367,6 +373,7 @@ private:
     std::vector<std::string> stream_text_chunks_;
     runtime::AudioBuffer stream_merged_audio_;
     std::size_t stream_chunk_index_ = 0;
+    std::chrono::steady_clock::time_point stream_wall_start_{};
     bool stream_started_ = false;
 };
 

@@ -1,5 +1,10 @@
 # WeightNormFoldedTensorSource: backend upload performance
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/bug09_backend_tensor_performance.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 ## Summary
 
 `WeightNormFoldedTensorSource` inherited `TensorSource::set_backend_tensor`. Ordinary tensors passing through the wrapper were therefore materialized as host-side `TensorData` bytes and copied again to the backend, bypassing optimized upload implementations in the wrapped source.
@@ -55,7 +60,7 @@ CPU-only configuration and test:
 cmake -S . -B /tmp/audio-cpp-weight-norm-cpu-after -DCMAKE_BUILD_TYPE=Release \
   -DENGINE_ENABLE_VULKAN=OFF -DENGINE_ENABLE_HIP=OFF -DENGINE_ENABLE_CUDA=OFF \
   -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_EXAMPLES=OFF -DENGINE_BUILD_MODEL_TESTS=OFF \
-  -DENGINE_BUILD_EXTENDED_TESTS=OFF -DENGINE_BUILD_WARMBENCH=OFF \
+  -DENGINE_BUILD_EXTENDED_TESTS=OFF \
   -DENGINE_ENABLE_NATIVE_CPU=ON -DENGINE_ENABLE_OPENMP=ON
 cmake --build /tmp/audio-cpp-weight-norm-cpu-after --target gguf_tensor_source_test -j 8
 /tmp/audio-cpp-weight-norm-cpu-after/bin/gguf_tensor_source_test

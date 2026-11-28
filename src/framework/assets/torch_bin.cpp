@@ -120,11 +120,11 @@ std::map<std::string, ZipEntry> read_zip_entries(const std::vector<uint8_t> & by
 enum class GlobalKind { None, OrderedDict, RebuildTensor, StorageF32, StorageF16, StorageBF16 };
 
 struct PickleValue {
-    enum class Kind { None, Int, Bool, Str, Tuple, Global, Storage, Tensor, Dict } kind = Kind::None;
+    enum class Kind { None, Int, Bool, Str, Tuple, List, Global, Storage, Tensor, Dict } kind = Kind::None;
     int64_t integer = 0;
     bool boolean = false;
     std::string text;                 // Str value, or a Storage/Tensor storage key
-    std::vector<PickleValue> items;   // Tuple items, or a Dict as flat [k0, v0, k1, v1, ...]
+    std::vector<PickleValue> items;   // Tuple/List items, or a Dict as flat [k0, v0, k1, v1, ...]
     GlobalKind global = GlobalKind::None;  // Global callable, or a Storage/Tensor dtype
     std::vector<int64_t> shape;       // Tensor shape
     std::vector<int64_t> stride;      // Tensor stride, in elements
@@ -177,6 +177,9 @@ public:
                 case 0x93: op_stack_global(); break;                            // STACK_GLOBAL
                 case ')': push(tuple_value({})); break;                         // EMPTY_TUPLE
                 case '}': push(dict_value()); break;                            // EMPTY_DICT
+                case ']': push(list_value()); break;                            // EMPTY_LIST
+                case 'a': op_append(); break;                                   // APPEND
+                case 'e': op_appends(); break;                                  // APPENDS
                 case 0x85: op_tuple(1); break;                                  // TUPLE1
                 case 0x86: op_tuple(2); break;                                  // TUPLE2
                 case 0x87: op_tuple(3); break;                                  // TUPLE3
@@ -228,6 +231,11 @@ private:
     static PickleValue dict_value() {
         PickleValue value;
         value.kind = PickleValue::Kind::Dict;
+        return value;
+    }
+    static PickleValue list_value() {
+        PickleValue value;
+        value.kind = PickleValue::Kind::List;
         return value;
     }
 
@@ -394,6 +402,24 @@ private:
         }
         throw std::runtime_error("torch .bin pickle reduce on an unsupported callable");
     }
+    void op_append() {
+        PickleValue value = pop();
+        if (stack_.empty() || stack_.back().kind != PickleValue::Kind::List) {
+            throw std::runtime_error("torch .bin pickle append without a list");
+        }
+        stack_.back().items.push_back(std::move(value));
+    }
+    void op_appends() {
+        const size_t mark = pop_mark();
+        std::vector<PickleValue> items(stack_.begin() + static_cast<std::ptrdiff_t>(mark), stack_.end());
+        stack_.erase(stack_.begin() + static_cast<std::ptrdiff_t>(mark), stack_.end());
+        if (stack_.empty() || stack_.back().kind != PickleValue::Kind::List) {
+            throw std::runtime_error("torch .bin pickle appends without a list");
+        }
+        for (auto & item : items) {
+            stack_.back().items.push_back(std::move(item));
+        }
+    }
     void op_setitem() {
         PickleValue value = pop();
         PickleValue key = pop();
@@ -421,6 +447,14 @@ private:
         }
         if (result.kind != PickleValue::Kind::Dict) {
             throw std::runtime_error("torch .bin pickle did not produce a state dict");
+        }
+        // A training checkpoint saved as {"state_dict": ..., "metadata": ...} (Semantic-DACVAE's
+        // weights.pth) keeps its weights in the inner dict; the rest is not tensor data.
+        for (size_t i = 0; i + 1 < result.items.size(); i += 2) {
+            if (result.items[i].kind == PickleValue::Kind::Str && result.items[i].text == "state_dict" &&
+                result.items[i + 1].kind == PickleValue::Kind::Dict) {
+                return result.items[i + 1].items;
+            }
         }
         return result.items;
     }

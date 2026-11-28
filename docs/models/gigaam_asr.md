@@ -35,7 +35,7 @@ Download a fine-tuned ASR checkpoint, not the SSL-only encoder:
 
 ```bash
 hf download ai-sage/GigaAM-v3 --revision ctc --local-dir models/GigaAM-v3-ctc
-python tests/gigaam_asr/convert_gguf.py models/GigaAM-v3-ctc \
+python tools/gguf/gigaam_asr_convert.py models/GigaAM-v3-ctc \
   models/GigaAM-ASR-GGUF/gigaam-v3-ctc-f16.gguf \
   --staging-dir models/GigaAM-v3-ctc/converted
 ```

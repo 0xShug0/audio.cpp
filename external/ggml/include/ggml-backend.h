@@ -221,6 +221,18 @@ extern "C" {
 
     // Split buffer type for tensor parallelism (old)
     typedef ggml_backend_buffer_type_t   (*ggml_backend_split_buffer_type_t)(int main_device, const float * tensor_split);
+    // Optional per-graph pointwise lowering. A zero mask unregisters the graph.
+    // First registration must precede allocation; it may reorder pure nodes.
+    // Registration must not change while the graph is executing. The backend
+    // returns the supported subset; unsupported patterns retain ordinary ops.
+    enum ggml_backend_graph_fusion {
+        GGML_BACKEND_GRAPH_FUSION_NORM_AFFINE = 1u << 0,
+        GGML_BACKEND_GRAPH_FUSION_BIAS_ACTIVATION = 1u << 1,
+        GGML_BACKEND_GRAPH_FUSION_GATED_RESIDUAL = 1u << 2,
+    };
+    typedef uint32_t (*ggml_backend_set_graph_fusions_t)(
+        ggml_backend_t backend, struct ggml_cgraph * graph, uint32_t mask);
+
     // Set the number of threads for the backend
     typedef void                         (*ggml_backend_set_n_threads_t)(ggml_backend_t backend, int n_threads);
     // Get additional buffer types provided by the device (returns a NULL-terminated array)
@@ -325,6 +337,22 @@ extern "C" {
     //
     typedef bool (*ggml_backend_sched_eval_callback)(struct ggml_tensor * t, bool ask, void * user_data);
 
+    // Explicit replacement of exact, ordered, contiguous graph nodes. Allocation
+    // keeps the full graph. Only declared outputs may escape the region. Backend
+    // optimization cannot move work across a replacement boundary. Deferred eval
+    // tensors are inputs handled by the replacement instead of the eval callback.
+    typedef enum ggml_status (*ggml_backend_region_callback)(ggml_backend_t backend, struct ggml_cgraph * region, void * user_data);
+    struct ggml_backend_graph_region {
+        struct ggml_tensor * const * nodes;
+        size_t n_nodes;
+        struct ggml_tensor * const * outputs;
+        size_t n_outputs;
+        struct ggml_tensor * const * deferred_eval;
+        size_t n_deferred_eval;
+        ggml_backend_region_callback compute;
+        void * user_data;
+    };
+
     // Initialize a backend scheduler, backends with low index are given priority over backends with high index
     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
@@ -359,6 +387,12 @@ extern "C" {
     // This in effect deallocates all tensors that were previously allocated and leaves them with dangling pointers.
     // The correct way to use this API is to discard the deallocated tensors and create new ones.
     GGML_API void                 ggml_backend_sched_reset(ggml_backend_sched_t sched);
+
+    // Copy region descriptors before allocation (count zero disables replacement).
+    // Regions must be disjoint and wholly contained in one scheduler split.
+    // Rejects pipeline-parallel schedulers. Callback data must outlive the graph.
+    // Registration survives scheduler reset; reallocation rebuilds segment views.
+    GGML_API bool ggml_backend_sched_set_regions(ggml_backend_sched_t sched, const struct ggml_backend_graph_region * regions, size_t count);
 
     // Set a callback to be called for each resulting node during graph compute
     GGML_API void                 ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backend_sched_eval_callback callback, void * user_data);

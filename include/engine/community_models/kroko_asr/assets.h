@@ -14,6 +14,7 @@ struct KrokoASRConfig {
     std::string model_type = "zipformer2";
     std::string variant = "Kroko-Community-Streaming";
     std::string language = "auto";
+    bool streaming = true;
     int64_t sample_rate = 16000;
     int64_t feature_dim = 80;
     int64_t chunk_size = 269;

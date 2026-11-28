@@ -83,7 +83,7 @@ core::TensorValue RoPEModule::build(
             ggml_fill(ctx.ggml, basis, 0.0f), 0);
         auto * table = ggml_rope_ext(ctx.ggml, identity, positions.tensor,
             frequency_factors ? frequency_factors->tensor : nullptr, config_.dimensions,
-            config_.mode, 0, config_.theta, config_.freq_scale, config_.ext_factor,
+            config_.mode, config_.orig_context, config_.theta, config_.freq_scale, config_.ext_factor,
             config_.attn_factor, config_.beta_fast, config_.beta_slow);
         table = *config_.intermediate_round_type == GGML_TYPE_BF16
             ? ggml_round_bf16(ctx.ggml, table)
@@ -119,7 +119,7 @@ core::TensorValue RoPEModule::build(
             frequency_factors != nullptr ? frequency_factors->tensor : nullptr,
             static_cast<int>(config_.dimensions),
             config_.mode,
-            0,
+            config_.orig_context,
             config_.theta,
             config_.freq_scale,
             config_.ext_factor,
@@ -128,6 +128,22 @@ core::TensorValue RoPEModule::build(
             config_.beta_slow),
         input.shape,
         input.type);
+}
+
+core::TensorValue RoPEModule::build_batched(
+    core::ModuleBuildContext & ctx,
+    const core::TensorValue & input,
+    const core::TensorValue & positions,
+    const core::TensorValue * frequency_factors) const {
+    core::validate_rank_between(input, 4, 4, "batched RoPE input");
+    const auto batch = input.shape.dims[0];
+    const auto steps = input.shape.dims[1];
+    core::validate_shape(positions, core::TensorShape::from_dims({batch, steps}), "batched RoPE positions");
+    const auto flat_input = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, input),
+        core::TensorShape::from_dims({1, batch * steps, input.shape.dims[2], input.shape.dims[3]}));
+    const auto flat_positions = core::reshape_tensor(ctx, core::ensure_backend_addressable_layout(ctx, positions),
+        core::TensorShape::from_dims({batch * steps}));
+    return core::reshape_tensor(ctx, build(ctx, flat_input, flat_positions, frequency_factors), input.shape);
 }
 
 SplitRoPEModule::SplitRoPEModule(SplitRoPEConfig config) : config_(config) {

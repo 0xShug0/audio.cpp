@@ -27,15 +27,33 @@ Streaming parameters are fixed across goldens so comparisons are deterministic:
 
 ## Regenerating a golden
 
-Run from the Confucius4-R2T2 checkout (its `uv` environment has torch/MPS):
+The generator defaults to the shared English `assets/resources/sample_16k.wav`,
+resolved relative to the script's repository, independently of the working directory.
+Both `--model_path` and `--out` are required. Use a new output filename to preserve
+recorded goldens. Run from the upstream Confucius4-R2T2 checkout on macOS with
+its torch/MPS dependencies (the upstream example uses `uv`):
 
 ```bash
 cd /path/to/Confucius4-R2T2
 PYTHONPATH=. uv run python /path/to/audio.cpp/tests/confucius4_r2t2/make_golden.py \
-  --model_path /path/to/audio.cpp/models/Confucius4-R2T2 \
-  --audio resources/test.wav \
-  --out /path/to/audio.cpp/tests/confucius4_r2t2/golden.json
+  --model_path /path/to/checkpoints/r2t2 \
+  --out /path/to/generated_sample16k.json \
+  > /path/to/generated_sample16k.log 2>&1
 ```
+
+`golden.json` and `golden_zh.json` require the optional external upstream Chinese
+`resources/test.wav`: pass its path explicitly with `--audio` (and
+`--language Chinese` for the forced-language case), with a separate output file.
+There is no shared Chinese fixture; the existing `a` and `c` clips are English
+and cannot substitute for that input.
+
+Existing golden `audio` fields, including contributor-local paths, record historical
+provenance, not live input paths. These recorded runs have not been regenerated
+or relabeled. Future generation records `audio_sha256`, the SHA256 of the original
+WAV bytes before preprocessing, and uses a repo-relative `audio` identity for repo
+inputs or an absolute path for external inputs. Reference preprocessing and decoding
+math are unchanged. Syntax and help checks do not validate MPS inference or parity;
+regeneration still requires the external upstream implementation, checkpoint, and Mac/MPS.
 
 ## Comparing
 

@@ -521,6 +521,12 @@ static inline void ggml_thread_cpu_relax(void) {
 static inline void ggml_thread_cpu_relax(void) {
     _mm_pause();
 }
+#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+// MSVC defines _M_X64 / _M_IX86, not __x86_64__, so MSVC builds took the empty
+// fallback below and spun without `pause`. YieldProcessor() emits `pause`.
+static inline void ggml_thread_cpu_relax(void) {
+    YieldProcessor();
+}
 #elif defined(__riscv)
 static inline void ggml_thread_cpu_relax(void) {
     #ifdef __riscv_zihintpause
@@ -2120,6 +2126,26 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_ssm_scan(params, tensor);
             } break;
+        case GGML_OP_SSM_CONV_CAUSAL_SILU:
+            {
+                ggml_compute_forward_ssm_conv_causal_silu(params, tensor);
+            } break;
+        case GGML_OP_CONV_2D_DW_SPARSE:
+            ggml_compute_forward_conv_2d_dw_sparse(params, tensor);
+            break;
+        case GGML_OP_AFFINE:
+            ggml_compute_forward_affine(params, tensor);
+            break;
+        case GGML_OP_GRU_CELL:
+            ggml_compute_forward_gru_cell(params, tensor);
+            break;
+        case GGML_OP_GRU_SCAN:
+            ggml_compute_forward_gru_scan(params, tensor);
+            break;
+        case GGML_OP_SSM_SCAN_MAMBA1:
+            {
+                ggml_compute_forward_ssm_scan_mamba1(params, tensor);
+            } break;
         case GGML_OP_WIN_PART:
             {
                 ggml_compute_forward_win_part(params, tensor);
@@ -2385,6 +2411,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 case GGML_UNARY_OP_SIGMOID:
                 case GGML_UNARY_OP_HARDSWISH:
                 case GGML_UNARY_OP_HARDSIGMOID:
+                case GGML_UNARY_OP_RSQRT:
                 case GGML_UNARY_OP_EXP:
                 case GGML_UNARY_OP_SOFTPLUS:
                 case GGML_UNARY_OP_EXPM1:
@@ -2399,6 +2426,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
 
                 case GGML_UNARY_OP_GELU:
                 case GGML_UNARY_OP_GELU_ERF:
+                case GGML_UNARY_OP_GELU_ERF_APPROX:
                 case GGML_UNARY_OP_GELU_QUICK:
                 case GGML_UNARY_OP_SILU:
                 case GGML_UNARY_OP_XIELU:
@@ -2521,6 +2549,12 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_FLASH_ATTN_BACK:
         case GGML_OP_SSM_CONV:
         case GGML_OP_SSM_SCAN:
+        case GGML_OP_SSM_CONV_CAUSAL_SILU:
+        case GGML_OP_AFFINE:
+        case GGML_OP_CONV_2D_DW_SPARSE:
+        case GGML_OP_GRU_CELL:
+        case GGML_OP_GRU_SCAN:
+        case GGML_OP_SSM_SCAN_MAMBA1:
             {
                 n_tasks = n_threads;
             } break;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onMount, onDestroy } from 'svelte';
   import { X, UserRound } from '@lucide/svelte';
   import type { SavedVoice } from '$lib/library';
@@ -64,7 +65,7 @@
     error = '';
     try {
       await onsave({
-        id: initial?.id || savedId || crypto.randomUUID(),
+        id: initial?.id || savedId || randomUUID(),
         name: name.trim(),
         configuration: structuredClone(configuration),
         voice: structuredClone(assignment)

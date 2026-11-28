@@ -1,10 +1,15 @@
-// Parity harness: run f5_dit_forward on golden inputs, compare stages vs goldens.
+// Compare the production final forward against the independent upstream reference.
 #include "engine/community_models/f5_tts/runtime.h"
+#include "engine/framework/debug/trace.h"
+#include <chrono>
+#include <cerrno>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -38,25 +43,48 @@ double cosine(const std::vector<float> & a, const std::vector<float> & b) {
 double max_abs(const std::vector<float> & a, const std::vector<float> & b) {
     double m = 0;
     for (size_t i = 0; i < a.size(); ++i) {
-        m = std::max(m, std::abs(static_cast<double>(a[i]) - b[i]));
+        const double error = std::abs(static_cast<double>(a[i]) - b[i]);
+        if (!std::isfinite(error)) return std::numeric_limits<double>::infinity();
+        m = std::max(m, error);
     }
     return m;
-}
-
-// golden tensors are row-major [T, F]; C++ taps are column [F, T]
-std::vector<float> col_from_row(const std::vector<float> & row, int T, int F) {
-    std::vector<float> col(row.size());
-    for (int t = 0; t < T; ++t)
-        for (int f = 0; f < F; ++f)
-            col[static_cast<size_t>(f) * T + t] = row[static_cast<size_t>(t) * F + f];
-    return col;
 }
 
 }  // namespace
 
 int main(int argc, char ** argv) {
-    const std::string gold = "/mnt/ai/f5-parity/golden";
-    const std::string ckpt = argc > 1 ? argv[1] : "/mnt/ai/models/Habibi-TTS/Unified/model_200000.safetensors";
+    engine::debug::configure_logging({true, std::nullopt});
+    const auto started = std::chrono::steady_clock::now();
+    if (argc < 5 || argc > 7 || std::string(argv[3]) != "--max-abs-error" ||
+        (argc == 7 && std::string(argv[6]) != "--log")) {
+        std::fprintf(stderr, "usage: %s <checkpoint> <reference-dir> --max-abs-error <bound> [device] [--log]\n", argv[0]);
+        return 2;
+    }
+    char * bound_end = nullptr;
+    errno = 0;
+    const double max_abs_error = std::strtod(argv[4], &bound_end);
+    if (errno == ERANGE || bound_end == argv[4] || *bound_end != '\0' ||
+        !std::isfinite(max_abs_error) || max_abs_error < 0.0) {
+        std::fprintf(stderr, "--max-abs-error requires a finite non-negative acceptance bound\n");
+        return 2;
+    }
+    int device = 0;
+    if (argc > 5 && std::string(argv[5]) != "--log") {
+        char * device_end = nullptr;
+        errno = 0;
+        const long parsed = std::strtol(argv[5], &device_end, 10);
+        if (errno == ERANGE || device_end == argv[5] || *device_end != '\0' || parsed < 0 ||
+            parsed > std::numeric_limits<int>::max()) {
+            std::fprintf(stderr, "device must be a non-negative integer\n");
+            return 2;
+        }
+        device = static_cast<int>(parsed);
+    } else if (argc == 7) {
+        std::fprintf(stderr, "unexpected argument after --log\n");
+        return 2;
+    }
+    const std::string ckpt = argv[1];
+    const std::string gold = argv[2];
 
     const auto x = load_bin(gold + "/input_x.bin", 64 * 100);
     const auto cond = load_bin(gold + "/input_cond.bin", 64 * 100);
@@ -67,59 +95,35 @@ int main(int argc, char ** argv) {
     }
 
     engine::models::f5_tts::F5Architecture arch;
-    engine::models::f5_tts::F5DebugTaps taps;
-    std::vector<float> t_text_embed, t_text_convnext, t_text_padded, t_input_embed, t_time_embed, t_block0, t_block21;
-    taps.text_embed = &t_text_embed;
-    taps.text_convnext = &t_text_convnext;
-    taps.text_padded = &t_text_padded;
-    taps.input_embed = &t_input_embed;
-    taps.time_embed = &t_time_embed;
-    taps.block0 = &t_block0;
-    taps.block21 = &t_block21;
-
-    const bool use_cuda = std::getenv("F5_CUDA") != nullptr;
-    const bool with_taps = std::getenv("F5_RAW_TAPS") != nullptr;  // module graph: taps unwired
     engine::models::f5_tts::F5ComputeDevice dev;
-    dev.use_cuda = use_cuda;
-    dev.device = 1;  // GPU 1 is the TTS GPU on this rig
+    dev.use_cuda = std::getenv("F5_CUDA") != nullptr;
+    dev.device = device;
     const auto out = engine::models::f5_tts::f5_dit_forward(
-        ckpt, x, cond, ids, 0.42F, 64, arch, false, false, (with_taps ? &taps : nullptr), &dev);
+        ckpt, x, cond, ids, 0.42F, 64, arch, false, false, nullptr, &dev);
 
     int failures = 0;
-    auto check = [&](const char * name, const std::vector<float> & mine_col, const std::vector<float> & golden_row, int T, int F) {
-        (void) T; (void) F;
-        // Both golden and taps are stored with time as the slow axis ([t][f]);
-        // no transpose needed. (The F5Runtime returns column layout only for
-        // the final output; stage taps keep the same [t][f] memory.)
-        const double c = cosine(mine_col, golden_row);
-        const double m = max_abs(mine_col, golden_row);
-        if (mine_col.empty()) {
-            std::printf("%-18s (tap not wired in module graph; skipped)\n", name);
+    auto check = [&](const char * name, const std::vector<float> & mine_col, const std::vector<float> & golden_row) {
+        if (mine_col.empty() || mine_col.size() != golden_row.size()) {
+            std::fprintf(stderr, "%s: empty output or mismatched tensor size\n", name);
+            ++failures;
             return;
         }
-        const bool ok = c >= 0.999 && std::isfinite(c);
-        std::printf("%-18s cosine=%.6f maxabs=%.5f %s\n", name, c, m, ok ? "OK" : "FAIL");
+        const double c = cosine(mine_col, golden_row);
+        const double m = max_abs(mine_col, golden_row);
+        const bool ok = c >= 0.999 && std::isfinite(c) && m <= max_abs_error;
+        std::printf("%-18s cosine=%.6f maxabs=%.9g bound=%.9g %s\n", name, c, m, max_abs_error, ok ? "OK" : "FAIL");
         if (!ok) failures++;
     };
 
-    check("01_text_embed", t_text_embed, load_bin(gold + "/01_text_embed.bin", 24 * 512), 24, 512);
-    check("02_text_convnext", t_text_convnext, load_bin(gold + "/02_text_after_convnext.bin", 24 * 512), 24, 512);
-    check("03_text_padded", t_text_padded, load_bin(gold + "/03_text_padded.bin", 64 * 512), 64, 512);
-    check("04_input_embed", t_input_embed, load_bin(gold + "/04_input_embed.bin", 64 * 1024), 64, 1024);
-    check("05_time_embed", t_time_embed, load_bin(gold + "/05_time_embed.bin", 1024), 1, 1024);
-    check("07_block0", t_block0, load_bin(gold + "/07_block0_out.bin", 64 * 1024), 64, 1024);
-    check("07_block21", t_block21, load_bin(gold + "/07_block21_out.bin", 64 * 1024), 64, 1024);
-    {
-        // out tensor ne [MEL, N] => memory (m,n) at n*MEL + m, i.e. raw bytes
-        // are already golden's [n][m] row-major layout. Direct compare.
-        const std::vector<float> out_rows = out;
-        check("08_final_out", out_rows, load_bin(gold + "/08_final_out.bin", 64 * 100), 64, 100);
-    }
+    // Final output bytes already match the reference's [time][mel] layout.
+    check("08_final_out", out, load_bin(gold + "/08_final_out.bin", 64 * 100));
 
     if (failures > 0) {
-        std::printf("PARITY FAILED (%d stages)\n", failures);
+        std::printf("PARITY FAILED (%d outputs)\n", failures);
         return 1;
     }
     std::printf("PARITY PASSED\n");
+    engine::debug::timing_log_scalar("session.wall_ms",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
     return 0;
 }

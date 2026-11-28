@@ -465,10 +465,15 @@ core::TensorValue GeluModule::build(core::ModuleBuildContext & ctx, const core::
     switch (config_.approximation) {
         case GeluApproximation::ExactErf:
             return build_unary(ctx, input, ggml_gelu_erf);
-        case GeluApproximation::Tanh:
-            return build_unary(ctx, input, ggml_gelu);
+        case GeluApproximation::Tanh: {
+            auto result = build_unary(ctx, input, ggml_gelu);
+            result.type = result.tensor->type;
+            return result;
+        }
         case GeluApproximation::Quick:
             return build_unary(ctx, input, ggml_gelu_quick);
+        case GeluApproximation::ApproxErf:
+            return build_unary(ctx, input, ggml_gelu_erf_approx);
         default:
             throw std::runtime_error("Unsupported GELU approximation mode");
     }
@@ -532,7 +537,11 @@ core::TensorValue SeluModule::build(core::ModuleBuildContext & ctx, const core::
     const auto contiguous = core::ensure_backend_addressable_layout(ctx, input);
     auto positive = ggml_relu(ctx.ggml, contiguous.tensor);
     auto negative = ggml_scale(ctx.ggml, ggml_relu(ctx.ggml, ggml_scale(ctx.ggml, contiguous.tensor, -1.0F)), -1.0F);
-    negative = ggml_scale(ctx.ggml, ggml_expm1(ctx.ggml, negative), kAlpha);
+    // ELU equals expm1 on this nonpositive branch. Vulkan has ELU but no EXPM1.
+    negative = ctx.backend_type == core::BackendType::Vulkan
+        ? ggml_elu(ctx.ggml, negative)
+        : ggml_expm1(ctx.ggml, negative);
+    negative = ggml_scale(ctx.ggml, negative, kAlpha);
     return core::wrap_tensor(
         ggml_scale(ctx.ggml, ggml_add(ctx.ggml, positive, negative), kScale),
         input.shape,

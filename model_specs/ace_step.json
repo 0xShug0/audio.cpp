@@ -30,6 +30,7 @@
   "options": {
     "request": [
       {"name": "route", "type": "enum", "values": ["text2music", "complete", "lego", "extract", "cover", "cover-nofsq", "repaint"], "description": "Generation or editing route.", "required": false, "default": "text2music"},
+      {"name": "reference_audio", "type": "string", "description": "WAV path for timbre/style conditioning, independent of source audio. Server paths refer to the server filesystem.", "required": false},
       {"name": "lyrics", "type": "string", "description": "Vocal lyrics.", "required": false},
       {"name": "language", "type": "string", "description": "Vocal language; falls back to text input language, then en.", "required": false},
       {"name": "duration_sec", "type": "float", "description": "Target seconds; non-positive lets the planner choose. Source-locked routes use source duration.", "required": false, "default": -1.0},

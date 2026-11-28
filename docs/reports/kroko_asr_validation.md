@@ -1,5 +1,10 @@
 # Kroko Community ASR validation
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/kroko_asr_validation.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 This report covers the native `kroko_asr` community-model implementation,
 public 64-L and 128-L Kroko packages, stateful streaming, word timestamps,
 multilingual behavior, and standalone Q8 GGUF loading. The original
@@ -58,7 +63,7 @@ $env:NVCC_PREPEND_FLAGS = "-allow-unsupported-compiler"
   -Preset windows-cuda-release -ConfigureOnly
 
 cmake -S . -B build\windows-cuda-release `
-  -DENGINE_BUILD_WARMBENCH=ON `
+  `
   -DCMAKE_CUDA_COMPILER="$env:CUDACXX"
 ```
 
@@ -108,7 +113,7 @@ The manager infers `Kroko-DE-Community-64-L-Native`; the language packages
 therefore do not overwrite each other. The direct equivalent is:
 
 ```powershell
-.\venv\Scripts\python.exe tools\community_models\convert_kroko_onnx.py `
+.\venv\Scripts\python.exe tools\gguf\kroko_asr\kroko_asr_onnx_extract.py `
   ..\models\Kroko-ASR\Kroko-SV-Community-64-L-Streaming-001.data `
   ..\models\Kroko-ASR\Kroko-SV-Community-64-L-Native --overwrite
 ```

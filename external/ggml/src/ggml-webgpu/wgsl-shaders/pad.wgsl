@@ -45,12 +45,15 @@ fn wrap_around(idx: i32, n: u32) -> u32 {
 }
 
 @compute @workgroup_size(WG_SIZE)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= params.ne) {
+fn main(@builtin(num_workgroups) num_wg: vec3<u32>,
+        @builtin(global_invocation_id) gid: vec3<u32>) {
+
+    let gid_i = gid.x + (num_wg.x * u32(WG_SIZE)) * gid.y;
+    if (gid_i >= params.ne) {
         return;
     }
 
-    var i = gid.x;
+    var i = gid_i;
     let dst_plane = params.dst_ne2 * params.dst_ne1 * params.dst_ne0;
     let i3 = i / dst_plane;
     i = i % dst_plane;
@@ -61,7 +64,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var value: f32 = 0.0;
 
-#ifdef CIRCULAR
+#ifdef REFLECT_1D
+    var reflected = i32(i0) - i32(params.lp0);
+    if (reflected < 0) { reflected = -reflected; }
+    if (reflected >= i32(params.src_ne0)) { reflected = 2 * (i32(params.src_ne0) - 1) - reflected; }
+    let src_idx = u32(reflected) * params.stride_src0 + i1 * params.stride_src1 +
+                  i2 * params.stride_src2 + i3 * params.stride_src3;
+    value = src[params.offset_src + src_idx];
+#elif defined(CIRCULAR)
     let ci0 = wrap_around(i32(i0) - i32(params.lp0), params.src_ne0);
     let ci1 = wrap_around(i32(i1) - i32(params.lp1), params.src_ne1);
     let ci2 = wrap_around(i32(i2) - i32(params.lp2), params.src_ne2);
@@ -82,5 +92,5 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 #endif
 
-    dst[params.offset_dst + gid.x] = value;
+    dst[params.offset_dst + gid_i] = value;
 }

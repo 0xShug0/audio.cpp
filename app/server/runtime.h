@@ -116,6 +116,7 @@ private:
     HttpResponse handle_path_status(const std::string & body_text) const;
     HttpResponse handle_ui_upload(const HttpRequest & request);
 #if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+    HttpResponse handle_package_model_load(const std::string & body_text);
     HttpResponse handle_model_install(const std::string & body_text);
     HttpResponse handle_model_install_stop(const std::string & body_text);
     HttpResponse handle_model_clean_partial(const std::string & body_text);
@@ -154,14 +155,16 @@ private:
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const std::function<void(const engine::runtime::StreamEvent &)> & event_sink = {},
-        std::optional<int> busy_timeout_ms = std::nullopt);
+        std::optional<int> busy_timeout_ms = std::nullopt,
+        bool include_artifacts = false);
     // Shared body of the two entry points above/below; `audio` selects the source.
     TimedTaskResult run_streaming_model_impl(
         LoadedModel & model,
         const engine::runtime::TaskRequest & request,
         const minitts::app::AudioChunkStream * audio,
         const std::function<void(const engine::runtime::StreamEvent &)> & event_sink,
-        std::optional<int> busy_timeout_ms);
+        std::optional<int> busy_timeout_ms,
+        bool include_artifacts = false);
     // Same as run_streaming_model, but pulls audio from `audio` instead of
     // `request.audio_input`, so the samples are never fully materialized.
     TimedTaskResult run_streaming_model_from(

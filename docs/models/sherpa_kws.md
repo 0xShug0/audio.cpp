@@ -4,7 +4,7 @@ The `sherpa_kws` family runs streaming Zipformer transducer keyword-spotting
 exports. Convert a model directory with:
 
 ```bash
-conda run -n qwen3-tts python tools/models/convert_sherpa_kws_gguf.py \
+conda run -n qwen3-tts python tools/gguf/sherpa_kws_convert.py \
   /path/to/sherpa-onnx-kws-model /path/to/sherpa-kws-f32.gguf
 ```
 

@@ -268,7 +268,8 @@ public:
       throw std::runtime_error(
           "VoxCPM1 step projection runtime requires weights");
     }
-    build(graph_context_bytes);
+    graph_context_bytes_ = graph_context_bytes;
+    build(graph_context_bytes_);
   }
 
   ~Impl() { release_graph(); }
@@ -278,6 +279,7 @@ public:
   VoxCPM1StepProjectionOutput run(const std::vector<float> &lm_hidden,
                                   const std::vector<float> &residual_hidden,
                                   const std::vector<float> &current_embed) {
+    ensure_graph();
     const auto &config = weights_->assets().config;
     if (static_cast<int64_t>(lm_hidden.size()) != config.lm.hidden_size) {
       throw std::runtime_error(
@@ -539,7 +541,15 @@ private:
     }
   }
 
+  // mem_saver releases the graph after a request; the next use rebuilds it.
+  void ensure_graph() {
+    if (graph_ == nullptr) {
+      build(graph_context_bytes_);
+    }
+  }
+
   std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
+  size_t graph_context_bytes_ = 0;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *lm_hidden_ = nullptr;
@@ -586,7 +596,8 @@ public:
       throw std::runtime_error(
           "VoxCPM1 local encoder runtime requires weights");
     }
-    build(graph_context_bytes);
+    graph_context_bytes_ = graph_context_bytes;
+    build(graph_context_bytes_);
   }
 
   ~Impl() { release_graph(); }
@@ -594,7 +605,8 @@ public:
   void release_runtime_memory() { release_graph(); }
 
   std::vector<float>
-  encode_patch(const std::vector<float> &patch_features) const {
+  encode_patch(const std::vector<float> &patch_features) {
+    ensure_graph();
     const auto &config = weights_->assets().config;
     const int64_t expected = config.patch_size * config.feat_dim;
     if (static_cast<int64_t>(patch_features.size()) != expected) {
@@ -721,7 +733,15 @@ private:
                             position_ids.size() * sizeof(int32_t));
   }
 
+  // mem_saver releases the graph after a request; the next use rebuilds it.
+  void ensure_graph() {
+    if (graph_ == nullptr) {
+      build(graph_context_bytes_);
+    }
+  }
+
   std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
+  size_t graph_context_bytes_ = 0;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *input_ = nullptr;
@@ -758,7 +778,8 @@ public:
       throw std::runtime_error(
           "VoxCPM1 DiT estimator runtime requires weights");
     }
-    build(graph_context_bytes);
+    graph_context_bytes_ = graph_context_bytes;
+    build(graph_context_bytes_);
   }
 
   ~Impl() { release_graph(); }
@@ -770,6 +791,7 @@ public:
                          const std::vector<float> &cond,
                          const std::vector<float> &time_embedding,
                          const std::vector<float> &delta_time_embedding) {
+    ensure_graph();
     const auto &config = weights_->assets().config;
     const int64_t patch_elems = 2 * config.feat_dim * config.patch_size;
     if (static_cast<int64_t>(x.size()) != patch_elems) {
@@ -1021,7 +1043,15 @@ private:
                             positions_data.size() * sizeof(int32_t));
   }
 
+  // mem_saver releases the graph after a request; the next use rebuilds it.
+  void ensure_graph() {
+    if (graph_ == nullptr) {
+      build(graph_context_bytes_);
+    }
+  }
+
   std::shared_ptr<const VoxCPM1WeightsRuntime> weights_;
+  size_t graph_context_bytes_ = 0;
   bool mem_saver_ = false;
   std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
   ggml_tensor *x_ = nullptr;

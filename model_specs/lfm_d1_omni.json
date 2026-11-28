@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "family": "lfm_d1_omni",
+  "display_name": "d1-Omni-2B",
+  "description": "Liquid AI d1-Omni-2B audio decisions: calibrated yes/no, choice, score, and numeric estimates from audio and named questions.",
+  "category": "speech_analysis",
+  "status": "supported",
+  "tasks": [
+    "classify"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "ar",
+    "zh",
+    "fr",
+    "de",
+    "it",
+    "ja",
+    "ko",
+    "pt",
+    "es",
+    "ru",
+    "pl"
+  ],
+  "capabilities": {
+    "classify": [
+      "scores"
+    ]
+  },
+  "dependencies": [],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "questions",
+        "type": "string",
+        "description": "JSON object mapping question names to typed questions, in input order.",
+        "required": true
+      },
+      {
+        "name": "set_size",
+        "type": "int",
+        "min": 1,
+        "default": 16,
+        "description": "Questions packed together per forward pass. Larger sets may affect accuracy.",
+        "required": false
+      },
+      {
+        "name": "score_readout",
+        "type": "enum",
+        "values": [
+          "median",
+          "mean",
+          "mode"
+        ],
+        "default": "median",
+        "required": false,
+        "description": "How ordered score probabilities are reduced to a score."
+      }
+    ],
+    "session": [
+      {
+        "name": "attention",
+        "type": "enum",
+        "values": [
+          "auto",
+          "flash",
+          "eager"
+        ],
+        "default": "auto",
+        "required": false,
+        "description": "Attention lowering for the audio encoder and decoder."
+      }
+    ],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "LiquidAI/d1-Omni-2B-GGUF",
+      "revision": "36707287af55fc9ab03e34bda6a6cc82075499b1",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "lfm_d1_omni_2b_q8_0",
+      "display_name": "d1-Omni-2B Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "default": true,
+      "target_directory": "d1-Omni-2B-GGUF",
+      "files": [
+        "d1-Omni-2B-Q8_0.gguf",
+        "mmproj-d1-Omni-2B-Q8_0.gguf"
+      ]
+    },
+    {
+      "id": "lfm_d1_omni_2b_f16",
+      "display_name": "d1-Omni-2B F16",
+      "format": "gguf",
+      "precision": "f16",
+      "default": false,
+      "target_directory": "d1-Omni-2B-GGUF",
+      "files": [
+        "d1-Omni-2B-F16.gguf",
+        "mmproj-d1-Omni-2B-F16.gguf"
+      ]
+    },
+    {
+      "id": "lfm_d1_omni_2b_bf16",
+      "display_name": "d1-Omni-2B BF16",
+      "format": "gguf",
+      "precision": "bf16",
+      "default": false,
+      "target_directory": "d1-Omni-2B-GGUF",
+      "files": [
+        "d1-Omni-2B-BF16.gguf",
+        "mmproj-d1-Omni-2B-BF16.gguf"
+      ]
+    }
+  ],
+  "ui": {
+    "recommended_package": "lfm_d1_omni_2b_q8_0",
+    "tags": [
+      "GGUF"
+    ],
+    "docs": [
+      "docs/models/lfm_d1_omni.md",
+      "docs/speech_analysis.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "model": "weights:"
+      },
+      "tensors": {
+        "model": "weights:"
+      }
+    }
+  ]
+}

@@ -78,6 +78,9 @@ private:
   runtime::AudioBuffer streaming_audio_;
   size_t streaming_audio_offset_values_ = 0;
   int64_t streaming_windows_processed_ = 0;
+  // Stream samples (per channel) handed to the transcriber so far: where the
+  // next window starts in stream time.
+  int64_t streaming_frames_done_ = 0;
 };
 
 } // namespace engine::community_models::sense_asr

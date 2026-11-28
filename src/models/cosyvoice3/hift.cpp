@@ -1,7 +1,12 @@
 #include "engine/models/cosyvoice3/hift.h"
 
 #include "engine/framework/modules/vocoders/hift_vocoder.h"
+#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/modules/structural_modules.h"
+#include "engine/framework/runtime/errors.h"
 
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -48,7 +53,7 @@ public:
         std::shared_ptr<const CosyVoice3Assets> assets,
         engine::core::ExecutionContext & execution,
         engine::assets::TensorStorageType storage_type)
-        : assets_(std::move(assets)) {
+        : assets_(std::move(assets)), execution_(execution) {
         if (assets_ == nullptr) {
             throw std::runtime_error("CosyVoice3 HiFT runtime requires assets");
         }
@@ -61,7 +66,8 @@ public:
     engine::runtime::AudioBuffer synthesize(
         const std::vector<float> & mel,
         int64_t frames,
-        uint64_t seed) {
+        uint64_t seed,
+        float speed) {
         if (frames <= 0 || static_cast<int64_t>(mel.size()) != frames * 80) {
             throw std::runtime_error("CosyVoice3 HiFT mel shape mismatch");
         }
@@ -71,6 +77,32 @@ public:
                 channel_major[static_cast<size_t>(channel * frames + frame)] =
                     mel[static_cast<size_t>(frame * 80 + channel)];
             }
+        }
+        if (speed != 1.0F) {
+            const float scaled_frames = static_cast<float>(frames) / speed;
+            if (!std::isfinite(scaled_frames) || scaled_frames < 1.0F ||
+                static_cast<double>(scaled_frames) >= static_cast<double>(std::numeric_limits<int64_t>::max())) {
+                throw runtime::InvalidRequestError("CosyVoice3 speed produces an invalid mel length");
+            }
+            const auto output_frames = static_cast<int64_t>(scaled_frames);
+            if (!speed_graph_ || speed_input_.tensor->ne[0] != frames ||
+                speed_output_.tensor->ne[0] != output_frames) {
+                speed_graph_ = std::make_unique<core::PreparedGraph>(execution_,
+                    core::PreparedGraphConfig{"cosyvoice3.speed", 1024 * 1024, 128});
+                auto & ctx = speed_graph_->build_context();
+                speed_input_ = core::make_tensor(ctx, GGML_TYPE_F32,
+                    core::TensorShape::from_dims({1, 80, frames}));
+                ggml_set_input(speed_input_.tensor);
+                speed_output_ = modules::Interpolate1dModule({output_frames,
+                    modules::Interpolate1dMode::Linear, false}).build(ctx, speed_input_);
+                ggml_set_output(speed_output_.tensor);
+                ggml_build_forward_expand(speed_graph_->graph(), speed_output_.tensor);
+                speed_graph_->allocate();
+            }
+            core::write_tensor_f32(speed_input_, channel_major);
+            speed_graph_->compute();
+            channel_major = core::read_tensor_f32(speed_output_.tensor);
+            frames = output_frames;
         }
         auto out = component_.synthesize(channel_major, frames, seed, 0);
         engine::runtime::AudioBuffer audio;
@@ -82,11 +114,15 @@ public:
 
     void release_graphs() {
         component_.release_runtime_cache();
+        speed_graph_.reset();
     }
 
 private:
     std::shared_ptr<const CosyVoice3Assets> assets_;
+    core::ExecutionContext & execution_;
     engine::modules::HiftVocoderComponent component_;
+    std::unique_ptr<core::PreparedGraph> speed_graph_;
+    core::TensorValue speed_input_, speed_output_;
 };
 
 CosyVoice3HiftRuntime::CosyVoice3HiftRuntime(
@@ -100,8 +136,9 @@ CosyVoice3HiftRuntime::~CosyVoice3HiftRuntime() = default;
 engine::runtime::AudioBuffer CosyVoice3HiftRuntime::synthesize(
     const std::vector<float> & mel,
     int64_t frames,
-    uint64_t seed) {
-    return impl_->synthesize(mel, frames, seed);
+    uint64_t seed,
+    float speed) {
+    return impl_->synthesize(mel, frames, seed, speed);
 }
 
 void CosyVoice3HiftRuntime::release_graphs() {

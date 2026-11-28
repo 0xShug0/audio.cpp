@@ -32,7 +32,7 @@ Setup (NeMo + its dependency chain isn't a lightweight install):
 
 Usage:
   /tmp/parakeet_parity_venv/bin/python3 dump_nemo_reference.py \
-      --audio ../assets/2086-149220-0033.wav \
+      --audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav \
       --output-dir /tmp/parakeet_nemo_dump
 """
 from __future__ import annotations

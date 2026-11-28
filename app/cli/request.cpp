@@ -330,6 +330,65 @@ std::vector<engine::runtime::VoiceArtifact> json_request_artifacts(
     return artifacts;
 }
 
+namespace {
+
+// The reference voice in the shapes /v1/audio/speech takes: a path, or
+// {"type": "path", "path": ...} or {"type": "base64", "data": ...} for a
+// WAV sent inline, so a server needn't store a caller's voice on disk.
+engine::runtime::AudioBuffer read_voice_ref(
+    const engine::io::json::Value & voice_ref,
+    const std::filesystem::path & base_dir) {
+    if (voice_ref.is_string()) {
+        return read_audio_buffer(resolve_case_path(base_dir, voice_ref.as_string()));
+    }
+    if (!voice_ref.is_object()) {
+        throw InvalidRequestError(
+            "voice_ref must be a path string or an object with type \"path\" or \"base64\"");
+    }
+    const auto * type = voice_ref.find("type");
+    if (type == nullptr || !type->is_string()) {
+        throw InvalidRequestError("voice_ref type must be \"path\" or \"base64\"");
+    }
+    if (type->as_string() == "path") {
+        const auto * path = voice_ref.find("path");
+        if (path == nullptr || !path->is_string()) {
+            throw InvalidRequestError("voice_ref of type \"path\" needs a path string");
+        }
+        return read_audio_buffer(resolve_case_path(base_dir, path->as_string()));
+    }
+    if (type->as_string() != "base64") {
+        throw InvalidRequestError("voice_ref type must be \"path\" or \"base64\"");
+    }
+    constexpr size_t kMaxVoiceRefBytes = size_t{5} * 1024 * 1024;
+    constexpr size_t kMaxVoiceRefBase64Length = ((kMaxVoiceRefBytes + 2) / 3) * 4 + 4096;
+    const auto * data = voice_ref.find("data");
+    if (data == nullptr || !data->is_string()) {
+        throw InvalidRequestError("voice_ref of type \"base64\" needs a data string");
+    }
+    if (data->as_string().size() > kMaxVoiceRefBase64Length) {
+        throw InvalidRequestError("voice_ref base64 data exceeds the 5 MiB limit");
+    }
+    std::vector<std::byte> bytes;
+    try {
+        bytes = minitts::app::base64_decode_bytes(data->as_string());
+    } catch (const std::runtime_error & error) {
+        throw InvalidRequestError(std::string("voice_ref base64 data is not valid base64 (") + error.what() + ")");
+    }
+    if (bytes.empty()) {
+        throw InvalidRequestError("voice_ref base64 data decoded to an empty payload");
+    }
+    if (bytes.size() > kMaxVoiceRefBytes) {
+        throw InvalidRequestError("voice_ref base64 data exceeds the 5 MiB limit");
+    }
+    try {
+        return read_audio_buffer(std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+    } catch (const std::runtime_error & error) {
+        throw InvalidRequestError(std::string("voice_ref base64 data is not a readable WAV (") + error.what() + ")");
+    }
+}
+
+}  // namespace
+
 engine::runtime::TaskRequest build_request_from_json(
     const engine::io::json::Value & value,
     const std::filesystem::path & base_dir) {
@@ -350,11 +409,11 @@ engine::runtime::TaskRequest build_request_from_json(
         voice.speaker = std::move(reference);
         has_voice = true;
     }
-    if (const auto voice_ref = json_optional_string(value, "voice_ref")) {
+    if (const auto * voice_ref = value.find("voice_ref"); voice_ref != nullptr && !voice_ref->is_null()) {
         if (!voice.speaker.has_value()) {
             voice.speaker = engine::runtime::VoiceReference{};
         }
-        voice.speaker->audio = read_audio_buffer(resolve_case_path(base_dir, *voice_ref));
+        voice.speaker->audio = read_voice_ref(*voice_ref, base_dir);
         has_voice = true;
     }
 

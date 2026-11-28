@@ -7,7 +7,7 @@ param(
     [switch]$RunTests,
     [switch]$Clean,
     [string]$CudaArchitectures = "auto",
-    [ValidateSet("", "native", "avx2", "baseline")]
+    [ValidateSet("", "native", "avx2", "baseline", "all")]
     [string]$CpuArch = "",
     [ValidateSet("ON", "OFF")]
     [string]$NativeCpu = $null,
@@ -332,7 +332,7 @@ function Get-CpuArchSettings {
             return @{
                 Label = "native"
                 Native = "ON"
-                CMakeArgs = @()
+                CMakeArgs = @("-DENGINE_ENABLE_CPU_ALL_VARIANTS=OFF")
             }
         }
         "avx2" {
@@ -340,6 +340,7 @@ function Get-CpuArchSettings {
                 Label = "AVX2"
                 Native = "OFF"
                 CMakeArgs = @(
+                    "-DENGINE_ENABLE_CPU_ALL_VARIANTS=OFF",
                     "-DGGML_AVX=ON",
                     "-DGGML_AVX2=ON",
                     "-DGGML_AVX512=OFF",
@@ -350,11 +351,19 @@ function Get-CpuArchSettings {
                 )
             }
         }
+        "all" {
+            return @{
+                Label = "runtime-dispatched CPU variants"
+                Native = "OFF"
+                CMakeArgs = @("-DENGINE_ENABLE_CPU_ALL_VARIANTS=ON")
+            }
+        }
         "baseline" {
             return @{
                 Label = "baseline"
                 Native = "OFF"
                 CMakeArgs = @(
+                    "-DENGINE_ENABLE_CPU_ALL_VARIANTS=OFF",
                     "-DGGML_AVX=OFF",
                     "-DGGML_AVX2=OFF",
                     "-DGGML_AVX512=OFF",

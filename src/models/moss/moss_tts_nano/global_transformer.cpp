@@ -545,7 +545,6 @@ std::vector<float> MossTTSNanoGlobalTransformerRuntime::prefill(
     const auto & config = assets_->config.global_transformer;
     const int64_t n_vq = assets_->config.n_vq;
     const int64_t hidden_size = config.hidden_size;
-    const int64_t head_dim = hidden_size / config.num_attention_heads;
     if (row_width != n_vq + 1) {
         throw std::runtime_error("MOSS global prefill row width does not match the codebook count");
     }

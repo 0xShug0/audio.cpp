@@ -63,8 +63,7 @@
       const request: Record<string, unknown> = {
         text,
         seed: resolveRequestSeed(seed),
-        duration_seconds: duration,
-        options: { ...requestOptions(), rewrite_caption: true }
+        options: { ...requestOptions(), duration_sec: duration, rewrite_caption: true }
       };
       if (language.trim()) request.language = language;
       if (lyrics.trim()) request.lyrics = lyrics;

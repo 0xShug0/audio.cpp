@@ -1,5 +1,8 @@
 # IndexTTS
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 IndexTTS is wired as `--family index_tts2` for offline text to speech and voice
 cloning. The same model family handles IndexTTS2 and IndexTTS2.5; the runtime
 selects the variant from the model config.
@@ -15,7 +18,7 @@ emotion controls. It requires a speaker reference through the framework
 | Family | `index_tts2` |
 | Model directory | `models/IndexTTS-2` |
 | Task | `tts`, `clon` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` (completed segments) |
 | Languages | `zh`, `en` |
 | Voice input | Required reference WAV through `--voice-ref` |
 | Built-in voices | Not exposed |
@@ -45,6 +48,10 @@ audiocpp_cli --task tts --family index_tts2 \
   --request-option emotion_alpha=0.6 \
   --out out.wav
 ```
+
+### Segment streaming
+
+A streaming session emits each completed text segment immediately, including the configured inter-segment silence before later segments. This is segment-level output, not token-level waveform decoding. The final audio concatenates exactly those chunks. Set the server model entry's `mode` to `streaming` and use `/v1/tasks/stream` with `stream_format: "sse"`; the offline route and its defaults are unchanged.
 
 ### IndexTTS2 Common Options (use directly)
 
@@ -85,6 +92,8 @@ audiocpp_cli --task tts --family index_tts2 \
 | `num_beams` | integer >= 1 | `3` | Beam search width. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
+| `text_chunk_tokens` | integer in `[1, 600]` | `120` | Internal text-token budget, independent of the framework character chunk size. Applies to 2.0 and 2.5. |
+| `text_normalization` | bool | `true` | IndexTTS2.5 number/symbol normalization; `false` keeps the basic punctuation map, case rules and pronunciation annotations. Does not add NeMo normalization for Japanese/Spanish. Disabling it for 2.0 is rejected. |
 | `duration_scale` | positive float | `1` | Positive waveform duration rescaling, supported by both IndexTTS2 and IndexTTS2.5. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
 | `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive. |
@@ -147,7 +156,7 @@ per variant from the model config `version` field (`"2.5"`). All
 | Default package | `index_tts2_5_q8_0` |
 | Other packages | `index_tts2_5_f16`, `index_tts2_5_orig` |
 | Task | `tts`, `clon` |
-| Modes | `offline` |
+| Modes | `offline`, `streaming` (completed segments) |
 | Languages | `zh`, `en`, `ja`, `es`, `ar` |
 | Voice input | Required reference WAV through `--voice-ref` |
 | Built-in voices | Not exposed |
@@ -236,6 +245,8 @@ or commercial use.
 | `num_beams` | integer | `3` | GPT beam count. |
 | `repetition_penalty` | float | `10` | Sampling repetition penalty. |
 | `max_tokens` | integer >= 1 | `1500` | Maximum generated mel tokens. |
+| `text_chunk_tokens` | integer in `[1, 600]` | `120` | Internal text-token budget, independent of the framework character chunk size. Applies to 2.0 and 2.5. |
+| `text_normalization` | bool | `true` | IndexTTS2.5 number/symbol normalization; `false` keeps the basic punctuation map, case rules and pronunciation annotations. Does not add NeMo normalization for Japanese/Spanish. Disabling it for 2.0 is rejected. |
 | `duration_scale` | positive float | `1` | Positive waveform duration rescaling, supported by both IndexTTS2 and IndexTTS2.5. |
 | `seed` | integer >= 0 | random | Sampling seed; omitted chooses a random seed. |
 | `text_chunk_size` | integer | not set | Optional framework long-form text chunk size; omitted keeps the full input together. Must be positive. |
@@ -261,7 +272,7 @@ or commercial use.
 
 ## Converting IndexTTS2.5 From Upstream Weights
 
-`tools/community_models/convert_index_tts2_5.py` turns an official `IndexTeam/IndexTTS-2.5`
+`tools/gguf/index_tts2_5_convert.py` turns an official `IndexTeam/IndexTTS-2.5`
 snapshot (the `.pth` checkpoints) into the Safetensors staging layout the
 engine expects, and prints or runs the matching `audiocpp_gguf` command. The
 w2v-bert-2.0, CAMPPlus, and BigVGAN checkpoints are auto-detected under
@@ -269,7 +280,7 @@ w2v-bert-2.0, CAMPPlus, and BigVGAN checkpoints are auto-detected under
 and each has an explicit override flag:
 
 ```bash
-python tools/community_models/convert_index_tts2_5.py \
+python tools/gguf/index_tts2_5_convert.py \
     --model-dir /path/to/IndexTTS-2.5 \
     --output-dir /path/to/staging \
     --run-converter /path/to/audiocpp_gguf --type q8_0

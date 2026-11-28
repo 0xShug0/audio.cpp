@@ -28,14 +28,15 @@
 int main(int argc, char ** argv) {
     using namespace engine;
     try {
-        if (argc != 5 || std::string(argv[4]) != "--log") {
-            throw std::runtime_error("usage: latentsync_component_parity <fixture-dir or video-path> <cpu|cuda|vulkan> <component> --log");
+        if ((argc != 5 && argc != 6) || std::string(argv[argc - 1]) != "--log") {
+            throw std::runtime_error("usage: latentsync_component_parity <fixture-dir or video-path> <cpu|cuda|vulkan> <component> [video-reference.rgb] --log");
         }
         debug::configure_logging({true});
         const std::filesystem::path root(argv[1]);
         core::BackendConfig backend;
         const std::string name(argv[2]);
         const std::string component(argv[3]);
+        if (argc == 6 && component != "video") throw std::runtime_error("RGB reference is only supported for video checks");
         if (component == "spec") {
             const auto start = std::chrono::steady_clock::now();
             model_spec::validate_spec(io::json::parse_file(root), root.string());
@@ -48,10 +49,25 @@ int main(int argc, char ** argv) {
             const auto start = std::chrono::steady_clock::now();
             const auto video = models::latentsync::load_latentsync_video(root, 25);
             const size_t pixels = static_cast<size_t>(video.height) * video.width * 3;
+            std::ifstream reference;
+            if (argc == 6) {
+                reference.open(argv[4], std::ios::binary);
+                if (!reference) throw std::runtime_error("Cannot read independent video RGB reference");
+            }
+            std::vector<uint8_t> expected;
+            if (reference.is_open()) expected.resize(pixels);
             for (const auto & frame : video.frames) {
                 if (frame.size() != pixels) throw std::runtime_error("Video frame size mismatch");
+                if (reference.is_open()) {
+                    reference.read(reinterpret_cast<char *>(expected.data()), static_cast<std::streamsize>(pixels));
+                    if (reference.gcount() != static_cast<std::streamsize>(pixels) || frame != expected)
+                        throw std::runtime_error("Video differs from independent RGB reference");
+                }
             }
-            std::cout << "width=" << video.width << " height=" << video.height << " frames=" << video.frames.size() << '\n';
+            if (reference.is_open() && reference.peek() != std::ifstream::traits_type::eof())
+                throw std::runtime_error("Video frame count differs from independent RGB reference");
+            std::cout << "width=" << video.width << " height=" << video.height << " frames=" << video.frames.size()
+                      << " reference_rgb_checked=" << reference.is_open() << '\n';
             debug::timing_log_scalar("session.wall_ms",
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
             return 0;
@@ -560,18 +576,18 @@ int main(int argc, char ** argv) {
                 output = attention.build_temporal(build, input, config.require("frames").as_i64(), weights);
             }
         } else if (component == "scrfd") {
-            const auto weights = models::latentsync::load_scrfd_weights(
+            const auto weights = modules::load_scrfd_weights(
                 store, *source, root / "config.json", assets::TensorStorageType::F32);
-            const auto heads = models::latentsync::LatentSyncScrfdDetector().build(build, input, weights);
+            const auto heads = modules::ScrfdDetectorModule().build(build, input, weights);
             for (const auto & head : heads) {
                 const auto flat = core::reshape_tensor(build, core::ensure_backend_addressable_layout(build, head),
                     core::TensorShape::from_dims({head.shape.num_elements()}));
                 output = output.tensor ? modules::ConcatModule({0}).build(build, output, flat) : flat;
             }
         } else if (component == "landmarks") {
-            const auto weights = models::latentsync::load_landmark_weights(
+            const auto weights = modules::load_landmark106_weights(
                 store, *source, root / "config.json", assets::TensorStorageType::F32);
-            output = models::latentsync::LatentSyncDepthwiseCnnLandmarks().build(build, input, weights);
+            output = modules::Landmark106Module().build(build, input, weights);
         } else {
             models::latentsync::LatentSyncSdVaeConfig vae_config;
             const auto weights = models::latentsync::load_sd_vae_weights(
@@ -624,7 +640,7 @@ int main(int argc, char ** argv) {
                 heads[i].assign(actual.begin() + offset, actual.begin() + offset + count);
                 offset += count;
             }
-            const auto faces = models::latentsync::decode_scrfd_faces(heads, reference->require_f32("resize_scale")[0]);
+            const auto faces = modules::decode_scrfd_faces(heads, reference->require_f32("resize_scale")[0]);
             const auto detections = reference->require_f32("detections");
             if (faces.size() * 15 != detections.size()) throw std::runtime_error("SCRFD face count differs from reference");
             double maximum = 0;

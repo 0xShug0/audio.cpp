@@ -1,4 +1,5 @@
 #include "engine/framework/runtime/session_base.h"
+#include "engine/framework/runtime/options.h"
 
 namespace engine::runtime {
 
@@ -47,7 +48,7 @@ const GraphExecutor & RuntimeSessionBase::graph_executor() const noexcept {
     return graph_executor_;
 }
 
-void RuntimeSessionBase::mark_prepared() noexcept {
+void RuntimeSessionBase::mark_prepared() {
     prepared_ = true;
 }
 

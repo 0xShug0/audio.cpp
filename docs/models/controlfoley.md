@@ -22,6 +22,9 @@ audiocpp_cli \
   --out foley.wav
 ```
 
+Video files use the shared in-process FFmpeg 6+ decoder (`libavformat`, `libavcodec`,
+`libavutil` and `libswscale`). Frame-directory input remains supported.
+
 Video-conditioned generation:
 
 ```bash

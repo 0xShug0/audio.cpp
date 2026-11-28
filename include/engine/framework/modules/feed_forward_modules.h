@@ -6,13 +6,20 @@
 #include "engine/framework/modules/linear_module.h"
 
 #include <optional>
+#include <string>
 
 namespace engine::modules {
 
 enum class FeedForwardActivation {
     Gelu,
     Relu,
+    ReluSquared,
+    Silu,
 };
+
+// Autocast uses BF16 operands, or native F16 intermediates on CUDA when F16
+// weights and default accumulation are selected. Autocast output is F32.
+enum class FeedForwardPrecisionPolicy { Native, Bf16Autocast };
 
 struct FeedForwardConfig {
     int64_t hidden_size = 0;
@@ -21,6 +28,11 @@ struct FeedForwardConfig {
     GeluApproximation gelu_approximation = GeluApproximation::ExactErf;
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     FeedForwardActivation activation = FeedForwardActivation::Gelu;
+    FeedForwardPrecisionPolicy precision_policy = FeedForwardPrecisionPolicy::Native;
+};
+
+struct FeedForwardWeightNames {
+    std::string fc1_weight, fc1_bias, fc2_weight, fc2_bias;
 };
 
 struct FeedForwardWeights {
@@ -44,12 +56,22 @@ struct GatedFeedForwardConfig {
     ggml_prec projection_precision = GGML_PREC_DEFAULT;
     bool use_weight_type_projection_precision = false;
     bool use_fast_cuda_projection = false;
+    // Packed projections normally store [up, gate]; some checkpoints store [gate, up].
+    bool packed_gate_first = false;
+    bool fused_swiglu = false;
+    bool round_projections = false;
+    bool round_activation = false;
+    bool round_product = false;
+    bool round_output = false;
 };
 
 struct GatedFeedForwardWeights {
     LinearWeights gate_proj;
     LinearWeights up_proj;
     LinearWeights down_proj;
+    // Optional packed rows, replacing the two input projections. Order is
+    // [up, gate] unless packed_gate_first is selected.
+    LinearWeights up_gate_proj{};
 };
 
 struct ConvFeedForwardConfig {

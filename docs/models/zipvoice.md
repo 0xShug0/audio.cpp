@@ -39,11 +39,11 @@ To rebuild it locally:
 # 1. stage the Chinese frontend tables (requires the upstream ZipVoice python env
 #    for pypinyin; writes zh_chars.tsv / zh_phrases.tsv / zh_syllables.tsv and
 #    downloads the pinned jieba dictionaries next to tokens.txt)
-python3 tools/community_models/export_zipvoice_zh_dict.py \
+python3 tools/gguf/zipvoice/zipvoice_zh_dictionary_export.py \
     --output-dir /models/ZipVoice/zipvoice_distill
 
 # 2. flatten + package (torch checkpoint -> safetensors -> GGUF with model.* and vocos.*)
-python3 tools/community_models/convert_zipvoice.py \
+python3 tools/gguf/zipvoice/zipvoice_convert.py \
     --model-dir /models/ZipVoice/zipvoice_distill \
     --vocos /models/vocos-mel-24khz/vocos.safetensors \
     --converter build/bin/audiocpp_gguf
@@ -51,7 +51,7 @@ python3 tools/community_models/convert_zipvoice.py \
 
 The converter needs `tokens.txt` + `model.json` + `model.pt` in `--model-dir` (the HF
 `k2-fsa/ZipVoice` `zipvoice_distill` snapshot layout). When the directory was staged by
-`export_zipvoice_zh_dict.py`, the `zh_*` frontend sidecars are embedded into the GGUF alongside
+`zipvoice_zh_dictionary_export.py`, the `zh_*` frontend sidecars are embedded into the GGUF alongside
 `tokens.txt` / `model.json`, so a converted package is a single self-sufficient file (loose
 copies are still staged next to it for the directory layout). With `--safetensors-only` it
 stops at the development format (`zipvoice-orig.safetensors` + config + vocab in one
@@ -69,7 +69,7 @@ audiocpp_cli --task clon --family zipvoice \
     --text "Text to synthesize." --out out.wav
 
 # Chinese / mixed text (emilia frontend, built in; the zh_* tables are embedded in the
-# GGUF, or staged by export_zipvoice_zh_dict.py next to it)
+# GGUF, or staged by zipvoice_zh_dictionary_export.py next to it)
 audiocpp_cli --task clon --family zipvoice \
     --model ... \
     --session-option zipvoice.espeak_library_path=/opt/homebrew/lib/libespeak-ng.dylib \

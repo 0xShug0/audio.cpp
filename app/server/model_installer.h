@@ -1,7 +1,10 @@
 #pragma once
 
+#include "engine/framework/package_manager/manager.h"
+
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace minitts::server {
@@ -30,6 +33,7 @@ public:
     std::string stop(const std::string & package_id);
     std::string clean_partial(const std::string & package_id);
     std::string remove(const std::string & package_id);
+    std::optional<engine::package_manager::PackageInfo> package_info(const std::string & package_id) const;
     bool has_active_jobs() const;
 
 private:

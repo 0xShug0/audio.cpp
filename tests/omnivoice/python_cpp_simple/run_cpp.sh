@@ -12,12 +12,12 @@ cd "${REPO_ROOT}"
 DEVICE=0
 MODEL="models/OmniVoice"
 
-ASSET_DIR="tests/omnivoice/assets"
-TEXT="আমি একটা টিটিএস মডেল, নাম OmniVoice। কিভাবে আপনাকে সাহায্য করতে পারি?"
-REF_WAV="${ASSET_DIR}/ref_audio_02.wav"
-REF_TEXT="$(cat "${ASSET_DIR}/ref_text_02.txt")"
+ASSET_DIR="assets/asr_validation/librispeech"
+TEXT="I am a text to speech model named OmniVoice. How can I help you?"
+REF_WAV="${ASSET_DIR}/librispeech_test_clean_6930-75918-0001.wav"
+REF_TEXT="$(cat "${ASSET_DIR}/librispeech_test_clean_6930-75918-0001.txt")"
 
-LANGUAGE="Bengali"
+LANGUAGE="English"
 SEED=42
 STEPS=20
 GUIDANCE_SCALE=2.0

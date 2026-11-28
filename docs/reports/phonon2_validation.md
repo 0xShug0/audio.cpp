@@ -1,5 +1,10 @@
 # Phonon-2: minimal variant validation
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/phonon2_validation.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 Revision responding to [maintainer feedback](https://github.com/0xShug0/audio.cpp/pull/863#issuecomment-6100453087).
 The existing Parakeet family/loader/backend math remains in use. Model-local
 hotwords, rolling streaming and `word_timestamp_mode` remain. The F32 precision
@@ -101,7 +106,7 @@ process; the separate optimization report uses alternating timing trials.
 
 ## Reproduce
 
-Use the [Phonon-2 section in the Parakeet guide](../models/parakeet_tdt.md#phonon-2-parakeet-tdt-variant).
+Use the [Phonon-2 guide](../models/phonon2_asr.md).
 Actual build commands use Ninja Release, `AUDIOCPP_MODEL_SET=custom`,
 `ENGINE_BUILD_TESTS=ON`, `AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF` and
 `AUDIOCPP_BUILD_SERVER_FRONTENDS=OFF`. The combined build enables CUDA/Vulkan,
@@ -120,7 +125,7 @@ the combined runtime build used:
 cmake -S . -B ../build-gpu -G Ninja -DCMAKE_BUILD_TYPE=Release \
   '-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8' \
   -DAUDIOCPP_MODEL_SET=custom -DAUDIOCPP_MODELS=parakeet_tdt \
-  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON -DENGINE_BUILD_WARMBENCH=ON \
+  -DENGINE_BUILD_TESTS=ON -DENGINE_BUILD_MODEL_TESTS=ON \
   -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER=OFF -DAUDIOCPP_BUILD_SERVER_FRONTENDS=OFF \
   -DAUDIOCPP_DEPLOYMENT_BUILD=ON -DGGML_CCACHE=OFF \
   -DENGINE_ENABLE_CUDA=ON -DENGINE_ENABLE_VULKAN=ON -DCMAKE_CUDA_ARCHITECTURES=86
@@ -143,7 +148,7 @@ python tests/parakeet_tdt/validate_phonon2_hotwords.py \
 
 `validate_phonon2.py` audits weights and numerical bounds; exact text/timing is
 diagnostic unless `--require-exact-reference` is supplied for the controlled CPU
-F32 run. The [portable JSON](../../tests/parakeet_tdt/phonon2_validation.json) includes source/model hashes,
+F32 run. The [portable JSON](https://github.com/0xShug0/audio.cpp/blob/4363a483002df5b0c3eb83ae93addf0073de388c/tests/parakeet_tdt/phonon2_validation.json) includes source/model hashes,
 all matrix summaries and differing fixture IDs. Raw commands/configs/outputs are
 under `outputs/phonon2-review-20261010/`; earlier pre-compensation evidence is
 preserved in its `pre-bn-compensation/` directory. No user audio is uploaded.

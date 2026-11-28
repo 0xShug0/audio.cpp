@@ -3,6 +3,7 @@
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/linear_module.h"
+#include "engine/framework/modules/feed_forward_modules.h"
 #include "engine/framework/modules/norm_modules.h"
 #include "engine/framework/modules/streaming_conv_modules.h"
 
@@ -163,6 +164,9 @@ struct ConformerBlockConfig {
     int64_t right_context = -1;
     int64_t cache_drop_size = 0;
     bool contiguous_glu_gate = false;
+    FeedForwardActivation ffn_activation = FeedForwardActivation::Silu;
+    // Offline relative attention's original ESPnet T-row positional layout.
+    bool legacy_position_layout = false;
 };
 
 struct ConformerBlockWeights {

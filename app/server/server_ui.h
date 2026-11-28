@@ -1,6 +1,10 @@
 #pragma once
 
 #include "http.h"
+#if defined(AUDIOCPP_HAS_NATIVE_MODEL_MANAGER)
+#include "engine/framework/io/json.h"
+#include "engine/framework/package_manager/manager.h"
+#endif
 
 #include <filesystem>
 #include <functional>
@@ -58,6 +62,21 @@ HttpResponse ui_model_install_status_response(
     const HttpRequest &request,
     const ModelInstaller &installer);
 HttpResponse ui_model_package_sizes_response(ModelInstaller &installer);
+// POST /v1/models/load may name an installed package by "package_id" instead
+// of "path". Sets package_id to the requested id, or leaves it empty for a
+// path-based request; returns an error response for a malformed package_id.
+std::optional<HttpResponse> ui_model_load_package_id(
+    const engine::io::json::Value &body,
+    std::string &package_id);
+// Rewrites a package_id load into the path-based request the loader already
+// takes, using the model-owned resolve_package_load for the path, family, load
+// options and session options. Returns the error response instead when the
+// package cannot be loaded by id.
+std::optional<HttpResponse> resolve_ui_package_model_load(
+    const engine::io::json::Value &body,
+    const std::string &package_id,
+    const std::optional<engine::package_manager::PackageInfo> &info,
+    std::string &resolved_body);
 HttpResponse ui_models_root_response(
     const std::filesystem::path &models_root,
     const std::filesystem::path &default_models_root);

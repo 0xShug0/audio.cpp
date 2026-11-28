@@ -16,8 +16,6 @@ elif [[ "$arg1" == "server" ]]; then
     exec ./audiocpp_server "$@"
 elif [[ "$arg1" == "model-manager" ]]; then
     exec ./audiocpp_model_manager "$@"
-elif [[ "$arg1" == "perf" ]]; then
-    exec ./model_perf "$@"
 else
     echo "Unknown command: $arg1"
     echo ""
@@ -25,6 +23,5 @@ else
     echo "  cli     Run audio tasks (TTS, ASR, VAD, VC, diar, etc.)"
     echo "  server  Run the HTTP server"
     echo "  model-manager  List, install, clean, or remove model packages"
-    echo "  perf    Run model performance benchmarks"
     exit 1
 fi

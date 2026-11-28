@@ -322,6 +322,15 @@ std::optional<float> optional_nullable_f32(const FlattenedDocument & document, c
     return std::stof(it->second);
 }
 
+std::optional<int> optional_nullable_int(const FlattenedDocument & document, const std::string & key) {
+    const auto it = document.scalars.find(key);
+    if (it == document.scalars.end() || it->second == "None" || it->second == "null" ||
+        it->second == "Null" || it->second == "NULL" || it->second == "~") {
+        return std::nullopt;
+    }
+    return std::stoi(it->second);
+}
+
 std::vector<std::string> require_list_strings(const FlattenedDocument & document, const std::string & key) {
     const auto it = document.lists.find(key);
     if (it == document.lists.end() || it->second.empty()) {

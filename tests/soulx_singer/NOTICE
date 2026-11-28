@@ -1,0 +1,18 @@
+SoulX-Singer integration for audio.cpp
+
+Based on Soul-AILab/SoulX-Singer at 81aeb3ae772c70093c3de74dc23c92d983801ae4.
+https://github.com/Soul-AILab/SoulX-Singer
+Apache License 2.0; see LICENSE.
+The native implementation adapts inference, score alignment and packaging to
+existing audio.cpp framework components; it does not include training code.
+
+The upstream flow-matching implementation credits Amphion.
+Copyright (c) 2023 Amphion. MIT license; see LICENSE.amphion.
+https://github.com/open-mmlab/Amphion
+
+SVC packages additionally contain OpenAI Whisper-base encoder weights
+and RMVPE pitch-extractor weights supplied for SoulX-Singer preprocessing.
+Whisper: Copyright (c) 2022 OpenAI. MIT license; see LICENSE.whisper.
+https://github.com/openai/whisper
+RMVPE: Apache License 2.0; see LICENSE.rmvpe.
+https://github.com/Dream-High/RMVPE

@@ -7,11 +7,20 @@ is required by this port.
 ## Official Fixtures
 
 Clone [Ming-3.0-audio-flash](https://github.com/inclusionAI/Ming-3.0-audio-flash)
-into `reference/Ming-3.0-audio-flash`. Download the pinned
+at commit `8d19d23878fdb583c2a520b9ce51705fe1825902` into
+`reference/Ming-3.0-audio-flash`:
+
+```bash
+git clone https://github.com/inclusionAI/Ming-3.0-audio-flash reference/Ming-3.0-audio-flash
+git -C reference/Ming-3.0-audio-flash checkout --detach 8d19d23878fdb583c2a520b9ce51705fe1825902
+```
+
+Download the pinned
 [Tiny checkpoint](https://huggingface.co/inclusionAI/Ming-3.0-audio-tiny/tree/25b96e30be3739849bf76c0f48ac11db4a262fb3)
 and make it available at `reference/Ming-3.0-audio-tiny` (a symlink is sufficient).
-The reference voice and exact transcript come from that checkpoint's
-`voice_presets` directory.
+The Chinese reference voice and exact transcript come from that checkpoint's
+`voice_presets` directory. The English reference uses the shared licensed
+LibriSpeech audio and its matching transcript instead of the checkpoint preset.
 
 The CLI consumes WAV, so decode the two complete MP3 fixtures once for both
 implementations. Do not trim, resample, or shorten them:
@@ -27,12 +36,44 @@ ffmpeg -i reference/Ming-3.0-audio-flash/examples/audio/music.mp3 \
 | --- | --- |
 | Short ASR | `official_asr`: `ant_group`, `ant_group_repeat` |
 | Native Thinker + Talker, US_Stella | `official_spoken_qa`: `ip_us_stella` |
-| Spoken QA with reference audio and transcript | `official_spoken_qa`: `reference_us_james` |
+| Spoken QA with shared LibriSpeech reference audio and matching transcript | `official_spoken_qa`: `reference_librispeech` |
 | Spoken QA with the checkpoint's Chinese reference preset | `official_spoken_qa`: `reference_lingkai` |
 | Complete music understanding fixture | `official_understanding`: `music` |
 | Complete meeting transcription and summary | `official_understanding`: `meeting` |
 | Complete meeting, thinking enabled | `official_understanding`: `meeting_thinking` |
 | Bundled tool-calling audio asset | `official_asr`: `tool_audio_transcription` (input/transcription coverage only, not a structured tool-call API) |
+
+## Shared inputs and retained dependencies
+
+Generic short speech around the music and meeting lifecycle requests now uses
+`assets/resources/sample_16k.wav`; the complete music and meeting inputs remain
+unchanged. Reference-reuse and long-generation cases use CC BY 4.0 LibriSpeech
+speaker 6930 (`librispeech_test_clean_6930-75918-0000.wav`) and, for changed-voice
+coverage, speaker 7902 (`librispeech_test_other_7902-96591-0000.wav`) under
+`assets/asr_validation/librispeech/`. Each request includes the exact paired
+`.txt` transcript as `reference_text`. Request ordering and generated text lengths
+are unchanged. See `assets/asr_validation/README.md` for licensing.
+
+The remaining external inputs are intentional:
+
+- `reference/Ming-3.0-audio-flash/examples/audio/introduce_ant_group.wav`
+  retains Chinese warmup/ASR, official spoken-question, Vulkan Chinese ASR,
+  and Chinese-to-English spoken translation coverage. English narration would
+  change those purposes.
+- `reference/Ming-3.0-audio-flash/examples/audio/tool_calling.wav` retains
+  the upstream tool-question transcription input.
+- `reference/Ming-3.0-audio-flash/examples/audio/music.wav` retains complete
+  song/lyrics/instrument understanding and music-to-speech lifecycle coverage.
+- `reference/Ming-3.0-audio-flash/examples/audio/meeting.wav` retains the
+  complete meeting, speaker/decision summaries, thinking, and long-context
+  offload-cache growth coverage.
+- `reference/Ming-3.0-audio-tiny/voice_presets/voice_audio/灵楷.wav` and its
+  inline Chinese transcript retain Chinese reference conditioning.
+
+Retain the pinned upstream fixtures, or supply licensed material of the same
+language and purpose with matching prompts/transcripts. Generic English shared speech
+cannot replace the music, meeting, tool question, or Chinese reference coverage.
+No such new assets are introduced by this migration.
 
 The short ASR case reproduces the literal prompt and 256-token limit. Upstream's
 10-gram repetition filter cannot activate on its six-token result; this test

@@ -7,6 +7,60 @@ decoder with only ~103M language-model parameters (324M end-to-end). The
 checkpoint ships under **CC-BY-NC-4.0**, so audio.cpp loads it from locally
 converted weights only; the converted GGUF must not be redistributed.
 
+## Usage
+
+```bash
+# Convert locally (requires the audiocpp_gguf tool and a self-downloaded
+# checkpoint from the Audio8/Audio8-ASR-0.1B HF repository):
+python tools/gguf/audio8_asr_convert.py \
+    --checkpoint models/Audio8-ASR-0.1B-hf \
+    --converter build/debug/bin/audiocpp_gguf \
+    --type q8_0 \
+    --output models/Audio8-ASR-0.1B-GGUF/audio8-asr-0.1b-q8_0.gguf
+
+# Transcribe
+audiocpp_cli --task asr --family audio8_asr \
+    --model models/Audio8-ASR-0.1B-GGUF/audio8-asr-0.1b-q8_0.gguf \
+    --audio sample.wav
+
+# The safetensors package loads directly, no conversion required:
+audiocpp_cli --task asr --family audio8_asr \
+    --model models/Audio8-ASR-0.1B-hf --audio sample.wav
+```
+
+## Model
+
+| Field | Value |
+|---|---|
+| Family | `audio8_asr` |
+| Tasks | `asr` |
+| Modes | `offline` |
+| Languages | `en`, `zh`, `yue`, `ja`, `ko`, `fr`, `de` |
+| Default package | `audio8_asr_0_1b_q8_0` |
+| Input | Speech audio |
+| Output | Transcript text |
+
+## Common Options (use directly)
+
+| Option | Meaning |
+|---|---|
+| `--model` | Model file or directory shown in the examples. |
+| `--backend` | Select an available backend supported by this model. |
+| `--threads` | CPU thread count. |
+| `--log` | Enable runtime logging. |
+| `--audio` | Input audio, where required by the selected task. |
+
+## Session Options (use with `--session-option`)
+
+| Option | Type / values | Default | Description |
+|---|---|---|---|
+| `audio8_asr.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | `native` | Decoder and adapter weight storage type. |
+| `audio8_asr.audio_encoder_weight_type` | `native`, `f32`, `f16` | `native` | Audio encoder weight storage type (quantized storage is rejected for the encoder; already-quantized GGUF tensors load as native). |
+| `audio8_asr.encoder_graph_arena_mb` | `int` | `128` | Audio encoder graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+| `audio8_asr.projector_graph_arena_mb` | `int` | `256` | Adapter (MLP tower + pooling + projector) graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+| `audio8_asr.prefill_graph_arena_mb` | `int` | `256` | Decoder prefill graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+| `audio8_asr.decode_graph_arena_mb` | `int` | `256` | Decoder step decode graph arena size in MB. Must be positive; sufficient capacity depends on the graph. Declared range: minimum 1. |
+
 ## Architecture
 
 - **Audio frontend**: 16 kHz Whisper log-mel, 128 bins, hop 160, n_fft 400
@@ -27,49 +81,6 @@ converted weights only; the converted GGUF must not be redistributed.
   transcribe this audio.<|assistant|>` where
   `N = max(floor(floor((floor(samples / hop) + 1) / 2) / merge_factor), 1)`
   (all divisions integer).
-
-## Usage
-
-```bash
-# Convert locally (requires the audiocpp_gguf tool and a self-downloaded
-# checkpoint from the Audio8/Audio8-ASR-0.1B HF repository):
-python tools/community_models/audio8_asr/convert_audio8_asr.py \
-    --checkpoint models/Audio8-ASR-0.1B-hf \
-    --converter build/debug/bin/audiocpp_gguf \
-    --type q8_0 \
-    --output models/Audio8-ASR-0.1B-GGUF/audio8-asr-0.1b-q8_0.gguf
-
-# Transcribe
-audiocpp_cli --task asr --family audio8_asr \
-    --model models/Audio8-ASR-0.1B-GGUF/audio8-asr-0.1b-q8_0.gguf \
-    --audio sample.wav
-
-# The safetensors package loads directly, no conversion required:
-audiocpp_cli --task asr --family audio8_asr \
-    --model models/Audio8-ASR-0.1B-hf --audio sample.wav
-```
-
-## Parity
-
-`tools/community_models/audio8_asr/audio8_asr_reference.py` runs the Hugging Face
-`trust_remote_code` reference (torch CPU, fp32) and
-`tools/community_models/audio8_asr/audio8_asr_stages.py` captures staged tensors (mel,
-encoder output, projected audio embeddings) for comparison.
-
-Greedy transcription on the repo test clips matched the fp32 reference
-exactly with the Q8_0 GGUF on both the Metal and CPU backends:
-
-| Audio | Reference (fp32) | audio.cpp (Q8_0 GGUF, Metal + CPU) |
-|---|---|---|
-| `assets/resources/a.wav` (5.95 s) | "This little work was finished in the year eighteen o three, and intended for immediate publication." | identical |
-| `assets/resources/sample_16k.wav` (14.07 s) | "Some call me nature. Others call me Mother Nature. I've been here for over four point five billion years, twenty-two thousand five hundred times longer than you." | identical |
-
-A 61-second clip transcribed through rate-correct 30-second windows matched
-the per-window reference transcripts (also verified by an independent review
-pass). `test_audio8_asr_golden_transcription` asserts the first row
-end-to-end — run it manually once weights exist (it is not part of ctest,
-matching the granite5asr golden-test convention); `test_audio8_asr_units`
-covers the token-count formula and bfloat16 rounding and runs under ctest.
 
 ## Measured performance
 

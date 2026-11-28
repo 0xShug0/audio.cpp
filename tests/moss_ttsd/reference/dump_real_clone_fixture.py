@@ -1,7 +1,18 @@
 import json, sys, torch, soundfile as sf
 from transformers import AutoProcessor
-MODEL="/mnt/data/models/MOSS-TTSD-v1.0"; CODEC="/mnt/data/models/MOSS-Audio-Tokenizer"
-S=sys.argv[1]; OUT=sys.argv[2]
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--model", type=Path, required=True)
+parser.add_argument("--codec", type=Path, required=True)
+parser.add_argument("--output", type=Path, required=True)
+parser.add_argument("--speaker-1", type=Path, required=True)
+parser.add_argument("--speaker-2", type=Path, required=True)
+args = parser.parse_args()
+MODEL, CODEC, OUT = str(args.model), str(args.codec), str(args.output)
+args.output.mkdir(parents=True, exist_ok=True)
+
 proc=AutoProcessor.from_pretrained(MODEL, trust_remote_code=True, codec_path=CODEC)
 sr=int(proc.model_config.sampling_rate); n_vq=int(proc.model_config.n_vq)
 def load(p):
@@ -11,7 +22,7 @@ def load(p):
     if r!=sr:
         import torchaudio; t=torchaudio.functional.resample(t,r,sr)
     return t
-w1,w2=load(f"{S}/ref_s1.wav"),load(f"{S}/ref_s2.wav")
+w1,w2=load(args.speaker_1),load(args.speaker_2)
 ref=proc.encode_audios_from_wav([w1,w2], sampling_rate=sr)
 prompt_audio=proc.encode_audios_from_wav([torch.cat([w1,w2],dim=-1)], sampling_rate=sr)[0]
 REFTEXT=("[S1] This is the first voice, and it speaks quite clearly. "

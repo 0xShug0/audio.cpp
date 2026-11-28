@@ -304,6 +304,7 @@ struct LlamaBpeTokenizer::Impl {
     explicit Impl(const LlamaBpeTokenizerSpec & spec) {
         normalizer_space_replacement = spec.normalizer_space_replacement;
         vocab.pre_type = convert_pre_type(spec.pre_type);
+        vocab.pre_tokenize = spec.pre_tokenize;
         const bool has_vocab = !spec.vocab_path.empty();
         const bool has_merges = !spec.merges_path.empty();
         if (has_vocab != has_merges) {
@@ -369,6 +370,10 @@ std::optional<int32_t> LlamaBpeTokenizer::find_token_id(const std::string & toke
         return std::nullopt;
     }
     return it->second;
+}
+
+bool LlamaBpeTokenizer::contains_token_id(int32_t token_id) const noexcept {
+    return impl_->vocab.id_to_token.find(token_id) != impl_->vocab.id_to_token.end();
 }
 
 bool LlamaBpeTokenizer::is_special_token_id(const int32_t token_id) const {

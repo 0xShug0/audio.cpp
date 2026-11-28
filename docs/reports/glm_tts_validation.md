@@ -1,5 +1,10 @@
 # GLM-TTS validation
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/glm_tts_validation.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 This report covers the community GLM-TTS implementation, its prepared
 safetensors package, and a standalone mixed Q8/F16 GGUF. Measurements were
 captured per request, with deterministic Python parity completed before the
@@ -63,46 +68,11 @@ and installs matching CAMPPlus safetensors weights.
 
 CPU:
 
-```powershell
-.\scripts\build_windows.ps1 `
-  -Preset windows-cpu-release -ConfigureOnly
-
-cmake -S . -B build\windows-cpu-release `
-  -DENGINE_BUILD_WARMBENCH=ON
-
-cmake --build build\windows-cpu-release --parallel 8 --target `
-  audiocpp_cli audiocpp_server `
-  campplus_shared_default_probe `
-  glm_tts_warm_bench glm_tts_llama_probe `
-  glm_tts_frontend_probe glm_tts_campplus_probe `
-  glm_tts_flow_conditioned_probe
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/glm_tts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 CUDA:
 
-```powershell
-$cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
-$env:CUDA_PATH = $cuda
-$env:CUDAToolkit_ROOT = $cuda
-$env:CUDA_TOOLKIT_ROOT_DIR = $cuda
-$env:CUDACXX = Join-Path $cuda "bin\nvcc.exe"
-$env:CMAKE_CUDA_COMPILER = $env:CUDACXX
-$env:NVCC_PREPEND_FLAGS = "-allow-unsupported-compiler"
-
-.\scripts\build_windows.ps1 `
-  -Preset windows-cuda-release -ConfigureOnly
-
-cmake -S . -B build\windows-cuda-release `
-  -DENGINE_BUILD_WARMBENCH=ON `
-  -DCMAKE_CUDA_COMPILER="$env:CUDACXX"
-
-cmake --build build\windows-cuda-release --parallel 8 --target `
-  audiocpp_cli audiocpp_server audiocpp_gguf `
-  campplus_shared_default_probe `
-  glm_tts_warm_bench glm_tts_llama_probe `
-  glm_tts_frontend_probe glm_tts_campplus_probe `
-  glm_tts_flow_conditioned_probe
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/glm_tts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 Both clean builds completed. The loader catalog advertises `glm_tts` with
 offline `tts` and `clon` tasks and the `/v1/audio/speech` endpoint.
@@ -228,29 +198,11 @@ token, duration, Flow, and vocoder logic from stochastic sampling drift.
 
 Python:
 
-```powershell
-python tests\glm_tts\reference_warm_bench.py `
-  ..\_reference\GLM-TTS `
-  --request-file tests\glm_tts\parity_greedy_requests.json `
-  --voice-ref ..\SAMPLES\EN_2.wav `
-  --reference-text "If you actually care about security" `
-  --out-dir ..\outputs\glm_tts_pr_validation\python_f32_greedy `
-  --greedy
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/glm_tts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 audio.cpp:
 
-```powershell
-.\build\windows-cuda-release\bin\glm_tts_warm_bench.exe `
-  --model ..\models\GLM-TTS `
-  --backend cuda --threads 8 `
-  --voice-ref ..\SAMPLES\EN_2.wav `
-  --reference-text "If you actually care about security" `
-  --request-file tests\glm_tts\parity_greedy_requests.json `
-  --iterations 1 `
-  --session-option glm_tts.weight_type=f32 `
-  --audio-out-dir ..\outputs\glm_tts_pr_validation\cpp_f32_greedy
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/glm_tts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 Per-request results:
 
@@ -313,16 +265,7 @@ The normal mixed Q8/F16 matrix was run in three fresh processes. Each request
 was executed twice inside one long-lived session. Iteration 1 can build a new
 shape-specific graph; iteration 2 measures reuse of that request shape.
 
-```powershell
-.\build\windows-cuda-release\bin\glm_tts_warm_bench.exe `
-  --model ..\models\GLM-TTS-Q8\GLM-TTS_Q8.gguf `
-  --backend cuda --threads 8 `
-  --voice-ref ..\SAMPLES\EN_2.wav `
-  --reference-text "If you actually care about security" `
-  --request-file tests\glm_tts\warm_bench_requests.json `
-  --audio-out-dir ..\outputs\glm_tts_pr_validation\q8_run1\audio `
-  --log-file ..\outputs\glm_tts_pr_validation\q8_run1\trace.log
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/glm_tts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 Mean and sample standard deviation across the three processes:
 
@@ -380,15 +323,7 @@ must not be interpreted as committed physical RAM.
 
 A full short request was executed with the CPU build:
 
-```powershell
-.\build\windows-cpu-release\bin\glm_tts_warm_bench.exe `
-  --model ..\models\GLM-TTS-Q8\GLM-TTS_Q8.gguf `
-  --backend cpu --threads 16 `
-  --voice-ref ..\SAMPLES\EN_2.wav `
-  --reference-text "If you actually care about security" `
-  --text "Hello." --iterations 1 `
-  --audio-out-dir ..\outputs\glm_tts_pr_validation\cpu_short\audio
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/glm_tts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 It produced 0.64 seconds of valid audio in 4,963.3 ms, RTF 7.755. CPU is
 functional, but CUDA is the practical tested backend for interactive use.

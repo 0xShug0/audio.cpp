@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/community_models'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/gguf/kitten_tts2'))
 import kitten_tts2_weights as weights
 
 

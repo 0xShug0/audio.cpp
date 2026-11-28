@@ -1,12 +1,10 @@
 #include "engine/community_models/lfm3_audio/codec.h"
 
-#include "../lfm2_audio/weight_stores.h"
-
 #include "engine/community_models/lfm2_audio/detokenizer.h"
-#include "engine/community_models/lfm3_audio/blocks.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/modules/linear_module.h"
 #include "engine/framework/runtime/errors.h"
+#include "engine/framework/runtime/cache_slots.h"
 
 #include <ggml-alloc.h>
 #include <ggml-backend.h>
@@ -15,7 +13,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -36,36 +33,6 @@ constexpr size_t kKeptGraphs = 3;
     throw std::runtime_error("LFM3-Audio codec: " + message);
 }
 
-struct CodecWeights {
-    std::unique_ptr<WeightStores> stores;
-    // project_out stays F32: its 48 inputs are not a multiple of the 32-wide blocks of BF16/F16 GPU kernels.
-    TensorValue project_out, project_out_bias, from_quantizer, from_quantizer_bias, lin, lin_bias;
-    blocks::StackWeights stack;
-    std::vector<float> window;
-};
-
-CodecWeights load_weights(const assets::TensorSource & source, const Lfm3CodecConfig & config, core::ExecutionContext & execution,
-                          const Lfm3WeightOptions & options) {
-    const int64_t d = config.stack.hidden;
-    const int64_t latent = config.codebooks * static_cast<int64_t>(config.fsq_levels.size());
-    const int64_t q = config.quantizer_dim;
-    auto * backend = execution.backend();
-
-    CodecWeights out;
-    out.stores = std::make_unique<WeightStores>(execution, "lfm3_audio.codec.weights", 1024 * ggml_tensor_overhead(), options.cpu_repack);
-    auto & plain = out.stores->plain();
-    out.project_out = plain.load_f32_tensor(source, "quantizer.project_out.weight", {q, latent});
-    out.project_out_bias = plain.load_f32_tensor(source, "quantizer.project_out.bias", {q});
-    out.from_quantizer = blocks::load_matmul(*out.stores, backend, source, "from_quantizer.weight", {d, q}, options);
-    out.from_quantizer_bias = plain.load_f32_tensor(source, "from_quantizer.bias", {d});
-    out.stack = blocks::load_stack(*out.stores, backend, source, "decoder.lfm.", config.stack, options);
-    out.lin = blocks::load_matmul(*out.stores, backend, source, "decoder.lin.weight", {config.n_fft + 2, d}, options);
-    out.lin_bias = plain.load_f32_tensor(source, "decoder.lin.bias", {config.n_fft + 2});
-    out.window = source.require_f32_tensor("decoder.istft.window", {config.n_fft}).values;
-    out.stores->upload();
-    return out;
-}
-
 // Ring row r holds the latest position p with p % capacity == r. Query q sees positions q - window + 1 .. q,
 // all still in the ring because capacity >= steps + window - 1.
 std::vector<ggml_fp16_t> ring_mask(int64_t start, int64_t steps, int64_t capacity, int64_t window) {
@@ -80,22 +47,19 @@ std::vector<ggml_fp16_t> ring_mask(int64_t start, int64_t steps, int64_t capacit
     return out;
 }
 
-struct ChunkOutput {
-    std::vector<float> spectrum, project_out, from_quantizer, decoder;
-};
-
 // FSQ latents of `frames` frames to spectrum rows, continuing the stream state at an absolute step.
 class ChunkGraph {
 public:
-    ChunkGraph(const CodecWeights & weights, const Lfm3CodecConfig & config, std::vector<blocks::LayerState> & state, int64_t capacity,
+    ChunkGraph(const Lfm3CodecWeights & weights, const Lfm3CodecConfig & config, const std::vector<modules::LfmDecoderLayerState> & state, int64_t capacity,
                core::ExecutionContext & execution, const Lfm3WeightOptions & options, int64_t frames)
-        : execution_(execution), capacity_(capacity), window_(config.stack.sliding_window), steps_(frames * config.upsample) {
-        ctx_ = blocks::graph_context(kGraphNodes, "codec");
+        : execution_(execution), capacity_(capacity), window_(config.sliding_window), steps_(frames * config.upsample) {
+        ctx_.reset(ggml_init({kGraphNodes * ggml_tensor_overhead() + ggml_graph_overhead_custom(kGraphNodes, false), nullptr, true}));
+        if (!ctx_) fail("graph context allocation failed");
         auto * g = ctx_.get();
         core::ModuleBuildContext ctx{g, "lfm3_audio.codec", execution.backend_type()};
         graph_ = ggml_new_graph_custom(g, kGraphNodes, false);
 
-        const int64_t d = config.stack.hidden;
+        const int64_t d = config.stack.hidden_size;
         const int64_t latent = config.codebooks * static_cast<int64_t>(config.fsq_levels.size());
         const int64_t q = config.quantizer_dim;
         auto input = [&](ggml_type type, std::initializer_list<int64_t> dims) {
@@ -105,32 +69,26 @@ public:
         };
 
         latents_ = input(GGML_TYPE_F32, {1, frames, latent});
-        blocks::StepInputs in;
+        modules::LfmDecoderInputs in;
         in.positions = input(GGML_TYPE_I32, {steps_});
-        in.slots = input(GGML_TYPE_I64, {steps_});
+        slots_ = input(GGML_TYPE_I64, {steps_});
         in.sliding_mask = input(GGML_TYPE_F16, {steps_, capacity});
-        in.kv_rows = capacity;
         positions_ = in.positions;
-        slots_ = *in.slots;
         mask_ = *in.sliding_mask;
 
-        project_out_ = modules::LinearModule({latent, q, true, blocks::kMatmulPrecision})
+        const auto project_out = modules::LinearModule({latent, q, true, kLfm3MatmulPrecision})
                            .build(ctx, latents_, {weights.project_out, weights.project_out_bias});
-        from_quantizer_ = modules::LinearModule({q, d, true, blocks::kMatmulPrecision})
-                              .build(ctx, project_out_, {weights.from_quantizer, weights.from_quantizer_bias});
+        const auto from_quantizer = modules::LinearModule({q, d, true, kLfm3MatmulPrecision})
+                              .build(ctx, project_out, {weights.from_quantizer, weights.from_quantizer_bias});
         // nearest-exact upsampling at an integer factor: step p takes frame p / upsample.
-        auto * x = ggml_repeat_4d(g, ggml_reshape_3d(g, from_quantizer_.tensor, d, 1, frames), d, config.upsample, frames, 1);
-        in.x = core::wrap_tensor(ggml_reshape_3d(g, x, d, steps_, 1), TensorShape::from_dims({1, steps_, d}));
+        auto * x = ggml_repeat_4d(g, ggml_reshape_3d(g, from_quantizer.tensor, d, 1, frames), d, config.upsample, frames, 1);
+        in.hidden = core::wrap_tensor(ggml_reshape_3d(g, x, d, steps_, 1), TensorShape::from_dims({1, steps_, d}));
 
-        decoder_ = blocks::build_stack(ctx, graph_, config.stack, weights.stack, in, &state, options);
-        spectrum_ = modules::LinearModule({d, config.n_fft + 2, true, blocks::kMatmulPrecision})
-                        .build(ctx, decoder_, {weights.lin, weights.lin_bias});
-        for (const auto * out : {&spectrum_, &project_out_, &from_quantizer_, &decoder_}) {
-            // A reshaped output reads its source's memory, which the allocator would otherwise reuse.
-            ggml_set_output(out->tensor->view_src != nullptr ? out->tensor->view_src : out->tensor);
-            ggml_set_output(out->tensor);
-            ggml_build_forward_expand(graph_, out->tensor);
-        }
+        const auto decoder = modules::build_lfm_decoder(ctx, graph_, in, weights.stack, lfm3_decoder_config(config.stack, options), {state, slots_, capacity}).hidden;
+        spectrum_ = modules::LinearModule({d, config.n_fft + 2, true, kLfm3MatmulPrecision})
+                        .build(ctx, decoder, {weights.lin, weights.lin_bias});
+        ggml_set_output(spectrum_.tensor);
+        ggml_build_forward_expand(graph_, spectrum_.tensor);
         core::validate_backend_graph_with_cpu_extra_buffers(execution.backend(), graph_, "LFM3-Audio codec graph");
 
         allocator_.reset(ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution.backend())));
@@ -144,7 +102,7 @@ public:
     ChunkGraph(const ChunkGraph &) = delete;
     ChunkGraph & operator=(const ChunkGraph &) = delete;
 
-    ChunkOutput run(const std::vector<float> & latents, int64_t first_step, bool taps) {
+    std::vector<float> run(const std::vector<float> & latents, int64_t first_step) {
         std::vector<int32_t> positions(static_cast<size_t>(steps_));
         std::vector<int64_t> slots(positions.size());
         for (int64_t i = 0; i < steps_; ++i) {
@@ -157,16 +115,11 @@ public:
         core::write_tensor_i32(positions_, positions);
         ggml_backend_tensor_set(slots_.tensor, slots.data(), 0, slots.size() * sizeof(int64_t));
         ggml_backend_tensor_set(mask_.tensor, mask.data(), 0, mask.size() * sizeof(ggml_fp16_t));
-        blocks::compute(execution_, graph_, "codec");
+        core::set_backend_threads(execution_.backend(), std::max(1, execution_.config().threads));
+        if (core::compute_backend_graph(execution_.backend(), graph_) != GGML_STATUS_SUCCESS) fail("graph compute failed");
+        ggml_backend_synchronize(execution_.backend());
 
-        ChunkOutput out;
-        out.spectrum = core::read_tensor_f32(spectrum_.tensor);
-        if (taps) {
-            out.project_out = core::read_tensor_f32(project_out_.tensor);
-            out.from_quantizer = core::read_tensor_f32(from_quantizer_.tensor);
-            out.decoder = core::read_tensor_f32(decoder_.tensor);
-        }
-        return out;
+        return core::read_tensor_f32(spectrum_.tensor);
     }
 
 private:
@@ -177,7 +130,7 @@ private:
     ggml_context_ptr ctx_;
     ggml_cgraph * graph_ = nullptr;
     TensorValue latents_, positions_, slots_, mask_;
-    TensorValue project_out_, from_quantizer_, decoder_, spectrum_;
+    TensorValue spectrum_;
     ggml_gallocr_ptr allocator_;
 };
 
@@ -223,36 +176,30 @@ std::vector<float> lfm3_fsq_latents(const std::vector<std::vector<int32_t>> & fr
 }
 
 struct Lfm3CodecDecoder::Impl {
-    Impl(std::shared_ptr<const assets::TensorSource> source_in, const Lfm3CodecConfig & config_in, core::ExecutionContext & execution_in,
+    Impl(Lfm3CodecWeights weights_in, const Lfm3CodecConfig & config_in, core::ExecutionContext & execution_in,
          const Lfm3WeightOptions & options_in)
-        : source(std::move(source_in)),
-          config(config_in),
+        : config(config_in),
           execution(execution_in),
           options(options_in),
-          weights(load_weights(*source, config, execution, options)),
-          capacity(GGML_PAD(kChunkFrames * config.upsample + config.stack.sliding_window, blocks::kKvRowAlignment)) {
+          weights(std::move(weights_in)),
+          capacity(GGML_PAD(kChunkFrames * config.upsample + config.sliding_window, kLfm3KvAlignment)) {
         if (static_cast<int64_t>(config.fsq_levels.size()) * config.codebooks <= 0 || config.upsample <= 0 || config.hop <= 0) {
             fail("config needs FSQ levels, codebooks, an upsample factor and a hop");
         }
-        state.emplace(execution, config.stack, capacity, lfm3_reference_precision(options) ? GGML_TYPE_F32 : GGML_TYPE_F16, "codec");
+        state.emplace(execution, lfm3_decoder_config(config.stack, options), capacity, lfm3_reference_precision(options) ? GGML_TYPE_F32 : GGML_TYPE_F16);
     }
 
     ChunkGraph & graph(int64_t frames) {
-        auto it = graphs.find(frames);
-        if (it == graphs.end()) {
-            if (graphs.size() >= kKeptGraphs) {
-                graphs.erase(std::min_element(graphs.begin(), graphs.end(),
-                                              [](const auto & a, const auto & b) { return a.second.last_use < b.second.last_use; }));
-            }
-            auto built = std::make_unique<ChunkGraph>(weights, config, state->layers, capacity, execution, options, frames);
-            it = graphs.emplace(frames, KeptGraph{std::move(built), 0}).first;
+        auto * cached = graphs.find(frames);
+        if (!cached) {
+            graphs.put(frames, std::make_unique<ChunkGraph>(weights, config, state->layers(), capacity, execution, options, frames));
+            cached = graphs.find(frames);
         }
-        it->second.last_use = ++uses;
-        return *it->second.graph;
+        return **cached;
     }
 
     // Spectrum rows of `frames`, in pieces of at most kChunkFrames.
-    std::vector<float> run(const std::vector<std::vector<int32_t>> & frames, Lfm3CodecTaps * taps) {
+    std::vector<float> run(const std::vector<std::vector<int32_t>> & frames) {
         if (!istft) {
             fail("the stream has not been started");
         }
@@ -268,39 +215,27 @@ struct Lfm3CodecDecoder::Impl {
         for (int64_t first = 0; first < total; first += kChunkFrames) {
             const int64_t count = std::min(kChunkFrames, total - first);
             const std::vector<float> part(latents.begin() + first * latent, latents.begin() + (first + count) * latent);
-            auto chunk = graph(count).run(part, step, taps != nullptr);
+            auto chunk = graph(count).run(part, step);
             step += count * config.upsample;
-            append(out, chunk.spectrum);
-            if (taps != nullptr) {
-                append(taps->project_out, chunk.project_out);
-                append(taps->from_quantizer, chunk.from_quantizer);
-                append(taps->decoder, chunk.decoder);
-            }
+            append(out, chunk);
         }
         return out;
     }
 
-    struct KeptGraph {
-        std::unique_ptr<ChunkGraph> graph;
-        uint64_t last_use = 0;
-    };
-
-    std::shared_ptr<const assets::TensorSource> source;
     Lfm3CodecConfig config;
     core::ExecutionContext & execution;
     Lfm3WeightOptions options;
-    CodecWeights weights;
-    int64_t capacity = 0;
-    std::optional<blocks::StackState> state;
-    std::map<int64_t, KeptGraph> graphs;  // after the state they write into
-    uint64_t uses = 0;
+    Lfm3CodecWeights weights;
+    int64_t capacity;
+    std::optional<modules::LfmDecoderState> state;
+    runtime::CacheSlots<int64_t, std::unique_ptr<ChunkGraph>> graphs{kKeptGraphs};
     int64_t step = 0;  // the stream's next absolute step
     std::optional<lfm2_audio::Lfm2StreamingIstft> istft;
 };
 
-Lfm3CodecDecoder::Lfm3CodecDecoder(std::shared_ptr<const assets::TensorSource> codec, const Lfm3CodecConfig & config,
+Lfm3CodecDecoder::Lfm3CodecDecoder(Lfm3CodecWeights weights, const Lfm3CodecConfig & config,
                                    core::ExecutionContext & execution, const Lfm3WeightOptions & options)
-    : impl_(std::make_unique<Impl>(std::move(codec), config, execution, options)) {}
+    : impl_(std::make_unique<Impl>(std::move(weights), config, execution, options)) {}
 
 Lfm3CodecDecoder::~Lfm3CodecDecoder() = default;
 
@@ -315,7 +250,7 @@ std::vector<float> Lfm3CodecDecoder::push(const std::vector<std::vector<int32_t>
     if (frames.empty()) {
         return {};
     }
-    const auto rows = impl_->run(frames, nullptr);
+    const auto rows = impl_->run(frames);
     return impl_->istft->push(rows, static_cast<int64_t>(frames.size()) * impl_->config.upsample);
 }
 
@@ -335,8 +270,8 @@ std::vector<float> Lfm3CodecDecoder::decode(const std::vector<std::vector<int32_
     return out;
 }
 
-std::vector<float> Lfm3CodecDecoder::spectrum(const std::vector<std::vector<int32_t>> & frames, Lfm3CodecTaps * taps) {
-    return impl_->run(frames, taps);
+std::vector<float> Lfm3CodecDecoder::spectrum(const std::vector<std::vector<int32_t>> & frames) {
+    return impl_->run(frames);
 }
 
 }  // namespace engine::community_models::lfm3_audio

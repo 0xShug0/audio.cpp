@@ -45,6 +45,7 @@ const char * backend_name(engine::core::BackendType backend_type) {
         case engine::core::BackendType::Hip: return "hip";
         case engine::core::BackendType::Vulkan: return "vulkan";
         case engine::core::BackendType::Metal: return "metal";
+        case engine::core::BackendType::WebGPU: return "webgpu";
         case engine::core::BackendType::BestAvailable: return "best";
     }
     return "unknown";

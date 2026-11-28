@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "family": "zonos3",
+  "display_name": "ZONOS3-Mini",
+  "description": "Zyphra ZONOS3-Mini: a GDN/attention latent-MoE TTS backbone with Full AttnRes over 10 delayed 4096-entry codebooks and a 44.1 kHz MR-iSTFT decoder, with speaker-embedding and raw-reference cloning.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline",
+    "streaming"
+  ],
+  "languages": [
+    "en",
+    "fr",
+    "de",
+    "es",
+    "it",
+    "pt",
+    "ja",
+    "zh",
+    "ko"
+  ],
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference",
+      "long_form"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf",
+      "stream",
+      "cpu",
+      "metal"
+    ]
+  },
+  "options": {
+    "request": [
+      {"name": "language", "type": "string", "description": "Text-normalization grammar: en_us, en_gb, fr_fr, de, es, it, pt_br, ja, cmn or ko (aliases en, fr, pt, zh). The model itself takes no language input.", "required": false, "default": "en_us"},
+      {"name": "text_normalization", "type": "bool", "description": "Rewrite numbers, symbols and abbreviations into spoken form with zyphra-textnorm. Builds without AUDIOCPP_ZONOS3_TEXTNORM only collapse line breaks.", "required": false, "default": true},
+      {"name": "seed", "type": "int", "description": "Sampler seed; random when omitted. Long-form chunk i uses seed + i.", "required": false, "min": 0, "max": 4294967295},
+      {"name": "max_tokens", "type": "int", "description": "Generated 15 Hz rows per text chunk, including the 11-row end-of-speech drain.", "required": false, "min": 1, "default": 2000},
+      {"name": "temperature", "type": "float", "description": "Sampling temperature; 0 decodes greedily.", "required": false, "min": 0, "default": 0.75},
+      {"name": "top_k", "type": "int", "description": "Top-k candidates per codebook (ties at the threshold are kept).", "required": false, "min": 1, "default": 80},
+      {"name": "top_p", "type": "float", "description": "Nucleus probability per codebook.", "required": false, "min": 0, "max": 1, "default": 0.69},
+      {"name": "min_p", "type": "float", "description": "Drops candidates below min_p times the most likely one.", "required": false, "min": 0, "max": 1, "default": 0.0},
+      {"name": "repetition_penalty", "type": "float", "description": "Penalty on codes seen in the repetition window.", "required": false, "min": 1, "default": 2.4},
+      {"name": "repetition_window", "type": "int", "description": "Frames of per-codebook history the repetition penalty looks at.", "required": false, "min": 1, "default": 96},
+      {"name": "repetition_codebooks", "type": "int", "description": "Leading codebooks the repetition penalty applies to; -1 applies it to all ten.", "required": false, "min": -1, "max": 10, "default": 6},
+      {"name": "guidance_scale", "type": "float", "description": "Speaker classifier-free guidance; 1 disables it. Needs a speaker source.", "required": false, "min": 0, "default": 1.0},
+      {"name": "speaker_mode", "type": "enum", "description": "How --voice-ref audio conditions the prompt: embedding (MECT-B2 speaker embedding) or reference (ZAC reference codes; needs zac-encoder.gguf and ssl-teacher.gguf).", "values": ["embedding", "reference"], "required": false, "default": "embedding"},
+      {"name": "speaker_embedding_file", "type": "path", "description": "float32 .npy speaker embedding with shape [192] or [1,192], as written by encode_reference_only.", "required": false},
+      {"name": "reference_codes_file", "type": "path", "description": "Integer or float .npy reference codes with shape [T,10], values 0..4095; the first 900 frames are used.", "required": false},
+      {"name": "encode_reference_only", "type": "bool", "description": "Return the --voice-ref speaker embedding (or reference codes with speaker_mode=reference) as an .npy artifact without generating speech.", "required": false, "default": false},
+      {"name": "loudness", "type": "float", "description": "Target loudness in LUFS, mapped to a condition bucket.", "required": false},
+      {"name": "fmax", "type": "float", "description": "Target bandwidth in Hz, mapped to a condition bucket.", "required": false},
+      {"name": "speaking_rate_bps", "type": "float", "description": "Target speaking rate in UTF-8 bytes per second, mapped to a condition bucket.", "required": false},
+      {"name": "condition_buckets", "type": "string", "description": "Explicit bucket ids 'loudness,fmax,speaking_rate'; an id equal to the table's bucket count means unknown. Each entry overrides the matching value option.", "required": false},
+      {"name": "silence_prefill_frames", "type": "int", "description": "Silence frames primed into the audio stream before generation.", "required": false, "min": 0, "max": 30, "default": 3},
+      {"name": "headroom_db", "type": "float", "description": "Output attenuation in dB; defaults to the decoder's headroom_db (3).", "required": false, "min": 0, "max": 24, "default": 3.0},
+      {"name": "soft_limit", "type": "bool", "description": "Apply the -1 dBFS tanh soft limiter after the gain.", "required": false, "default": true},
+      {"name": "text_chunk_size", "type": "int", "description": "Maximum Unicode code points per long-form text chunk.", "required": false, "min": 1, "default": 300},
+      {"name": "text_chunk_mode", "type": "enum", "description": "Text chunking policy for long-form input.", "preset": "text_chunk_mode_full", "required": false, "default": "word_budget"}
+    ],
+    "session": [
+      {"name": "encoder_backend", "type": "enum", "description": "Backend for the speaker encoder, ZAC encoder and SSL teacher: cpu, or the session backend (same).", "values": ["cpu", "same"], "required": false, "default": "cpu"},
+      {"name": "keep_reference_encoder", "type": "bool", "description": "Keep the raw-reference encoder (ZAC encoder + w2v-BERT teacher, about 3.4 GiB peak RSS while encoding) loaded between requests instead of releasing it after each encode.", "required": false, "default": false},
+      {"name": "voice_cache_slots", "type": "int", "description": "LRU slots for computed speaker embeddings and reference codes per reference clip; 0 disables caching.", "required": false, "min": 0, "default": 4},
+      {"name": "stream_chunk_frames", "type": "int", "description": "Maximum 15 Hz frames per streamed decoder chunk.", "required": false, "min": 1, "max": 64, "default": 16},
+      {"name": "disk_experts", "type": "bool", "description": "Keep the routed expert banks in the GGUF/host memory and stage the selected experts through a bounded per-layer cache on the compute backend.", "required": false, "default": false},
+      {"name": "pin_experts", "type": "bool", "description": "With disk_experts, hold the full expert banks in pinned host memory for direct uploads.", "required": false, "default": false},
+      {"name": "expert_cache_size", "type": "int", "description": "Expert slots per MoE layer with disk_experts; at least twice the routed top-k.", "required": false, "min": 4, "max": 64, "default": 16},
+      {"name": "disk_expert_read_threads", "type": "int", "description": "Host workers copying selected experts with disk_experts and without pin_experts.", "required": false, "min": 1, "max": 64, "default": 1}
+    ],
+    "load": []
+  },
+  "ui": {
+    "recommended_package": "zonos3_mini_ptq",
+    "tags": [
+      "TTS",
+      "Clone",
+      "GGUF",
+      "Stream"
+    ],
+    "docs": [
+      "docs/models/zonos3.md"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "Zyphra/ZONOS3-Mini",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "zonos3_mini_ptq",
+      "display_name": "ZONOS3-Mini PTQ",
+      "description": "Q4_0-expert / Q8_0-mixer backbone, keep2 MR-iSTFT decoder, MECT-B2 speaker encoder (1.2 GB).",
+      "default": true,
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "ZONOS3-Mini-GGUF",
+      "files": [
+        "gguf/backbone-ptq.gguf",
+        "gguf/zac-keep2.gguf",
+        "gguf/spk-encoder.gguf"
+      ],
+      "strip_prefix": "gguf"
+    },
+    {
+      "id": "zonos3_mini_ptq_raw_reference",
+      "display_name": "ZONOS3-Mini PTQ + raw-reference encoder",
+      "description": "Adds the ZAC encoder and w2v-BERT teacher for speaker_mode=reference (+5.6 GB).",
+      "format": "gguf",
+      "precision": "q4_0",
+      "target_directory": "ZONOS3-Mini-GGUF",
+      "files": [
+        "gguf/backbone-ptq.gguf",
+        "gguf/zac-keep2.gguf",
+        "gguf/spk-encoder.gguf",
+        "gguf/zac-encoder.gguf",
+        "gguf/ssl-teacher.gguf"
+      ],
+      "strip_prefix": "gguf"
+    }
+  ],
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {},
+      "tensors": {
+        "backbone": {"source": "weights:"},
+        "decoder": "model:zac-keep2.gguf",
+        "speaker_encoder": "model:spk-encoder.gguf"
+      },
+      "optional_tensors": {
+        "reference_encoder": "model:zac-encoder.gguf",
+        "ssl_teacher": "model:ssl-teacher.gguf"
+      }
+    }
+  ],
+  "dependencies": []
+}

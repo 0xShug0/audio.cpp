@@ -1,0 +1,44 @@
+{
+  "_comment": "Replace /path/to model paths with absolute paths to installed GGUFs. Requires cuDNN Conv3D support; see docs/models/soulx_flashhead.md.",
+  "host": "127.0.0.1",
+  "port": 8080,
+  "backend": "cuda",
+  "threads": 8,
+  "lazy_load": false,
+  "max_loaded_models": 4,
+  "ui": true,
+  "ui_management": false,
+  "models": [
+    {
+      "id": "chat-recognition",
+      "family": "owsm",
+      "path": "/path/to/OWSM-GGUF/owsm-v4-base-102m-q8_0.gguf",
+      "task": "asr",
+      "mode": "offline"
+    },
+    {
+      "id": "chat-conversation",
+      "family": "lfm3_audio",
+      "path": "/path/to/LFM3-Audio-2B-GGUF/LFM3-Audio-2B-Q8_0.gguf",
+      "task": "s2s",
+      "mode": "streaming"
+    },
+    {
+      "id": "chat-voice",
+      "family": "lfm3_audio",
+      "path": "/path/to/LFM3-Audio-2B-GGUF/LFM3-Audio-2B-Q8_0.gguf",
+      "task": "tts",
+      "mode": "streaming"
+    },
+    {
+      "id": "chat-avatar",
+      "family": "soulx_flashhead",
+      "path": "/path/to/SoulX-FlashHead-GGUF/SoulX-FlashHead-Lite-Q8_0.gguf",
+      "task": "gen",
+      "mode": "streaming",
+      "session_options": {
+        "soulx_flashhead.exec_plan": "{\"vae\":{\"impl\":\"cudnn\"}}"
+      }
+    }
+  ]
+}

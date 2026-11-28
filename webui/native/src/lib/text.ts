@@ -168,5 +168,6 @@ export function splitTtsChunks(text: string, budget: number): string[] {
 export function defaultChunkBudget(family: string): number {
   if (family === 'vibevoice') return 600;
   if (family === 'voxcpm2') return 60;
+  if (family === 'voxmel_tts' || family === 'tiny_voca') return 400;
   return 1000;
 }

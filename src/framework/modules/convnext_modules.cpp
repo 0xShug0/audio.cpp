@@ -20,8 +20,19 @@ core::TensorValue build_convnext1d(core::ModuleBuildContext & ctx,
     x = LayerNormModule({channels, 1e-6f, true, true}).build(ctx, x, weights.norm);
     x = round(LinearModule({channels, hidden, true}).build(ctx, round(x), weights.expansion));
     x = round(GeluModule({GeluApproximation::ExactErf}).build(ctx, x));
+    if (weights.response_gamma.valid()) {
+        const auto energy = MulModule().build(ctx, x, x);
+        const auto response = SqrtModule().build(ctx, ReduceSumModule({1}).build(ctx, energy));
+        const auto mean = ScaleBiasModule({1, 1e-6f}).build(ctx, ReduceMeanModule({2}).build(ctx, response));
+        const auto normalized = core::wrap_tensor(ggml_div(ctx.ggml, response.tensor, mean.tensor), response.shape);
+        const auto gamma = core::reshape_tensor(ctx, weights.response_gamma, core::TensorShape::from_dims({1, 1, hidden}));
+        const auto beta = core::reshape_tensor(ctx, weights.response_beta, core::TensorShape::from_dims({1, 1, hidden}));
+        auto scaled = MulModule(true).build(ctx, MulModule(true).build(ctx, x, normalized), gamma);
+        scaled = AddModule(false, true).build(ctx, scaled, beta);
+        x = AddModule().build(ctx, x, scaled);
+    }
     x = round(LinearModule({hidden, channels, true}).build(ctx, round(x), weights.projection));
-    x = MulModule().build(ctx, x, RepeatModule({x.shape}).build(ctx, core::reshape_tensor(ctx, weights.gamma, core::TensorShape::from_dims({1, 1, channels}))));
+    if (!weights.response_gamma.valid() || weights.gamma.valid()) x = MulModule().build(ctx, x, RepeatModule({x.shape}).build(ctx, core::reshape_tensor(ctx, weights.gamma, core::TensorShape::from_dims({1, 1, channels}))));
     return AddModule().build(ctx, input, x);
 }
 }

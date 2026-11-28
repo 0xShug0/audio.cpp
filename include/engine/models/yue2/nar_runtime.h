@@ -15,6 +15,10 @@
 
 namespace engine::models::yue2 {
 
+// Prefills the AR state for one NAR chunk. The second argument is how many
+// leading tokens every chunk of the song shares.
+using Yue2NARPrefillState = std::function<Yue2ARDevicePrefixState(const std::vector<int32_t> &, size_t)>;
+
 class Yue2NARRuntime {
 public:
     Yue2NARRuntime(
@@ -24,13 +28,15 @@ public:
         size_t weight_context_bytes,
         size_t graph_arena_bytes,
         bool allow_flash_attention = true,
-        int64_t attention_tile_rows = 0);
+        int64_t attention_tile_rows = 0,
+        int64_t window_frames = 0,
+        int64_t overlap_frames = 0);
     ~Yue2NARRuntime();
 
     std::vector<float> synthesize(
         const std::vector<int32_t> & prefix,
         const std::vector<int32_t> & codec,
-        const std::function<Yue2ARDevicePrefixState(const std::vector<int32_t> &)> & prefill_state,
+        const Yue2NARPrefillState & prefill_state,
         const std::vector<float> & noise,
         uint64_t seed,
         int64_t ode_steps,

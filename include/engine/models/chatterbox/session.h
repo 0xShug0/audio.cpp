@@ -27,6 +27,10 @@ struct ChatterboxConditionalsCacheKey {
     std::string language;
 };
 
+struct ChatterboxAudioBufferEqual {
+    bool operator()(const runtime::AudioBuffer & lhs, const runtime::AudioBuffer & rhs) const;
+};
+
 struct ChatterboxConditionalsCacheKeyEqual {
     bool operator()(
         const ChatterboxConditionalsCacheKey & lhs,
@@ -61,13 +65,18 @@ private:
     bool mem_saver_ = false;
     std::unique_ptr<ChatterboxTTSComponent> component_;
     std::unique_ptr<ChatterboxVCComponent> vc_component_;
-    std::optional<std::string> component_language_;
+    // Whether component_ runs the multilingual T3 (every language but English).
+    std::optional<bool> component_multilingual_;
     std::optional<ChatterboxVoiceCloneConfig> voice_clone_config_;
     runtime::CacheSlots<
         ChatterboxConditionalsCacheKey,
         ChatterboxConditionalsOutputs,
         ChatterboxConditionalsCacheKeyEqual> conditionals_cache_;
     std::optional<ChatterboxConditionalsOutputs> cached_conditionals_;
+    runtime::CacheSlots<
+        runtime::AudioBuffer,
+        EmbedReferenceOutputs,
+        ChatterboxAudioBufferEqual> vc_reference_cache_;
     double cached_prompt_prep_ms_ = 0.0;
 };
 

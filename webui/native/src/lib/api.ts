@@ -254,9 +254,10 @@ function sseData(message: string): string {
 // TaskStreamClosedError.
 export async function* taskStreamEvents(
   body: Record<string, unknown>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  endpoint: '/v1/tasks/stream' | '/v1/recipes/run' = '/v1/tasks/stream'
 ): AsyncGenerator<TaskStreamMessage> {
-  const response = await fetch(apiUrl('/v1/tasks/stream'), {
+  const response = await fetch(apiUrl(endpoint), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, stream_format: 'sse' }),
@@ -329,11 +330,15 @@ export async function* taskStreamEvents(
   if (!sawDone) throw new TaskStreamClosedError();
 }
 
-export function base64AudioUrl(data: string): string {
+export function base64AudioBlob(data: string): Blob {
   const binary = atob(data);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {
     bytes[index] = binary.charCodeAt(index);
   }
-  return URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+  return new Blob([bytes], { type: 'audio/wav' });
+}
+
+export function base64AudioUrl(data: string): string {
+  return URL.createObjectURL(base64AudioBlob(data));
 }

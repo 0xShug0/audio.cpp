@@ -40,6 +40,13 @@ std::vector<float> resample_mono_soxr_or_linear(
     int target_sample_rate_hz,
     const SoxrResampleOptions & options);
 
+// Prefer SOXR; log its unavailability and use the cached sinc-Hann resampler.
+std::vector<float> resample_mono_soxr_or_sinc(
+    const std::vector<float> & mono_samples,
+    int source_sample_rate_hz,
+    int target_sample_rate_hz,
+    const SoxrResampleOptions & options);
+
 std::vector<float> resample_mono_linear(
     const std::vector<float> & mono_samples,
     int source_sample_rate_hz,

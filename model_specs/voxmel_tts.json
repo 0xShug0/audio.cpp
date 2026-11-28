@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "family": "voxmel_tts",
+  "display_name": "VoxMel",
+  "description": "Wavelet-factorized continuous autoregressive English and Mandarin speech synthesis and reference-audio voice cloning.",
+  "category": "tts",
+  "status": "supported",
+  "tasks": [
+    "tts",
+    "clone"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en",
+    "zh"
+  ],
+  "capabilities": {
+    "tts": [
+      "long_form"
+    ],
+    "clone": [
+      "speaker_reference",
+      "long_form"
+    ]
+  },
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "audio-cpp/audio.cpp-gguf",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "dependencies": [],
+  "packages": [
+    {
+      "id": "voxmel_tts_06b_f16",
+      "display_name": "VoxMel 0.6B F16",
+      "format": "gguf",
+      "precision": "f16",
+      "default": true,
+      "target_directory": "VoxMel-TTS-GGUF",
+      "files": [
+        "VoxMel-TTS-GGUF/voxmel-tts-0.6b-f16.gguf"
+      ],
+      "strip_prefix": "VoxMel-TTS-GGUF"
+    },
+    {
+      "id": "voxmel_tts_06b_q8_0",
+      "display_name": "VoxMel 0.6B Q8_0",
+      "format": "gguf",
+      "precision": "q8_0",
+      "default": false,
+      "target_directory": "VoxMel-TTS-GGUF",
+      "files": [
+        "VoxMel-TTS-GGUF/voxmel-tts-0.6b-q8_0.gguf"
+      ],
+      "strip_prefix": "VoxMel-TTS-GGUF"
+    }
+  ],
+  "ui": {
+    "tags": [
+      "TTS",
+      "Clone"
+    ],
+    "docs": [
+      "docs/models/voxmel_tts.md"
+    ],
+    "recommended_package": "voxmel_tts_06b_f16"
+  },
+  "options": {
+    "load": [],
+    "session": [
+      {
+        "name": "weight_type",
+        "type": "enum",
+        "description": "Weight storage override. Native uses the GGUF package types.",
+        "values": [
+          "native",
+          "f32",
+          "f16",
+          "bf16",
+          "q8_0"
+        ],
+        "required": false,
+        "default": "native"
+      },
+      {
+        "name": "attention",
+        "type": "enum",
+        "description": "Attention implementation; auto selects supported flash attention.",
+        "required": false,
+        "default": "auto",
+        "values": [
+          "auto",
+          "eager",
+          "flash"
+        ]
+      }
+    ],
+    "request": [
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Random seed for the continuous flow samples.",
+        "required": false,
+        "min": 0
+      },
+      {
+        "name": "reference_text",
+        "type": "string",
+        "description": "Exact transcript of the reference recording; required with reference audio.",
+        "required": false
+      },
+      {
+        "name": "guidance_scale",
+        "type": "float",
+        "description": "Text guidance strength. Zero disables text guidance.",
+        "required": false,
+        "default": 3.5
+      },
+      {
+        "name": "speaker_guidance_scale",
+        "type": "float",
+        "description": "Speaker guidance strength for reference-audio cloning. Zero disables speaker guidance.",
+        "required": false,
+        "default": 3.0
+      },
+      {
+        "name": "num_inference_steps",
+        "type": "int",
+        "description": "Euler steps per generated coarse Mel frame.",
+        "required": false,
+        "default": 32,
+        "min": 1,
+        "max": 256
+      },
+      {
+        "name": "residual_num_inference_steps",
+        "type": "int",
+        "description": "Euler steps for each residual tier. Defaults to num_inference_steps.",
+        "required": false,
+        "min": 1,
+        "max": 256
+      },
+      {
+        "name": "min_duration_sec",
+        "type": "float",
+        "description": "Minimum generated duration per text chunk, in seconds.",
+        "required": false,
+        "default": 0.3,
+        "min": 0
+      },
+      {
+        "name": "max_duration_sec",
+        "type": "float",
+        "description": "Maximum generated duration per text chunk, in seconds. Prompt and generation must fit the Qwen context.",
+        "required": false,
+        "default": 30.0,
+        "min": 0,
+        "max": 300
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per framework text chunk.",
+        "required": false,
+        "default": 400,
+        "min": 1
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Framework long-form text chunking mode.",
+        "required": false,
+        "default": "default",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ]
+      }
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "tokenizer_json": "model:tokenizer.json",
+        "tokenizer_config": "model:tokenizer_config.json"
+      },
+      "tensors": {
+        "model_weights": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "vocos_weights": {
+          "source": "weights:",
+          "prefix": "vocos"
+        }
+      }
+    }
+  ]
+}

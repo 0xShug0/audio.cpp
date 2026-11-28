@@ -1,5 +1,8 @@
 # MOSS-Transcribe-Diarize
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 MOSS-Transcribe-Diarize transcribes audio with speaker labels and segment timestamps.
 It supports 50+ languages without requiring a language hint.
 

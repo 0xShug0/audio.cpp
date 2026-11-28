@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/fish_drama3/prompt.h"
+#include "engine/community_models/fish_drama3/reference_cache.h"
 #include "engine/framework/runtime/streaming_audio.h"
 
 #include <functional>
@@ -31,14 +32,36 @@ public:
     void warm_streaming_codec(const codecs::FishDacCodes & reference);
     Drama3Generation generate(const std::string & text, const std::vector<Drama3Take> & references,
         const std::vector<Drama3Take> & history, const Drama3Sampling & sampling, bool streaming,
-        const std::function<void(const runtime::AudioBuffer &)> & on_audio = {}, bool continuation = false);
+        const std::function<void(const runtime::AudioBuffer &)> & on_audio = {}, bool continuation = false,
+        const std::vector<Drama3Take> & generated_history = {}, bool allow_empty = false);
 
 private:
+    struct PromptPrefill {
+        std::vector<Drama3Frame> prompt;
+        std::vector<std::byte> backbone;
+        std::vector<std::byte> tower;
+        std::vector<float> hidden;
+    };
+
+    std::vector<float> embed_prompt(const std::vector<Drama3Frame> & prompt);
+    PromptPrefill capture_prefill(const std::vector<Drama3Frame> & prompt, const std::vector<float> & hidden) const;
+    void restore_prefill(const PromptPrefill & snapshot);
+    std::vector<float> prefill_reference_prompt(const std::vector<Drama3Frame> & prompt, size_t reference_end,
+        double & embedding_ms, double & backbone_ms, double & tower_ms);
+
     std::shared_ptr<const Drama3Assets> assets_;
     Drama3TextTokenizer tokenizer_;
     int64_t cache_steps_;
     bool profile_first_audio_ = false;
     bool disk_experts_ = false;
+    bool reuse_prefill_ = false;
+    bool reuse_reference_prefill_ = false;
+    std::optional<PromptPrefill> prompt_prefill_;
+    std::optional<PromptPrefill> reference_prefill_;
+    std::optional<io::DiskCache> prefill_disk_cache_;
+    std::string prefill_identity_;
+    bool prefill_disk_read_warned_ = false;
+    bool prefill_disk_write_warned_ = false;
     bool device_sampling_ = false;
     size_t codec_batch_frames_ = 4;
     bool codec_async_decode_ = true;
@@ -50,8 +73,7 @@ private:
     std::unique_ptr<Drama3Tower> tower_;
     std::unique_ptr<core::ExecutionContext> codec_execution_;
     std::unique_ptr<codecs::FishDacCodecRuntime> codec_;
-    std::optional<runtime::AudioBuffer> cached_reference_audio_;
-    codecs::FishDacCodes cached_reference_codes_;
+    Drama3ReferenceCache reference_cache_;
 };
 
 }  // namespace engine::models::fish_drama3

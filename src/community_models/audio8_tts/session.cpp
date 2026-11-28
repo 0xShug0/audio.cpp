@@ -497,9 +497,7 @@ Audio8TtsRequest Audio8TtsSession::make_request(const runtime::TaskRequest & req
     if (out.text.empty()) {
         throw std::runtime_error("Audio8 TTS request text must not be empty");
     }
-    // Common Traditional -> Simplified conversion if no Cantonese language specified.
-    // Uses shared utility in engine::text::chinese_variant (OpenCC TSCharacters).
-    // Keep Traditional when language is yue/cantonese.
+    // Apply the shared language-aware Chinese-script policy to text and references.
     const auto language = extract_request_language(request);
     out.text = engine::text::maybe_convert_traditional_to_simplified_opt(out.text, language);
     for (auto & ref : out.references) {
@@ -604,6 +602,7 @@ runtime::StreamingPolicy Audio8TtsSession::streaming_policy() const {
 }
 
 void Audio8TtsSession::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("Audio8 TTS streaming");
     if (task_.mode != runtime::RunMode::Streaming) {
         throw std::runtime_error("Audio8 TTS start_stream requires a streaming session");
@@ -646,6 +645,7 @@ runtime::TaskResult Audio8TtsSession::finish_stream() {
     runtime::TaskResult task_result;
     task_result.audio_output = std::move(stream_merged_audio_);
     reset();
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return task_result;
 }
 
@@ -748,7 +748,7 @@ void Audio8TtsSession::initialize_streaming_request(const runtime::TaskRequest &
         } else if (!arktts_request.text.empty()) {
             chunk_text = arktts_request.text;
         }
-        // Apply Traditional->Simplified conversion for streaming chunks as well
+        // Apply the same language-aware normalization to streaming chunks
         // (chunk_text_request was built from original request before conversion).
         chunk_text = engine::text::maybe_convert_traditional_to_simplified_opt(chunk_text, stream_language_);
         stream_text_chunks_.push_back(std::move(chunk_text));

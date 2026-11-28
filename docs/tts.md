@@ -25,6 +25,7 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | Inflect Micro v2 | `inflect_v2` | `tts` | [Inflect v2](#inflect-v2) |
 | Irodori-TTS | `irodori_tts` | `tts`, `vdes` | [Irodori-TTS](#irodori-tts) |
 | Kitten TTS 2 | `kitten_tts2` | `tts`, `clon` | [Kitten TTS 2](models/kitten_tts2.md) |
+| kale-tts-1 (tiny, nano) | `kale_tts` | `tts` | [kale-tts-1](models/kale_tts.md) |
 | KittenTTS Mini 0.8 | `kitten_tts` | `tts` | [KittenTTS](models/kitten_tts.md) |
 | Kokoro 82M | `kokoro_tts` | `tts` | [Kokoro 82M](models/kokoro_tts.md) |
 | KugelAudio-0-Open | `kugelaudio` | `tts` | [KugelAudio](models/kugelaudio.md) |
@@ -46,15 +47,20 @@ For adapter loading and merged GGUF export, see the [LoRA guide](lora.md).
 | Piper TTS | `piper_tts` | `tts` | [Piper TTS](models/piper_tts.md) |
 | Plapre 3 | `plapre` | `tts`, `clon` | [Plapre 3](models/plapre.md) |
 | PocketTTS | `pocket_tts` | `tts`, `clon` | [PocketTTS](#pockettts) |
+| PocketTTS Small | `pocket_tts_small` | `tts`, `clon` | [PocketTTS Small](models/pocket_tts_small.md) |
 | Qwen3 TTS | `qwen3_tts` | `tts`, `clon`, `vdes` | [Qwen3 TTS](#qwen3-tts) |
 | sanoTTS voice family | `sanotts` | `tts` | [sanoTTS](#sanotts) |
 | Supertonic | `supertonic` | `tts` | [Supertonic](#supertonic) |
+| tiny-voca | `tiny_voca` | `tts` | [tiny-voca](models/tiny_voca.md) |
 | VibeVoice | `vibevoice` | `tts` | [VibeVoice](#vibevoice) |
 | VieNeu-TTS v3 Turbo | `vieneu_v3_turbo` (alias `vietneu_tts`) | `tts`, `clon` | [VieNeu-TTS v3 Turbo](models/vieneu_v3_turbo.md) |
 | VoxCPM1 | `voxcpm1` | `tts`, `clon` | [VoxCPM1](#voxcpm1) |
 | VoxCPM2 | `voxcpm2` | `tts`, `clon`, `vdes` | [VoxCPM2](#voxcpm2) |
+| VoxMel | `voxmel_tts` | `tts`, `clon` | [VoxMel](models/voxmel_tts.md) |
 | Voxtral 4B TTS | `voxtral_tts` | `tts` | [Voxtral TTS](models/voxtral_tts.md) |
 | XTTS v2 | `xtts_v2` | `tts` | [XTTS v2](community_models/xtts_v2.md) |
+| ZONOS2 | `zonos2` | `tts`, `clon` | [ZONOS2](models/zonos2.md) |
+| ZONOS3-Mini | `zonos3` | `tts`, `clon` | [ZONOS3-Mini](models/zonos3.md) |
 
 This page covers speech TTS-style families. MiniMax-H3 appears here for prompt-driven dialogue audio, but it uses the generation route (`--task gen`) rather than the normal speech route (`--task tts`). Detailed route manuals live under `docs/models/` or `docs/models/` when a model needs more space.
 
@@ -74,9 +80,12 @@ Common options:
 | `--voice-id` | Built-in voice id for models with packaged voices. |
 | `--language` | Model language code when the model requires one. |
 | `--text-chunk-size` | Long-form chunk budget in characters. Each model has its own default. |
-| `--seed` | Optional fixed seed. If omitted, models that sample use a random seed unless their upstream default is fixed. |
+| `--seed` | Fixed seed, or `-1` for a fresh random seed per request. Omission preserves the model-specific default. |
 
 ## Chatterbox
+
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
 
 Chatterbox is a voice-clone TTS model with an audio-to-audio voice-conversion path. The upstream Chatterbox family also documents paralinguistic tag tokens in newer variants, but the current audio.cpp integration exposes voice cloning and voice conversion rather than a separate tag-control interface.
 
@@ -150,7 +159,8 @@ settings for subsequent requests in that session.
 | `chatterbox.weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | not set | Weight storage type; defaults to native. |
 | `chatterbox.t3_weight_type` | `native`, `f32`, `f16`, `bf16`, `q8_0` | shared setting | T3 weight storage; inherits weight_type. |
 | `chatterbox.multilingual_t3` | `v2`, `v3` | `v2` | Multilingual T3 checkpoint selection. |
-| `chatterbox.conditionals_cache_slots` | integer >= 0 | `1` | Cached speaker conditionals; zero disables reuse. |
+| `chatterbox.conditionals_cache_slots` | integer >= 0 | `1` | Cached speaker conditionals, one per voice and language; zero disables reuse. They survive language changes between multilingual languages (every language but English), so a voice heard in several of them needs a slot per language. |
+| `chatterbox.vc_reference_cache_slots` | integer >= 0 | `1` | Cached voice-conversion target references (`--task vc`), so converting into the same voice again skips preparing it; zero disables reuse. |
 | `chatterbox.mem_saver` | bool | `false` | Release staged runtime components. |
 | `chatterbox.encoder_condition_samples` | integer | `96000` | Tokenizer reference sample limit at 16 kHz; the voice encoder uses the full reference. |
 | `chatterbox.decoder_condition_samples` | integer | `240000` | S3Gen reference sample limit at 24 kHz. |
@@ -171,7 +181,7 @@ own S3Gen/HiFT-vocoder loader code for the flow decoder and vocoder half.
 The package is one self-contained, audio.cpp-native GGUF produced by repacking Resemble AI's
 weights (via the third-party `cstr/chatterbox-turbo-GGUF` conversion published for the CrispASR
 project, MIT-relicensed) with
-[`tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py`](../tools/community_models/chatterbox_turbo/repack_chatterbox_turbo_gguf.py)
+[`tools/gguf/chatterbox_turbo_repack.py`](../tools/gguf/chatterbox_turbo_repack.py)
 — see that model's community doc for details.
 
 **Current limitations:** only the built-in default voice baked into the package is supported.
@@ -845,6 +855,9 @@ one name for each request control.
 
 ## VibeVoice
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 VibeVoice is a long-form multi-speaker TTS model, available in 1.5B and 7B sizes. Prompts use speaker-labeled lines, and speaker reference WAVs are provided in the same order as the speaker ids.
 
 | Field | Value |
@@ -978,6 +991,9 @@ audiocpp_cli --task tts --family voxcpm1 --model models/VoxCPM1-GGUF/voxcpm-0.5b
 
 ## VoxCPM2
 
+> [!WARNING]
+> If SOXR is unavailable, a built-in resampler is used. Output may differ from the SOXR path.
+
 VoxCPM2 supports plain TTS, voice design, controllable voice cloning, and an ultimate-clone style that uses both prompt audio and transcript. The CLI expresses voice design with the same text convention as the upstream examples: put the voice/style description in parentheses at the start of `--text`.
 
 [VocalRender-Pro](models/vocalrender.md) is a Mandarin score-conditioned singing fine-tune of VoxCPM2. It uses the `voxcpm2` family and has a separate installable GGUF package; see its guide for score tokens, reference-audio requirements, and a working CLI example.
@@ -1075,15 +1091,15 @@ combinations in a session.
 | `voxcpm2.perf_mode` | `off`, `cuda_perf` | `off` | `cuda_perf` packs QKV and gate/up projections using their existing weight dtype. May change numerical results and generated audio; `off` preserves standard execution. |
 | `voxcpm2.lora` | directory or checkpoint file | not set | Native LoRA weights with adjacent `lora_config.json`; merged at session creation without changing the AudioVAE. |
 | `voxcpm2.lora_scale` | finite float | `1` | Multiplier for the adapter's configured alpha/r scaling. |
-| `voxcpm2.weight_context_mb` | integer >= 1 | `3072` | Context or graph arena size in MiB. |
-| `voxcpm2.text_embedding_graph_arena_mb` | integer >= 1 | `64` | Host graph-metadata arena size in MiB; legacy `text_embedding_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.lm_step_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `lm_step_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.projection_graph_arena_mb` | integer >= 1 | `256` | Host graph-metadata arena size in MiB; legacy `projection_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.local_encoder_graph_arena_mb` | integer >= 1 | `512` | Host graph-metadata arena size in MiB; legacy `local_encoder_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.dit_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `dit_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.audiovae_weight_context_mb` | integer >= 1 | `768` | Context or graph arena size in MiB. |
-| `voxcpm2.audiovae_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_graph_context_mb` accepted with the same family prefix. |
-| `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `1024` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.weight_context_mb` | integer >= 1 | `8` | Context or graph arena size in MiB. |
+| `voxcpm2.text_embedding_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena size in MiB; legacy `text_embedding_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.lm_step_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena size in MiB; legacy `lm_step_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.projection_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena size in MiB; legacy `projection_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.local_encoder_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena size in MiB; legacy `local_encoder_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.dit_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena size in MiB; legacy `dit_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.audiovae_weight_context_mb` | integer >= 1 | `8` | Context or graph arena size in MiB. |
+| `voxcpm2.audiovae_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena size in MiB; legacy `audiovae_graph_context_mb` accepted with the same family prefix. |
+| `voxcpm2.audiovae_encoder_graph_arena_mb` | integer >= 1 | `32` | Host graph-metadata arena size in MiB; legacy `audiovae_encoder_graph_context_mb` accepted with the same family prefix. |
 | `voxcpm2.audiovae_latent_capacity` | integer >= 1 | not set | Optional decoder graph reservation in latent frames, reused by shorter requests and doubled when exceeded; omitted builds the graph at each request's own frame count. |
 | `voxcpm2.exec_plan` | JSON string | `{}` | Component `audiovae`: `impl` is `default`/`ggml`; `backend`, if supplied, must match the session; no artifacts. `params.threads` is a nonnegative int. Positive values require a CPU session and create a dedicated AudioVAE backend, enabling streaming decode overlap; also controls offline decoding and prompt encoding threads. Omitted/0 shares the session backend. |
 | `voxcpm2.audiovae_encoder_sample_capacity` | integer >= 1 | `240000` | Reserved encoder sample capacity. |

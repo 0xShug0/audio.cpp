@@ -1,4 +1,5 @@
 #include "engine/community_models/parakeet_tdt/assets.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 
 #include "engine/framework/model_spec/package.h"
 #include "engine/framework/io/json.h"
@@ -75,7 +76,7 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
     if (config_root.find("audiocpp_matmul_precision") ||
         config_root.find("audiocpp_cpu_matmul_weight_type") ||
         enc_config.find("subsampling_input_scale") || enc_config.find("batch_norm_variance_floor")) {
-        throw std::runtime_error("Phonon development package uses removed precision/scaling controls; reconvert with the current convert_phonon2.py");
+        throw std::runtime_error("Phonon development package uses removed precision/scaling controls; reconvert with the current phonon2_asr_convert.py");
     }
     if (config_root.find("word_timestamp_mode")) {
         config.word_timestamp_mode = json::require_string(config_root, "word_timestamp_mode");
@@ -140,14 +141,16 @@ ParakeetConfig parse_config(const assets::ResourceBundle & resources) {
 
 }  // namespace
 
-std::shared_ptr<const ParakeetTDTAssets> load_parakeet_assets(const std::filesystem::path & model_path) {
+std::shared_ptr<const ParakeetTDTAssets> load_parakeet_assets(
+    const std::filesystem::path & model_path, std::string_view family) {
     auto resources = engine::model_spec::load_resource_bundle(
         model_path,
-        engine::model_spec::default_spec_path("parakeet_tdt"));
+        engine::model_spec::default_spec_path(family));
     auto assets = std::make_shared<ParakeetTDTAssets>();
     assets->resources = std::move(resources);
     assets->source = assets->resources.open_tensor_source("weights");
     assets->config = parse_config(assets->resources);
+    assets->impl = &implementation_for_family(family);
     const auto & tokenizer_json = assets->resources.require_file("tokenizer_json");
     assets->tokenizer = engine::tokenizers::load_huggingface_tokenizer_json(tokenizer_json);
     assets->special_token_ids =

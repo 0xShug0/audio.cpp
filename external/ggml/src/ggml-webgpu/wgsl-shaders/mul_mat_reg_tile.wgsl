@@ -1,8 +1,12 @@
 enable f16;
 
 #define DECLARE_BYTE_LOADERS_SRC0
-#include "common_decls.tmpl"
 
+#ifdef SRC_OVERLAP
+#define SRC0 merged_src
+#define SRC1 merged_src
+#endif
+#include "common_decls.tmpl"
 #include "mul_mat_decls.tmpl"
 
 #ifdef VEC
@@ -36,11 +40,17 @@ struct MulMatParams {
     broadcast3: u32
 };
 
+#ifdef SRC_OVERLAP
+@group(0) @binding(0) var<storage, read_write> merged_src: array<SRC0_TYPE>;
+#define DST_BINDING 1
+#else
 @group(0) @binding(0) var<storage, read_write> src0: array<SRC0_TYPE>; // M rows, K columns
 @group(0) @binding(1) var<storage, read_write> src1: array<SRC1_TYPE>; // K rows, N columns (transposed)
-@group(0) @binding(2) var<storage, read_write> dst: array<DST_TYPE>; // M rows, N columns (transposed)
+#define DST_BINDING 2
+#endif
 
-@group(0) @binding(3) var<uniform> params: MulMatParams;
+@group(0) @binding(DST_BINDING) var<storage, read_write> dst: array<DST_TYPE>; // M rows, N columns (transposed)
+@group(0) @binding(DST_BINDING + 1) var<uniform> params: MulMatParams;
 
 fn get_local_n(thread_id: u32) -> u32 {
     return thread_id / WORKGROUP_SIZE_M;
@@ -53,7 +63,7 @@ const TOTAL_WORKGROUP_SIZE = WORKGROUP_SIZE_M * WORKGROUP_SIZE_N;
 const TILE_SRC0_SHMEM = TILE_K * WORKGROUP_SIZE_M * TILE_M;
 const TILE_SRC1_SHMEM = TILE_K * WORKGROUP_SIZE_N * TILE_N;
 
-var<workgroup> shmem: array<f16, TILE_SRC0_SHMEM + TILE_SRC1_SHMEM>;
+var<workgroup> shmem: array<STAGING_TYPE, TILE_SRC0_SHMEM + TILE_SRC1_SHMEM>;
 
 @compute @workgroup_size(TOTAL_WORKGROUP_SIZE)
 fn main(@builtin(workgroup_id) wg_id: vec3<u32>,
@@ -113,7 +123,7 @@ fn main(@builtin(workgroup_id) wg_id: vec3<u32>,
         let k_end = min(TILE_K, params.k - k_outer);
 
         for (var k_inner = 0u; k_inner < k_end; k_inner++) {
-            var src0_tile: array<f16, TILE_M>;
+            var src0_tile: array<STAGING_TYPE, TILE_M>;
             for (var tm = 0u; tm < TILE_M; tm++) {
                 let src0_m = local_m * TILE_M + tm;
                 let src0_idx = k_inner + src0_m * TILE_K;

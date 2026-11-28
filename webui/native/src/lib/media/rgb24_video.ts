@@ -22,6 +22,7 @@ export interface VideoOutputArtifact {
   url: string;
   extension: string;
   mime: string;
+  blob?: Blob;
 }
 
 interface VideoTaskArtifact {
@@ -43,14 +44,14 @@ function positiveInteger(value: string | undefined, name: string, label: string)
   return parsed;
 }
 
-function decodeBase64Frame(payload: string, offset: number, length: number): Uint8Array {
+export function decodeBase64Frame(payload: string, offset: number, length: number): Uint8Array {
   const binary = atob(payload.slice(offset, offset + length));
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
 }
 
-function rgb24ToRgba(rgb: Uint8Array): Uint8ClampedArray<ArrayBuffer> {
+export function rgb24ToRgba(rgb: Uint8Array): Uint8ClampedArray<ArrayBuffer> {
   const rgba = new Uint8ClampedArray(rgb.length / 3 * 4);
   for (let source = 0, target = 0; source < rgb.length; source += 3, target += 4) {
     rgba[target] = rgb[source];
@@ -179,11 +180,13 @@ export async function prepareRgb24Output(
   idPrefix: string,
   audioCodec: 'aac' | 'opus' = 'aac'
 ): Promise<PreparedVideoOutput> {
+  const resultBlob = new Blob([JSON.stringify(result)], { type: 'application/json' });
   const artifacts: VideoOutputArtifact[] = [{
     id: `${idPrefix}_result`,
     extension: 'json',
     mime: 'application/json',
-    url: URL.createObjectURL(new Blob([JSON.stringify(result)], { type: 'application/json' }))
+    url: URL.createObjectURL(resultBlob),
+    blob: resultBlob
   }];
   const videoArtifact = Array.isArray(result.artifacts)
     ? (result.artifacts as VideoTaskArtifact[]).find((entry) =>
@@ -208,7 +211,8 @@ export async function prepareRgb24Output(
       id: `${idPrefix}_video`,
       extension: 'mp4',
       mime: 'video/mp4',
-      url: URL.createObjectURL(video.blob)
+      url: URL.createObjectURL(video.blob),
+      blob: video.blob
     });
     return {
       artifacts,

@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "family": "tiny_voca",
+  "display_name": "tiny-voca",
+  "description": "A 4.5M-parameter English text-to-speech model with two voices and its own phonemizer (dizione). No external phonemizer is needed.",
+  "category": "tts",
+  "status": "community",
+  "tasks": [
+    "tts"
+  ],
+  "modes": [
+    "offline"
+  ],
+  "languages": [
+    "en"
+  ],
+  "runtime": {
+    "tags": [
+      "gguf"
+    ]
+  },
+  "capabilities": {
+    "tts": [
+      "built_in_voices",
+      "long_form"
+    ]
+  },
+  "options": {
+    "request": [
+      {
+        "name": "voice_id",
+        "type": "enum",
+        "description": "Built-in voice: M2 (male) or F2 (female).",
+        "values": [
+          "M2",
+          "F2"
+        ],
+        "required": false,
+        "default": "M2"
+      },
+      {
+        "name": "speed",
+        "type": "float",
+        "description": "Speech speed multiplier; larger values produce faster speech.",
+        "required": false,
+        "min": 0.25,
+        "max": 4.0,
+        "default": 1.0
+      },
+      {
+        "name": "semitone_shift",
+        "type": "int",
+        "description": "Pitch shift in whole semitones; 0 leaves the voice as it is.",
+        "required": false,
+        "min": -24,
+        "max": 24,
+        "default": 0
+      },
+      {
+        "name": "language",
+        "type": "string",
+        "description": "Language of the text. The model reads English only: en, en-us or English.",
+        "required": false,
+        "default": "en"
+      },
+      {
+        "name": "pitch_shift",
+        "type": "float",
+        "description": "Fine pitch shift, added to semitone_shift, in units of the natural log of the pitch: 0.0578 is one semitone, 0.693 one octave.",
+        "required": false,
+        "min": -1.4,
+        "max": 1.4,
+        "default": 0.0
+      },
+      {
+        "name": "pitch_range",
+        "type": "float",
+        "description": "Scales pitch movement around the mean; 1 leaves it as predicted, larger values are livelier.",
+        "required": false,
+        "min": 0.0,
+        "max": 3.0,
+        "default": 1.0
+      },
+      {
+        "name": "seed",
+        "type": "int",
+        "description": "Seed of the noise in the voice; the same seed gives the same audio. Default 0.",
+        "required": false,
+        "min": 0,
+        "default": 0
+      },
+      {
+        "name": "text_chunk_mode",
+        "type": "enum",
+        "description": "Long-form text chunking mode.",
+        "values": [
+          "default",
+          "tag_aware",
+          "japanese",
+          "endline"
+        ],
+        "required": false,
+        "default": "default"
+      },
+      {
+        "name": "text_chunk_size",
+        "type": "int",
+        "description": "Maximum Unicode codepoints per long-form chunk.",
+        "required": false,
+        "min": 1,
+        "default": 400
+      }
+    ],
+    "session": [],
+    "load": []
+  },
+  "package_defaults": {
+    "download": {
+      "kind": "huggingface_snapshot",
+      "repo": "n4ze3m/tiny-voca",
+      "revision": "main",
+      "gated": false
+    }
+  },
+  "packages": [
+    {
+      "id": "tiny_voca_orig",
+      "display_name": "tiny-voca Original-Dtype GGUF",
+      "default": true,
+      "format": "gguf",
+      "precision": "orig",
+      "target_directory": "tiny-voca-GGUF",
+      "files": [
+        "gguf/tiny-voca-orig.gguf"
+      ],
+      "strip_prefix": "gguf"
+    }
+  ],
+  "dependencies": [],
+  "ui": {
+    "recommended_package": "tiny_voca_orig",
+    "tags": [
+      "TTS",
+      "GGUF"
+    ],
+    "builtin_voices": [
+      "M2",
+      "F2"
+    ],
+    "default_voice": "M2",
+    "docs": [
+      "docs/models/tiny_voca.md",
+      "docs/tts.md",
+      "docs/gguf.md"
+    ]
+  },
+  "sources": [
+    {
+      "format": "gguf",
+      "roots": {
+        "model": ".",
+        "weights": "$gguf"
+      },
+      "files": {
+        "config": "model:config.json",
+        "lexicon": "model:phonemizer/lexicon.tsv",
+        "align": "model:phonemizer/align.json",
+        "g2p": "model:phonemizer/g2p.json",
+        "homographs": "model:phonemizer/homographs.json"
+      },
+      "tensors": {
+        "weights": {
+          "source": "weights:",
+          "prefix": "model"
+        },
+        "g2p_weights": {
+          "source": "weights:",
+          "prefix": "g2p"
+        }
+      }
+    },
+    {
+      "format": "safetensors",
+      "roots": {
+        "model": "."
+      },
+      "files": {
+        "config": "model:config.json",
+        "lexicon": "model:phonemizer/lexicon.tsv",
+        "align": "model:phonemizer/align.json",
+        "g2p": "model:phonemizer/g2p.json",
+        "homographs": "model:phonemizer/homographs.json"
+      },
+      "tensors": {
+        "weights": "model:model.safetensors",
+        "g2p_weights": "model:g2p.safetensors"
+      }
+    }
+  ]
+}

@@ -6,6 +6,7 @@
 #include "engine/framework/io/filesystem.h"
 #include "engine/framework/io/json.h"
 #include "engine/framework/model_spec/package.h"
+#include "engine/framework/runtime/model_routing.h"
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,20 @@
 #include <vector>
 
 namespace engine::models::kitten_tts {
+
+// Family routing: Mini 0.8 and TTS2 Mini share the predictor/decoder runtimes.
+// Missing variant is the published Mini 0.8 package contract.
+const KittenRoute & resolve_kitten_route(const engine::io::json::Value & config) {
+    static const KittenRoute mini08{KittenVariant::Mini08, "expr-voice-5-m"};
+    static const KittenRoute mini2{KittenVariant::Mini2, "en.eleanor"};
+    static const runtime::ModelRouteEntry<std::string, KittenRoute> entries[] = {
+        {"mini_0_8", &mini08},
+        {"mini_2", &mini2},
+    };
+    static const runtime::ModelRouteTable<std::string, KittenRoute> routes("KittenTTS variant", entries);
+    const auto * variant = config.find("variant");
+    return routes.require(variant ? variant->as_string() : "mini_0_8");
+}
 
 namespace {
 
@@ -209,14 +224,77 @@ load_weight_norm_conv_transpose1d(engine::core::BackendWeightStore &store, const
                                       {groups == in_channels ? in_channels : out_channels});
     }
     if (groups == in_channels && in_channels == out_channels && grouped_out_channels == 1) {
-        std::vector<float> dense(static_cast<size_t>(in_channels * out_channels * kernel), 0.0f);
+        // Depthwise convolution reads taps in the opposite order to transposed convolution.
+        std::vector<float> reversed = normalized;
         for (int64_t channel = 0; channel < in_channels; ++channel) {
-            const float *src = normalized.data() + static_cast<ptrdiff_t>(channel * kernel);
-            float *dst = dense.data() + static_cast<ptrdiff_t>((channel * out_channels + channel) * kernel);
-            std::memcpy(dst, src, static_cast<size_t>(kernel) * sizeof(float));
+            auto begin = reversed.begin() + channel * kernel;
+            std::reverse(begin, begin + kernel);
         }
-        conv.dense_weight = store.make_from_f32(
-            engine::core::TensorShape::from_dims({in_channels, out_channels, kernel}), storage_type, std::move(dense));
+        conv.depthwise_weight = store.make_from_f32(
+            engine::core::TensorShape::from_dims({in_channels, 1, 1, kernel}),
+            storage_type,
+            std::move(reversed));
+    }
+    if (groups == 1 && output_padding == 0 && kernel == stride * 2 && padding > 0 && padding < stride) {
+        auto phase_conv = std::make_shared<KittenWeights::Conv1dWeights>();
+        phase_conv->in_channels = in_channels;
+        phase_conv->out_channels = out_channels * stride;
+        phase_conv->kernel = 3;
+        phase_conv->stride = 1;
+        phase_conv->padding = 1;
+        phase_conv->dilation = 1;
+        phase_conv->groups = 1;
+        phase_conv->use_bias = use_bias;
+        std::vector<float> phase_weight(
+            static_cast<size_t>(phase_conv->out_channels * phase_conv->in_channels * phase_conv->kernel),
+            0.0f);
+        std::vector<float> phase_bias;
+        if (use_bias) {
+            phase_bias.assign(static_cast<size_t>(phase_conv->out_channels), 0.0f);
+        }
+        auto source_weight = [&](int64_t in_channel, int64_t out_channel, int64_t kernel_index) -> float {
+            const size_t offset = static_cast<size_t>((in_channel * out_channels + out_channel) * kernel + kernel_index);
+            return normalized[offset];
+        };
+        auto target_weight = [&](int64_t phase_channel, int64_t in_channel, int64_t kernel_index) -> float & {
+            const size_t offset = static_cast<size_t>(
+                (phase_channel * phase_conv->in_channels + in_channel) * phase_conv->kernel + kernel_index);
+            return phase_weight[offset];
+        };
+        const int64_t split_phase = stride - padding;
+        for (int64_t out_channel = 0; out_channel < out_channels; ++out_channel) {
+            for (int64_t phase = 0; phase < stride; ++phase) {
+                const int64_t phase_channel = out_channel * stride + phase;
+                if (use_bias) {
+                    phase_bias[static_cast<size_t>(phase_channel)] = bias_values[static_cast<size_t>(out_channel)];
+                }
+                for (int64_t in_channel = 0; in_channel < in_channels; ++in_channel) {
+                    const int64_t center_kernel = padding + phase;
+                    target_weight(phase_channel, in_channel, 1) =
+                        source_weight(in_channel, out_channel, center_kernel);
+                    if (phase < split_phase) {
+                        const int64_t previous_kernel = stride + padding + phase;
+                        target_weight(phase_channel, in_channel, 0) =
+                            source_weight(in_channel, out_channel, previous_kernel);
+                    } else {
+                        const int64_t next_kernel = phase + padding - stride;
+                        target_weight(phase_channel, in_channel, 2) =
+                            source_weight(in_channel, out_channel, next_kernel);
+                    }
+                }
+            }
+        }
+        phase_conv->weight = store.make_from_f32(
+            engine::core::TensorShape::from_dims({phase_conv->out_channels, phase_conv->in_channels, phase_conv->kernel}),
+            storage_type,
+            std::move(phase_weight));
+        if (use_bias) {
+            phase_conv->bias = store.make_from_f32(
+                engine::core::TensorShape::from_dims({phase_conv->out_channels}),
+                vector_storage_type(storage_type),
+                std::move(phase_bias));
+        }
+        conv.phase_shuffle_conv = std::move(phase_conv);
     }
     return conv;
 }
@@ -469,6 +547,7 @@ std::shared_ptr<const KittenWeights> load_kitten_weights(const engine::io::json:
                                                          size_t weight_context_bytes) {
     const auto config = parse_kitten_config_metadata(config_root);
     auto weights = std::make_shared<KittenWeights>();
+    weights->variant = resolve_kitten_route(config_root).variant;
     weights->store = std::make_shared<engine::core::BackendWeightStore>(backend, backend_type, "kitten.weights",
                                                                         weight_context_bytes);
     weights->n_token = config.n_token;
@@ -580,14 +659,18 @@ std::shared_ptr<const KittenWeights> load_kitten_weights(const engine::io::json:
         store, source, "decoder.generator.noise_res.0", 256, 7, {1, 3, 5}, matmul_storage_type, conv_storage_type));
     weights->decoder.generator.noise_res.push_back(load_generator_resblock(
         store, source, "decoder.generator.noise_res.1", 128, 11, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.0", 256, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.1", 256, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.2", 128, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
-    weights->decoder.generator.resblocks.push_back(load_generator_resblock(
-        store, source, "decoder.generator.resblocks.3", 128, 3, {1, 3, 5}, matmul_storage_type, conv_storage_type));
+    const bool mini2 = resolve_kitten_route(config_root).variant == KittenVariant::Mini2;
+    const std::vector<int64_t> kernels = mini2 ? config.resblock_kernel_sizes : std::vector<int64_t>{3, 3};
+    for (size_t stage = 0; stage < weights->decoder.generator.ups.size(); ++stage) {
+        for (size_t branch = 0; branch < kernels.size(); ++branch) {
+            const auto index = stage * kernels.size() + branch;
+            weights->decoder.generator.resblocks.push_back(load_generator_resblock(
+                store, source, "decoder.generator.resblocks." + std::to_string(index),
+                weights->decoder.generator.ups[stage].out_channels, kernels[branch],
+                mini2 ? config.resblock_dilation_sizes.at(branch) : std::vector<int64_t>{1, 3, 5},
+                matmul_storage_type, conv_storage_type));
+        }
+    }
     weights->decoder.generator.conv_post = load_weight_norm_conv1d(store, source, "decoder.generator.conv_post", 22,
                                                                    128, 7, 1, 3, 1, 1, true, conv_storage_type);
     weights->decoder.generator.source_linear =
@@ -711,11 +794,22 @@ std::shared_ptr<const KittenAssets> load_kitten_assets(const std::filesystem::pa
     assets->resources = std::move(resources);
     assets->config = std::move(config);
     assets->model_weights = std::move(weights);
+    assets->route = &resolve_kitten_route(assets->config);
     assets->context_length = parse_kitten_config_metadata(assets->config).plbert_max_position_embeddings;
-    assets->vocab = make_kitten_symbol_vocab();
+    if (assets->route->variant == KittenVariant::Mini2) {
+        for (const auto & [symbol, id] : assets->config.require("vocab").as_object()) assets->vocab.emplace(symbol, id.as_i64());
+        for (const auto & [voice, language] : assets->config.require("voice_languages").as_object()) {
+            assets->voice_languages.emplace(voice, language.as_string());
+        }
+    } else {
+        assets->vocab = make_kitten_symbol_vocab();
+    }
     assets->voice_aliases = parse_voice_aliases(assets->config);
     assets->speed_priors = parse_speed_priors(assets->config);
     load_embedded_voices(*assets->model_weights, assets->voices);
+    for (auto & [voice, pack] : assets->voices) {
+        if (assets->route->variant == KittenVariant::Mini2) pack.language_code = assets->voice_languages.at(voice);
+    }
 
     return assets;
 }

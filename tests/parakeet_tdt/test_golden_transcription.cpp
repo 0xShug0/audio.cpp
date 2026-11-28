@@ -4,9 +4,10 @@
 // This is a cheap, deterministic stand-in for the numerical parity work done
 // while debugging the encoder/frontend correctness bugs fixed in 4a10c48 and
 // 3bf2d12: it runs the full model end to end against a fixed test clip and
-// asserts the transcribed text matches the known-correct NeMo reference
-// output exactly. It catches output-changing regressions cheaply, but it did
-// not catch every numerical bug found during development: greedy decoding
+// asserts the transcribed text matches the independent Transformers reference
+// output exactly (see README.md for its pinned generation configuration).
+// It catches output-changing regressions cheaply, but it did not catch every
+// numerical bug found during development: greedy decoding
 // produced the same text for one folded-bias error despite measurable
 // encoder drift.
 //
@@ -20,8 +21,8 @@
 // comparison, which needs a NeMo install and real model weights on top of
 // what this test needs.
 //
-// Requires the real model weights and the checked-in fixture audio
-// (tests/parakeet_tdt/assets/2086-149220-0033.wav, see that directory's
+// Requires the real model weights and the shared fixture audio
+// (assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav, see the shared directory's
 // README.md for provenance). --model accepts either the installed
 // safetensors directory or a standalone GGUF. If the default model directory
 // isn't present (e.g. a fresh checkout without models downloaded), this test
@@ -52,8 +53,7 @@ constexpr int kExitFail = 1;
 constexpr int kExitSkip = 125;
 
 const char * kExpectedText =
-    "Well, I don't wish to see it any more, observed Phoebe, turning away "
-    "her eyes. It is certainly very like the old portrait.";
+    "Concord returned to its place amidst the tents,";
 
 std::filesystem::path repo_path(const std::string & relative) {
     return std::filesystem::path(ENGINE_REPO_ROOT) / relative;
@@ -75,7 +75,7 @@ int main(int argc, char ** argv) {
     const std::filesystem::path model_path = arg_value(
         argc, argv, "--model", repo_path("models/parakeet-tdt-0.6b-v3").string());
     const std::filesystem::path audio_path = arg_value(
-        argc, argv, "--audio", repo_path("tests/parakeet_tdt/assets/2086-149220-0033.wav").string());
+        argc, argv, "--audio", repo_path("assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav").string());
     const std::string weight_type = arg_value(argc, argv, "--weight-type", "");
 
     const bool model_available =

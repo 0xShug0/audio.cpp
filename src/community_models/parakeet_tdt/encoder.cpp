@@ -1,5 +1,5 @@
 #include "engine/community_models/parakeet_tdt/encoder.h"
-#include "engine/community_models/parakeet_tdt/bark3.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
 
 #include "engine/framework/core/backend.h"
 #include "engine/framework/debug/profiler.h"
@@ -33,7 +33,45 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kEncoderGraphNodes = 2097152;
+engine::core::TensorValue build_metal_subsampling(
+    engine::core::ModuleBuildContext & ctx,
+    const engine::core::TensorValue & input,
+    const ParakeetSubsamplingWeights & weights,
+    int64_t kernel, int64_t stride,
+    const std::vector<engine::core::TensorValue> & masks) {
+    const auto channels = weights.conv_in.weight.shape.dims[0];
+    engine::modules::Conv2dConfig conv{1, channels, kernel, kernel,
+        static_cast<int>(stride), static_cast<int>(stride), 1, 1, 1, 1, true};
+    auto x = engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+        {input.shape.dims[0], input.shape.dims[2], input.shape.dims[3], 1})}).build(ctx, input);
+    x = engine::modules::Conv2dModule(conv).build(ctx, x, weights.conv_in,
+        engine::modules::Conv2dLayout::ChannelsLast);
+    auto mask = [&](const engine::core::TensorValue & value, size_t index) {
+        const auto & dims = value.shape.dims;
+        auto flat = engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+            {dims[0], dims[1], dims[2] * dims[3]})}).build(ctx, value);
+        flat = engine::modules::MaskingModule().build(ctx, flat, masks[index]);
+        return engine::modules::ReshapeModule({value.shape}).build(ctx, flat);
+    };
+    x = engine::modules::ReluModule().build(ctx, mask(x, 0));
+    engine::modules::DepthwiseConv2dConfig depthwise{channels, kernel, kernel,
+        static_cast<int>(stride), static_cast<int>(stride), 1, 1, 1, 1, true};
+    for (size_t i = 0; i < weights.layers.size(); ++i) {
+        const auto & layer = weights.layers[i];
+        x = engine::modules::DepthwiseConv2dModule(depthwise).build(ctx, x,
+            {layer.depthwise_weight, layer.depthwise_bias}, engine::modules::Conv2dLayout::ChannelsLast);
+        x = mask(x, i + 1);
+        const auto weight = engine::modules::ReshapeModule({
+            engine::core::TensorShape::from_dims({channels, channels})}).build(ctx, layer.pointwise.weight);
+        x = engine::modules::LinearModule({channels, channels, true}).build(ctx, x, {weight, layer.pointwise.bias});
+        x = engine::modules::ReluModule().build(ctx, mask(x, i + 1));
+    }
+    const auto shape = x.shape;
+    x = engine::modules::TransposeModule({{0, 1, 3, 2}, 4}).build(ctx, x);
+    x = engine::core::ensure_backend_addressable_layout(ctx, x);
+    return engine::modules::ReshapeModule({engine::core::TensorShape::from_dims(
+        {shape.dims[0], shape.dims[1], channels * shape.dims[2]})}).build(ctx, x);
+}
 
 // NeMo's ConformerConvolution.depthwise_conv is a CausalConv1D, but the
 // full-context (non-streaming) encoder constructs it with an explicit int
@@ -173,6 +211,8 @@ engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for(engine::co
             return engine::runtime::GraphOptimizationBackend::Gpu;
         case engine::core::BackendType::Vulkan:
         case engine::core::BackendType::Metal:
+        case engine::core::BackendType::WebGPU:
+        case engine::core::BackendType::Sycl:
         case engine::core::BackendType::BestAvailable:
             return engine::runtime::GraphOptimizationBackend::Other;
     }
@@ -326,12 +366,13 @@ struct ParakeetFastConformerEncoderRuntime::Graph {
     ggml_gallocr_t pos_gallocr = nullptr;
     ggml_cgraph * graph = nullptr;
     ggml_cgraph * pos_graph = nullptr;
+    engine::core::HostGraphPlan plan;
     engine::core::TensorValue input;
     engine::core::TensorValue mask1;
     engine::core::TensorValue mask2;
     engine::core::TensorValue mask3;
     engine::core::TensorValue keep_mask;
-    engine::core::TensorValue attention_mask;
+    engine::core::TensorValue attention_mask, attention_keys;
     engine::core::TensorValue pos_emb;
     engine::core::TensorValue xscale;
     std::vector<engine::core::TensorValue> projected_pos_emb;
@@ -339,9 +380,10 @@ struct ParakeetFastConformerEncoderRuntime::Graph {
     engine::core::TensorValue output;
 
     ~Graph() {
+        plan.reset();
         if (backend != nullptr) {
-            engine::core::release_backend_graph_resources(backend, graph);
-            engine::core::release_backend_graph_resources(backend, pos_graph);
+            engine::core::release_backend_graph_resources(backend, graph, true);
+            engine::core::release_backend_graph_resources(backend, pos_graph, true);
         }
         if (pos_gallocr != nullptr) {
             ggml_gallocr_free(pos_gallocr);
@@ -413,13 +455,9 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
         return;
     }
 
-    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
-        execution_context_->backend_type() == engine::core::BackendType::Cuda) {
-        // A mismatched cached graph will never be used again. Release its
-        // allocation before building the replacement instead of overlapping
-        // both full activation/position buffers at the allocation peak.
-        graph_.reset();
-    }
+    // A mismatched graph is no longer reused. Release it before allocating
+    // its replacement, including on CPU and Metal.
+    graph_.reset();
 
     const auto build_start = Clock::now();
     const auto & config = assets_->config;
@@ -459,38 +497,48 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     graph->mask2 = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1, stage2_frames}));
     graph->mask3 = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1, stage3_frames}));
     graph->keep_mask = engine::core::make_tensor(ctx, GGML_TYPE_I32, engine::core::TensorShape::from_dims({1, stage3_frames}));
-    graph->attention_mask = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({stage3_frames, stage3_frames}));
+    graph->attention_keys = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({stage3_frames}));
+    ggml_set_input(graph->attention_keys.tensor);
+    // Upload the shared key row once; materialize the contiguous softmax mask on the backend.
+    graph->attention_mask = engine::core::wrap_tensor(ggml_repeat(ctx.ggml,
+        graph->attention_keys.tensor, ggml_new_tensor_2d(ctx.ggml, GGML_TYPE_F32, stage3_frames, stage3_frames)),
+        engine::core::TensorShape::from_dims({stage3_frames, stage3_frames}));
     graph->pos_emb = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, 2 * stage3_frames - 1, enc.hidden_size}));
     graph->xscale = engine::core::make_tensor(ctx, GGML_TYPE_F32, engine::core::TensorShape::from_dims({1, 1, 1}));
     for (auto * tensor : {graph->mask1.tensor, graph->mask2.tensor, graph->mask3.tensor,
-                          graph->keep_mask.tensor, graph->attention_mask.tensor,
+                          graph->keep_mask.tensor,
                           graph->pos_emb.tensor, graph->xscale.tensor}) {
         ggml_set_input(tensor);
     }
 
     auto x = engine::core::reshape_tensor(ctx, graph->input, engine::core::TensorShape::from_dims({1, 1, input_frames, feature_dim}));
-    // NeMo uses Conv2D with pad=1 (not causal). Output matches conv_out formula.
-    x = engine::modules::Conv2dModule({1, enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
-            .build(ctx, x, enc_weights.subsampling.conv_in);
-    x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask1));
+    if (ctx.backend_type == engine::core::BackendType::Metal) {
+        x = build_metal_subsampling(ctx, x, enc_weights.subsampling, k, s,
+            {graph->mask1, graph->mask2, graph->mask3});
+    } else {
+        // NeMo uses Conv2D with pad=1 (not causal). Output matches conv_out formula.
+        x = engine::modules::Conv2dModule({1, enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
+                .build(ctx, x, enc_weights.subsampling.conv_in);
+        x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask1));
 
-    x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
-            .build(ctx, x, {enc_weights.subsampling.layers[0].depthwise_weight, enc_weights.subsampling.layers[0].depthwise_bias});
-    x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2);
-    x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
-            .build(ctx, x, enc_weights.subsampling.layers[0].pointwise);
-    x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2));
+        x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
+                .build(ctx, x, {enc_weights.subsampling.layers[0].depthwise_weight, enc_weights.subsampling.layers[0].depthwise_bias});
+        x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2);
+        x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
+                .build(ctx, x, enc_weights.subsampling.layers[0].pointwise);
+        x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask2));
 
-    x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
-            .build(ctx, x, {enc_weights.subsampling.layers[1].depthwise_weight, enc_weights.subsampling.layers[1].depthwise_bias});
-    x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3);
-    x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
-            .build(ctx, x, enc_weights.subsampling.layers[1].pointwise);
-    x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3));
+        x = engine::modules::DepthwiseConv2dModule({enc.subsampling_channels, k, k, static_cast<int>(s), static_cast<int>(s), 1, 1, 1, 1, true})
+                .build(ctx, x, {enc_weights.subsampling.layers[1].depthwise_weight, enc_weights.subsampling.layers[1].depthwise_bias});
+        x = engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3);
+        x = engine::modules::Conv2dModule({enc.subsampling_channels, enc.subsampling_channels, 1, 1, 1, 1, 0, 0, 1, 1, true})
+                .build(ctx, x, enc_weights.subsampling.layers[1].pointwise);
+        x = engine::modules::ReluModule().build(ctx, engine::modules::TimeMask4dModule().build(ctx, x, graph->mask3));
 
-    x = engine::modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
-    x = engine::core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
-    x = engine::core::reshape_tensor(ctx, x, engine::core::TensorShape::from_dims({1, stage3_frames, enc.subsampling_channels * stage3_features}));
+        x = engine::modules::TransposeModule({{0, 2, 1, 3}, 4}).build(ctx, x);
+        x = engine::core::wrap_tensor(ggml_cont(ctx.ggml, x.tensor), x.shape, GGML_TYPE_F32);
+        x = engine::core::reshape_tensor(ctx, x, engine::core::TensorShape::from_dims({1, stage3_frames, enc.subsampling_channels * stage3_features}));
+    }
     // xscaling (multiply by sqrt(d_model), which Parakeet's RelPositionalEncoding
     // does) is folded into this projection's weight and bias at load time — see
     // load_subsampling in weights.cpp.
@@ -510,7 +558,6 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
                 ctx,
                 graph->pos_emb,
                 {enc_weights.layers[static_cast<size_t>(layer)].pos_weight, std::nullopt}));
-        ggml_set_output(graph->projected_pos_emb_computed.back().tensor);
     }
 
     for (int64_t layer = 0; layer < enc.layers; ++layer) {
@@ -533,10 +580,13 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     ggml_set_output(graph->output.tensor);
 
     graph->pos_graph = ggml_new_graph_custom(graph->ggml, 4096, false);
-    for (const auto & projected : graph->projected_pos_emb_computed) {
-        ggml_build_forward_expand(graph->pos_graph, projected.tensor);
+    for (size_t i = 0; i < graph->projected_pos_emb.size(); ++i) {
+        ggml_build_forward_expand(graph->pos_graph, ggml_cpy(ctx.ggml,
+            graph->projected_pos_emb_computed[i].tensor, graph->projected_pos_emb[i].tensor));
     }
-    graph->graph = ggml_new_graph_custom(graph->ggml, kEncoderGraphNodes, false);
+    // Each layer has a fixed graph structure independent of audio duration.
+    const size_t graph_nodes = 1024 + static_cast<size_t>(enc.layers) * 256;
+    graph->graph = ggml_new_graph_custom(graph->ggml, graph_nodes, false);
     ggml_build_forward_expand(graph->graph, graph->output.tensor);
 
     // Elides redundant nodes (broadcast repeats folded into the consuming op,
@@ -545,10 +595,12 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     // call at this input length, so this cost is amortized to ~zero and every
     // reused call benefits from the smaller node count.
     const auto opt_backend = graph_optimizer_backend_for(execution_context_->backend_type());
-    const auto opt_options = is_bark3_variant(assets_->config.variant)
-        ? bark3_encoder_graph_options(opt_backend)
-        : engine::runtime::graph_optimization_options_for_backend(opt_backend);
-    const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, opt_options);
+    const auto opt_options = assets_->impl->encoder_graph_options(opt_backend);
+    auto pos_options = opt_options;
+    // Copy destinations share externally allocated inputs; keep their views in
+    // the producer schedule so gallocr accounts for every referenced tensor.
+    pos_options.elide_metadata_only_ops = false;
+    const auto pos_opt_report = engine::runtime::optimize_graph(*graph->pos_graph, pos_options);
     const auto opt_report = engine::runtime::optimize_graph(*graph->graph, opt_options);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_before", opt_report.nodes_before);
     debug::trace_log_scalar("parakeet_tdt.encoder.graph_optimizer.nodes_after", opt_report.nodes_after);
@@ -584,23 +636,14 @@ void ParakeetFastConformerEncoderRuntime::ensure_graph(int64_t input_frames, int
     }
     debug::timing_log_scalar("parakeet_tdt.encoder.pos_compute_ms", engine::debug::elapsed_ms(pos_compute_start, Clock::now()));
 
-    const auto pos_copy_start = Clock::now();
-    for (size_t i = 0; i < graph->projected_pos_emb.size(); ++i) {
-        ggml_backend_tensor_copy(graph->projected_pos_emb_computed[i].tensor, graph->projected_pos_emb[i].tensor);
-    }
-    debug::timing_log_scalar("parakeet_tdt.encoder.pos_copy_ms", engine::debug::elapsed_ms(pos_copy_start, Clock::now()));
+    // Projections are written directly to persistent main-graph inputs. Release
+    // the one-shot producer workspace after its final write completes.
+    engine::core::release_backend_graph_resources(graph->backend, graph->pos_graph, true);
+    ggml_gallocr_free(graph->pos_gallocr);
+    graph->pos_gallocr = nullptr;
+    graph->pos_graph = nullptr;
 
-    if (execution_context_->backend_type() == engine::core::BackendType::Vulkan ||
-        execution_context_->backend_type() == engine::core::BackendType::Cuda ||
-        (execution_context_->backend_type() == engine::core::BackendType::Cpu &&
-         is_bark3_variant(assets_->config.variant))) {
-        // Position projections now live in the main graph's persistent inputs.
-        // Their one-shot producer allocation is redundant for warm inference.
-        ggml_gallocr_free(graph->pos_gallocr);
-        graph->pos_gallocr = nullptr;
-        graph->pos_graph = nullptr;
-    }
-
+    engine::core::prepare_host_graph_plan(*execution_context_, graph->graph, graph->plan);
     graph_ = std::move(graph);
     const double build_ms = engine::debug::elapsed_ms(build_start, Clock::now());
     debug::timing_log_scalar("parakeet_tdt.encoder.graph_build_ms", build_ms);
@@ -667,20 +710,16 @@ ParakeetEncodedAudio ParakeetFastConformerEncoderRuntime::encode(
     // rows (whose outputs are discarded below anyway) with a full set of valid
     // keys, so no softmax row degenerates to all -inf and produces NaN.
     const size_t frames = static_cast<size_t>(graph.encoded_frames);
-    attention_mask_scratch_.assign(frames * frames, 0.0f);
+    attention_mask_scratch_.assign(frames, 0.0f);
     if (valid3 > 0 && valid3 < graph.encoded_frames) {
-        for (size_t query = 0; query < frames; ++query) {
-            std::fill(
-                attention_mask_scratch_.begin() + static_cast<std::ptrdiff_t>(query * frames + valid3),
-                attention_mask_scratch_.begin() + static_cast<std::ptrdiff_t>((query + 1) * frames),
-                -std::numeric_limits<float>::infinity());
-        }
+        std::fill(attention_mask_scratch_.begin() + valid3, attention_mask_scratch_.end(),
+            -std::numeric_limits<float>::infinity());
     }
-    engine::core::write_tensor_f32(graph.attention_mask, attention_mask_scratch_);
+    engine::core::write_tensor_f32(graph.attention_keys, attention_mask_scratch_);
 
     engine::core::set_backend_threads(execution_context_->backend(), execution_context_->config().threads);
     const auto compute_start = Clock::now();
-    const auto status = engine::core::compute_backend_graph(execution_context_->backend(), graph.graph, nullptr, "Parakeet TDT encoder");
+    const auto status = engine::core::compute_graph(*execution_context_, graph.graph, graph.plan, "Parakeet TDT encoder");
     ggml_backend_synchronize(execution_context_->backend());
     debug::timing_log_scalar("parakeet_tdt.encoder.graph.compute_ms", engine::debug::elapsed_ms(compute_start, Clock::now()));
 

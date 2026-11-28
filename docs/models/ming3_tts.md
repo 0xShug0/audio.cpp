@@ -199,11 +199,11 @@ The Python converter requires NumPy, ONNX and Safetensors; inference does not
 require ONNX Runtime.
 
 ```bash
-python tools/models/convert_ming3_tts_gguf.py \
+python tools/gguf/ming3_tts_convert.py \
   --source /path/to/Ming-3.0-tts-0.5B \
   --output /path/to/ming-3.0-tts-0.5b-bf16.gguf --type orig
 
-python tools/models/convert_ming3_tts_gguf.py \
+python tools/gguf/ming3_tts_convert.py \
   --source /path/to/Ming-3.0-tts-0.5B \
   --output /path/to/ming-3.0-tts-0.5b-q8_0.gguf --type q8_0
 ```

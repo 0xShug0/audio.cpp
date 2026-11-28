@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/framework/moe_engine/moe_engine.h"
+
 #include "engine/framework/assets/tensor_source.h"
 #include "engine/framework/core/execution_context.h"
 
@@ -45,11 +47,7 @@ struct Drama3BackboneDecoderConfig {
     ggml_type kv_cache_type = GGML_TYPE_F16;
     int64_t kv_cache_alignment = 1;
     int64_t decode_cache_steps = 2048;
-    int64_t cpu_expert_layers = 0;
-    bool disk_experts = false;
-    bool pin_experts = false;
-    int64_t expert_cache_size = 32;
-    int64_t disk_expert_read_threads = 1;
+    moe::EngineConfig moe{moe::Residency::Resident, false, 32, 1, {}, {}};
     size_t prefill_cache_bytes = 256u * 1024u * 1024u;
     bool profile_prefill_cache = false;
 };
@@ -85,7 +83,10 @@ public:
         virtual void reset(bool invalidate_experts = false) = 0;
         virtual Drama3BackboneDecoderForwardResult prefill_embeddings(
             const std::vector<float> & embeddings,
-            int64_t steps) = 0;
+            int64_t steps, int64_t prefix = 0) = 0;
+        virtual size_t prefill_snapshot_bytes() const = 0;
+        virtual std::vector<std::byte> capture_prefill() const = 0;
+        virtual void restore_prefill(const std::vector<std::byte> & snapshot, int64_t steps) = 0;
         virtual std::vector<float> run_embedding_step(const std::vector<float> & embedding) = 0;
         virtual int64_t valid_steps() const noexcept = 0;
     };

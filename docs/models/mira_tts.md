@@ -19,7 +19,7 @@ entry in the built-in download catalog. Convert a locally obtained upstream
 checkpoint with:
 
 ```bash
-python tools/community_models/convert_mira_tts.py /path/to/MiraTTS /path/to/mira-native
+python tools/gguf/mira_tts_weights_prepare.py /path/to/MiraTTS /path/to/mira-native
 audiocpp_gguf \
   --input language_model=/path/to/mira-native/language_model.safetensors \
   --input speaker_encoder=/path/to/mira-native/speaker_encoder.safetensors \

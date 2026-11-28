@@ -1,5 +1,7 @@
 #include "engine/community_models/whistle_asr/session.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/framework/runtime/spec_backed_model.h"
 #include "engine/framework/runtime/options.h"
 
@@ -28,7 +30,7 @@ runtime::SessionOptions require_supported_session(
 
 bool use_neon_decoder(const runtime::SessionOptions & options) {
     const auto plan = runtime::parse_exec_plan(options.options, "whistle_asr.exec_plan",
-        {{"decoder", "host", {{"host", {core::BackendType::Cpu}, {}, {}},
+        {{"decoder", "native", {{"native", {core::BackendType::Cpu}, {}, {}},
                               {"neon", {core::BackendType::Cpu}, {}, {}}}}});
     return plan.at("decoder").impl == "neon";
 }
@@ -56,6 +58,7 @@ void WhistleAsrSession::prepare(const runtime::SessionPreparationRequest & reque
 }
 
 runtime::TaskResult WhistleAsrSession::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("Whistle ASR run()");
     if (!request.audio_input) {
         throw std::invalid_argument("Whistle ASR requires audio input");
@@ -72,6 +75,7 @@ runtime::TaskResult WhistleAsrSession::run(const runtime::TaskRequest & request)
     const auto transcript = runtime_.transcribe(*request.audio_input, language);
     runtime::TaskResult result;
     result.text_output = runtime::Transcript{transcript.text, transcript.language};
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
 

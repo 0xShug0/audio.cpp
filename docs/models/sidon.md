@@ -25,7 +25,7 @@ Download `feature_extractor_cuda.pt` and `decoder_cuda.pt` from
 Build `audiocpp_gguf`, then run:
 
 ```bash
-python tests/sidon/convert_gguf.py \
+python tools/gguf/sidon_convert.py \
   --model-dir /path/to/sidon-v0.1 \
   --output /path/to/Sidon-GGUF/sidon-v0.1-f32.gguf
 ```

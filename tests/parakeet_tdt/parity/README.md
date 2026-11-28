@@ -74,7 +74,7 @@ The first run downloads the `nvidia/parakeet-tdt-0.6b-v3` NeMo checkpoint
 ```
 # 1. NeMo reference dump
 /tmp/parakeet_parity_venv/bin/python3 tests/parakeet_tdt/parity/dump_nemo_reference.py \
-    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
+    --audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav \
     --output-dir /tmp/parakeet_nemo_dump
 
 # 2. C++ dump (accepts the installed safetensors directory or standalone GGUF).
@@ -89,7 +89,7 @@ The first run downloads the `nvidia/parakeet-tdt-0.6b-v3` NeMo checkpoint
 #    slower, not faster, on the hardware tested).
 build/<preset>/bin/parakeet_parity_dump \
     --model models/parakeet-tdt-0.6b-v3 \
-    --audio tests/parakeet_tdt/assets/2086-149220-0033.wav \
+    --audio assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav \
     --nemo-dir /tmp/parakeet_nemo_dump \
     --output-dir /tmp/parakeet_cpp_dump \
     --matmul-weight-type native \

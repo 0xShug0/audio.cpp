@@ -36,6 +36,10 @@ static inline float op_hardsigmoid(float x) {
     return fminf(1.0f, fmaxf(0.0f, (x + 3.0f) / 6.0f));
 }
 
+static inline float op_rsqrt(float x) {
+    return 1.0f / sqrtf(x);
+}
+
 static inline float op_exp(float x) {
     return expf(x);
 }
@@ -272,6 +276,10 @@ void ggml_compute_forward_sigmoid(const ggml_compute_params * params, ggml_tenso
 
 void ggml_compute_forward_hardsigmoid(const ggml_compute_params * params, ggml_tensor * dst) {
     unary_op<op_hardsigmoid>(params, dst);
+}
+
+void ggml_compute_forward_rsqrt(const ggml_compute_params * params, ggml_tensor * dst) {
+    unary_op<op_rsqrt>(params, dst);
 }
 
 void ggml_compute_forward_exp(const ggml_compute_params * params, ggml_tensor * dst) {

@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <exception>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -210,6 +211,22 @@ int main(int argc, char ** argv) {
         int64_t codebooks_out = 0;
         int64_t frames_out = 0;
         const auto codes = decoder.extract_audio_codes(codebooks_out, frames_out);
+        const auto codes_path = arg_value(argc, argv, "--dump-codes", "");
+        if (!codes_path.empty()) {
+            std::ofstream out(codes_path);
+            if (!out) throw std::runtime_error("cannot open codes output: " + codes_path);
+            out << "{\"codebooks\":" << codebooks_out << ",\"frames\":" << frames_out << ",\"codes\":[";
+            for (int64_t book = 0; book < codebooks_out; ++book) {
+                out << (book ? ",[" : "[");
+                for (int64_t frame = 0; frame < frames_out; ++frame) {
+                    if (frame) out << ',';
+                    out << codes[static_cast<size_t>(book * frames_out + frame)];
+                }
+                out << ']';
+            }
+            out << "]}\n";
+            if (!out) throw std::runtime_error("cannot write codes output: " + codes_path);
+        }
         const int64_t matching_prefix = first_divergent_row < 0 ? produced : first_divergent_row;
         std::cout << "generated rows=" << produced << "/" << steps
                   << " mismatching=" << mismatching_rows

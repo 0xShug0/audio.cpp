@@ -1,6 +1,8 @@
 #include "engine/community_models/fish_drama3/tower.h"
+#include "prefill_snapshot.h"
 
 #include "engine/framework/core/backend.h"
+#include "engine/framework/core/prepared_graph.h"
 #include "engine/framework/core/backend_weight_store.h"
 
 #include <ggml-alloc.h>
@@ -43,8 +45,9 @@ struct LayerWeights {
 };
 
 struct LayerGraph {
-    std::unique_ptr<ggml_context, ContextDeleter> context;
-    ggml_gallocr_t allocator = nullptr;
+    LayerGraph(core::ExecutionContext & execution, size_t bytes, size_t nodes)
+        : prepared(execution, {"drama3_tower", bytes, nodes}), graph(prepared.graph()) {}
+    core::PreparedGraph prepared;
     ggml_cgraph * graph = nullptr;
     ggml_tensor * hidden = nullptr;
     ggml_tensor * codes = nullptr;
@@ -57,12 +60,6 @@ struct LayerGraph {
     ggml_tensor * uniforms = nullptr;
     ggml_tensor * sampling = nullptr;
     std::vector<ggml_tensor *> book_codes;
-    ggml_backend_t backend = nullptr;
-
-    ~LayerGraph() {
-        if (graph && backend) core::release_backend_graph_resources(backend, graph, true);
-        if (allocator) ggml_gallocr_free(allocator);
-    }
 };
 
 ggml_tensor * gemma_norm(ggml_context * context, ggml_tensor * input,
@@ -177,6 +174,22 @@ public:
 
     void reset() { ggml_backend_buffer_clear(cache_buffer_, 0); }
 
+    size_t prefill_snapshot_bytes() const { return snapshot_size(prompt_state_tensors()); }
+    std::vector<std::byte> capture_prefill() const { return capture_snapshot(prompt_state_tensors()); }
+    void restore_prefill(const std::vector<std::byte> & snapshot) {
+        restore_snapshot(prompt_state_tensors(), snapshot);
+    }
+
+    std::vector<ggml_tensor *> prompt_state_tensors() const {
+        std::vector<ggml_tensor *> tensors;
+        tensors.reserve(layers_.size() * 2);
+        for (const auto & layer : layers_) {
+            tensors.push_back(layer.key_cache);
+            tensors.push_back(layer.value_cache);
+        }
+        return tensors;
+    }
+
     void release_prefill_graphs() {
         prefill_graphs_.clear();
         prefill_cached_bytes_ = 0;
@@ -206,7 +219,7 @@ public:
         return result;
     }
 
-    void prefill(const std::vector<float> & input, const std::vector<Drama3Frame> & frames) {
+    void prefill(const std::vector<float> & input, const std::vector<Drama3Frame> & frames, int64_t prefix) {
         if (frames.empty() || input.size() != frames.size() * static_cast<size_t>(config_.hidden_size)) {
             throw std::runtime_error("Drama 3 tower prompt hidden size mismatch");
         }
@@ -214,7 +227,9 @@ public:
         // cache entry is filled by generation, after the semantic draw.
         const int64_t steps = static_cast<int64_t>(frames.size()) - 1;
         if (steps == 0) return;
-        if (steps > capacity_) throw std::runtime_error("Drama 3 tower prefill exceeds cache length");
+        if (prefix < 0 || prefix > capacity_ || steps > capacity_ - prefix) {
+            throw std::runtime_error("Drama 3 tower prefill exceeds cache length");
+        }
         std::vector<float> hidden(input.begin(), input.begin() + steps * config_.hidden_size);
         std::vector<Drama3Frame> current(frames.begin(), frames.end() - 1);
         std::vector<float> masks(static_cast<size_t>(steps));
@@ -227,12 +242,15 @@ public:
         ggml_backend_tensor_set(graph->label_mask, masks.data(), 0, masks.size() * sizeof(float));
         ggml_backend_tensor_set(graph->extra, extra.data(), 0, extra.size() * sizeof(float));
         std::vector<int32_t> positions(static_cast<size_t>(steps));
-        for (int64_t row = 0; row < steps; ++row) positions[row] = static_cast<int32_t>(row);
+        for (int64_t row = 0; row < steps; ++row) positions[row] = static_cast<int32_t>(prefix + row);
         ggml_backend_tensor_set(graph->positions, positions.data(), 0, positions.size() * sizeof(int32_t));
         std::vector<ggml_fp16_t> attention_mask(static_cast<size_t>(capacity_ * steps));
         const auto negative_infinity = ggml_fp32_to_fp16(-std::numeric_limits<float>::infinity());
-        for (int64_t row = 0; row < steps; ++row) for (int64_t key = 0; key < capacity_; ++key) {
-            attention_mask[row * capacity_ + key] = key <= row ? ggml_fp32_to_fp16(0) : negative_infinity;
+        for (int64_t row = 0; row < steps; ++row) {
+            const int64_t position = prefix + row;
+            for (int64_t key = 0; key < capacity_; ++key) {
+                attention_mask[row * capacity_ + key] = key <= position ? ggml_fp32_to_fp16(0) : negative_infinity;
+            }
         }
         ggml_backend_tensor_set(graph->attention_mask, attention_mask.data(), 0, attention_mask.size() * sizeof(ggml_fp16_t));
         for (size_t book = 0; book < graph->book_codes.size(); ++book) {
@@ -242,9 +260,7 @@ public:
             }
             ggml_backend_tensor_set(graph->book_codes[book], codes.data(), 0, codes.size() * sizeof(int32_t));
         }
-        if (core::compute_backend_graph(execution_.backend(), graph->graph, nullptr, "drama3.tower.prefill") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Drama 3 tower prefill computation failed");
-        }
+        graph->prepared.compute();
         // Prefill only populates the layer caches. The last backbone row, not
         // this hidden output, seeds generation. Keep all intermediates on GPU.
         ggml_backend_synchronize(execution_.backend());
@@ -291,9 +307,7 @@ public:
             }
         }
         ggml_backend_tensor_set(graph->attention_mask, attention_mask.data(), 0, attention_mask.size() * sizeof(ggml_fp16_t));
-        if (core::compute_backend_graph(execution_.backend(), graph->graph, nullptr, "drama3.tower") != GGML_STATUS_SUCCESS) {
-            throw std::runtime_error("Drama 3 tower computation failed");
-        }
+        graph->prepared.compute();
         Drama3TowerOutput result;
         result.hidden = core::read_tensor_f32(graph->output);
         if (graph->logits) result.logits = core::read_tensor_f32(graph->logits);
@@ -326,8 +340,7 @@ public:
             ggml_backend_tensor_set_async(execution_.backend(), graph.sampling, parameters.data(), 0, sizeof(parameters));
             ggml_backend_tensor_set_async(execution_.backend(), graph.uniforms, uniforms.data(), 0, sizeof(uniforms));
         }
-        if (core::compute_backend_graph(execution_.backend(), graph.graph, nullptr, "drama3.tower.frame") != GGML_STATUS_SUCCESS)
-            throw std::runtime_error("Drama 3 tower frame computation failed");
+        graph.prepared.compute();
         const auto codes = core::read_tensor_f32(graph.output);
         Drama3Frame result{};
         result[0] = config_.semantic_begin + semantic_code;
@@ -340,12 +353,8 @@ public:
 
 private:
     std::unique_ptr<LayerGraph> build_frame_graph(bool greedy) {
-        auto result = std::make_unique<LayerGraph>();
-        result->backend = execution_.backend();
-        ggml_init_params params{8 * 1024 * 1024, nullptr, true};
-        result->context.reset(ggml_init(params));
-        auto * ctx = result->context.get();
-        result->graph = ggml_new_graph_custom(ctx, 8192, false);
+        auto result = std::make_unique<LayerGraph>(execution_, 8 * 1024 * 1024, 8192);
+        auto * ctx = result->prepared.build_context().ggml;
         const auto input = [&](ggml_type type, int64_t width) {
             auto * value = ggml_new_tensor_1d(ctx, type, width);
             ggml_set_input(value);
@@ -399,16 +408,14 @@ private:
         result->output = output;
         ggml_set_output(output);
         ggml_build_forward_expand(result->graph, output);
-        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
-        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph))
-            throw std::runtime_error("failed to allocate Drama 3 tower frame graph");
+        result->prepared.allocate();
         return result;
     }
 
     struct PrefillGraphs {
         int64_t steps;
         size_t bytes = 0;
-        std::unique_ptr<LayerGraph> graph;
+        std::unique_ptr<LayerGraph> graph{};
     };
 
     LayerGraph * prefill_graph(int64_t steps, std::unique_ptr<LayerGraph> & temporary) {
@@ -423,7 +430,7 @@ private:
             return prefill_graphs_.front().graph.get();
         }
         auto first = build_prefill_graph(steps);
-        const size_t estimate = ggml_gallocr_get_buffer_size(first->allocator, 0);
+        const size_t estimate = first->prepared.workspace_bytes();
         if (estimate > prefill_cache_budget_) {
             if (uncached_prefill_shapes_.size() >= 32) uncached_prefill_shapes_.erase(uncached_prefill_shapes_.begin());
             uncached_prefill_shapes_.insert(steps);
@@ -490,12 +497,8 @@ private:
     }
 
     std::unique_ptr<LayerGraph> build_prefill_graph(int64_t steps) {
-        auto result = std::make_unique<LayerGraph>();
-        result->backend = execution_.backend();
-        ggml_init_params params{8 * 1024 * 1024, nullptr, true};
-        result->context.reset(ggml_init(params));
-        auto * ctx = result->context.get();
-        result->graph = ggml_new_graph_custom(ctx, 8192, false);
+        auto result = std::make_unique<LayerGraph>(execution_, 8 * 1024 * 1024, 8192);
+        auto * ctx = result->prepared.build_context().ggml;
         const auto input = [&](ggml_type type, int64_t columns, int64_t rows) {
             auto * tensor = ggml_new_tensor_2d(ctx, type, columns, rows);
             ggml_set_input(tensor);
@@ -517,22 +520,15 @@ private:
         result->output = hidden;
         ggml_set_output(hidden);
         ggml_build_forward_expand(result->graph, hidden);
-        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
-        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph)) {
-            throw std::runtime_error("failed to allocate Drama 3 tower prefill graph");
-        }
+        result->prepared.allocate();
         return result;
     }
 
     std::unique_ptr<LayerGraph> build_graph(int64_t layer, int64_t steps) {
         const auto & c = config_;
         const auto & w = layers_[layer];
-        auto result = std::make_unique<LayerGraph>();
-        result->backend = execution_.backend();
-        ggml_init_params params{4 * 1024 * 1024, nullptr, true};
-        result->context.reset(ggml_init(params));
-        auto * ctx = result->context.get();
-        result->graph = ggml_new_graph_custom(ctx, 4096, false);
+        auto result = std::make_unique<LayerGraph>(execution_, 4 * 1024 * 1024, 4096);
+        auto * ctx = result->prepared.build_context().ggml;
         const auto input = [&](ggml_type type, int64_t columns, int64_t rows) {
             auto * tensor = ggml_new_tensor_2d(ctx, type, columns, rows);
             ggml_set_input(tensor);
@@ -556,10 +552,7 @@ private:
             ggml_set_output(result->logits);
             ggml_build_forward_expand(result->graph, result->logits);
         }
-        result->allocator = ggml_gallocr_new(ggml_backend_get_default_buffer_type(execution_.backend()));
-        if (!result->allocator || !ggml_gallocr_alloc_graph(result->allocator, result->graph)) {
-            throw std::runtime_error("failed to allocate Drama 3 tower graph");
-        }
+        result->prepared.allocate();
         return result;
     }
 
@@ -588,7 +581,12 @@ void Drama3Tower::mix_backbone_embeddings(std::vector<float> & embeddings, const
     impl_->mix_backbone_embeddings(embeddings, frames);
 }
 std::vector<float> Drama3Tower::shared_input(const std::vector<Drama3Frame> & frames) const { return impl_->shared_input(frames); }
-void Drama3Tower::prefill(const std::vector<float> & hidden, const std::vector<Drama3Frame> & frames) { impl_->prefill(hidden, frames); }
+void Drama3Tower::prefill(const std::vector<float> & hidden, const std::vector<Drama3Frame> & frames, int64_t prefix) {
+    impl_->prefill(hidden, frames, prefix);
+}
+size_t Drama3Tower::prefill_snapshot_bytes() const { return impl_->prefill_snapshot_bytes(); }
+std::vector<std::byte> Drama3Tower::capture_prefill() const { return impl_->capture_prefill(); }
+void Drama3Tower::restore_prefill(const std::vector<std::byte> & snapshot) { impl_->restore_prefill(snapshot); }
 Drama3TowerOutput Drama3Tower::run_layer(int64_t layer, const std::vector<float> & hidden,
                                         const std::vector<int32_t> & codes, const std::vector<float> & semantic_mask,
                                         const std::vector<float> & extra_input, int64_t position, int64_t steps) {

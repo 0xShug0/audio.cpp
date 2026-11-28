@@ -2,7 +2,7 @@
 """Require exact before/after MiraTTS output parity and report request timings.
 
 Run from the repository root so relative audio_out paths in benchmark summaries
-resolve in the same way as they did for mira_tts_warm_bench.
+resolve relative to the repository root.
 """
 
 from __future__ import annotations

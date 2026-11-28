@@ -107,7 +107,7 @@ std::string timing_json(double wall_ms,
 std::string ttft_timing_json(double ttft_ms);
 std::string live_speech_timing_json(double request_start_to_first_audio_ms,
                                     double input_end_ms);
-bool stream_event_has_output(const engine::runtime::StreamEvent &event);
+bool stream_event_has_output(const engine::runtime::StreamEvent &event, bool include_artifacts = false);
 bool task_result_has_output(const engine::runtime::TaskResult &result);
 double require_ttft_ms(const std::optional<double> &ttft_ms);
 double require_input_end_ms(const std::optional<double> &input_end_ms);
@@ -131,7 +131,7 @@ std::string
 streaming_task_result_json(const engine::runtime::TaskResult &result,
                            const std::optional<double> &ttft_ms);
 std::string stream_event_json(const engine::runtime::StreamEvent &event,
-                              bool diarization);
+                              bool diarization, bool include_artifacts = false);
 const engine::runtime::AudioBuffer &
 select_audio_output(const engine::runtime::TaskResult &result);
 engine::runtime::TaskRequest build_openai_transcription_request(

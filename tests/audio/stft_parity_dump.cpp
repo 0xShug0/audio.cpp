@@ -1,5 +1,8 @@
 #include "engine/framework/audio/dsp.h"
 #include "engine/framework/audio/wav_reader.h"
+#include "engine/framework/debug/trace.h"
+
+#include <chrono>
 
 #include <cstdlib>
 #include <filesystem>
@@ -48,17 +51,27 @@ int main(int argc, char ** argv) {
     const std::filesystem::path out_f32(argv[3]);
     const std::filesystem::path out_shape(argv[4]);
 
+    const auto started = std::chrono::steady_clock::now();
+    bool periodic_window = false;
     float preemphasis = 0.0f;
     int64_t n_fft = 512;
     int64_t hop_length = 160;
     int64_t win_length = 400;
     engine::audio::STFTPadMode pad_mode = engine::audio::STFTPadMode::Constant;
-    for (int i = 5; i < argc; i += 2) {
+    for (int i = 5; i < argc; ++i) {
+        const std::string option(argv[i]);
+        if (option == "--log") {
+            engine::debug::configure_logging({true, std::nullopt});
+            continue;
+        }
+        if (option == "--periodic-window") {
+            periodic_window = true;
+            continue;
+        }
         if (i + 1 >= argc) {
             throw std::runtime_error("missing value for trailing option");
         }
-        const std::string option(argv[i]);
-        const std::string value(argv[i + 1]);
+        const std::string value(argv[++i]);
         if (option == "--preemphasis") {
             preemphasis = std::strtof(value.c_str(), nullptr);
         } else if (option == "--n-fft") {
@@ -107,7 +120,7 @@ int main(int argc, char ** argv) {
         for (int64_t i = 0; i < config.win_length; ++i) {
             window[static_cast<size_t>(i)] =
                 0.5f - 0.5f * std::cos(2.0L * kPi * static_cast<long double>(i) /
-                                       static_cast<long double>(config.win_length - 1));
+                                       static_cast<long double>(periodic_window ? config.win_length : config.win_length - 1));
         }
     }
 
@@ -127,5 +140,7 @@ int main(int argc, char ** argv) {
     write_i64_file(out_shape, result.shape);
     std::cout << "wrote " << result.values.size() << " floats\n";
     std::cout << "preemphasis " << preemphasis << "\n";
+    engine::debug::timing_log_scalar("session.wall_ms",
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
     return 0;
 }

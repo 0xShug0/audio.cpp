@@ -1,5 +1,10 @@
 # OuteTTS validation
 
+Historical warmbench commands and removed build options are preserved in the
+[pre-cleanup backup](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md).
+Reported measurements and artifacts below are historical and unchanged; no
+replacement CLI benchmark results are claimed.
+
 This procedure exercises OuteTTS 1.0 1B in one long-lived audio.cpp session.
 It covers normal TTS, framework long-form text chunking, voice cloning, repeated
 reference-profile cache hits, cached-step graph reuse, stage timings, and
@@ -71,16 +76,7 @@ number starts from the supplied word timings.
 
 Run the committed official-reference driver after creating the alignment JSON:
 
-```powershell
-build\reference\venv\Scripts\python.exe `
-  tools\community_models\outetts_reference.py `
-  --model ..\models\Llama-OuteTTS-1.0-1B `
-  --dac ..\models\DAC.speech.v1.0\weights_24khz_1.5kbps_v1.0.pth `
-  --alignment-json build\reference\b_words.json `
-  --request-file tests\outetts\warm_bench_requests.json `
-  --device cuda --dtype fp32 `
-  --out-dir build\reference\official_script_fp32
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 The driver resets both `torch.manual_seed` and
 `torch.cuda.manual_seed_all` immediately before every `model.generate` call,
@@ -94,20 +90,11 @@ and backend configuration, then explicitly enabled the warm-benchmark targets.
 
 Windows CPU:
 
-```powershell
-.\scripts\build_windows.ps1 -Preset windows-cpu-release -ConfigureOnly
-cmake -S . -B build\windows-cpu-release -DENGINE_BUILD_WARMBENCH=ON
-cmake --build build\windows-cpu-release --parallel 4 --target audiocpp_cli audiocpp_server outetts_warm_bench
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 Windows CUDA 12.4:
 
-```powershell
-$env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
-.\scripts\build_windows.ps1 -Preset windows-cuda-release -ConfigureOnly
-cmake -S . -B build\windows-cuda-release -DENGINE_BUILD_WARMBENCH=ON
-cmake --build build\windows-cuda-release --parallel 4 --target audiocpp_cli audiocpp_server outetts_warm_bench
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 ## Exact standalone-GGUF path tests
 
@@ -158,15 +145,7 @@ WAVs passed ffmpeg decoding:
 
 CUDA default:
 
-```powershell
-build\windows-cuda-release\bin\outetts_warm_bench.exe `
-  --model ..\models\Llama-OuteTTS-1.0-1B_Q8\Llama-OuteTTS-1.0-1B_Q8.gguf `
-  --backend cuda --threads 8 `
-  --request-file tests\outetts\warm_bench_requests.json `
-  --hold-seconds 5 `
-  --audio-out-dir ..\outputs\outetts_review_cuda_default `
-  --log-file build\logs\warmbench\outetts-cuda-default.log
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 Expected trace evidence:
 
@@ -184,42 +163,16 @@ Expected trace evidence:
 
 Run the same request sequence in a fresh process with memory saver enabled:
 
-```powershell
-build\windows-cuda-release\bin\outetts_warm_bench.exe `
-  --model ..\models\Llama-OuteTTS-1.0-1B_Q8\Llama-OuteTTS-1.0-1B_Q8.gguf `
-  --backend cuda --threads 8 `
-  --request-file tests\outetts\warm_bench_requests.json `
-  --session-option outetts.mem_saver=true `
-  --hold-seconds 5 `
-  --audio-out-dir ..\outputs\outetts_review_cuda_mem_saver `
-  --log-file build\logs\warmbench\outetts-cuda-mem_saver.log
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 CPU default:
 
-```powershell
-build\windows-cpu-release\bin\outetts_warm_bench.exe `
-  --model ..\models\Llama-OuteTTS-1.0-1B_Q8\Llama-OuteTTS-1.0-1B_Q8.gguf `
-  --backend cpu --threads 8 `
-  --request-file tests\outetts\warm_bench_requests.json `
-  --hold-seconds 5 `
-  --audio-out-dir ..\outputs\outetts_review_cpu_default `
-  --log-file build\logs\warmbench\outetts-cpu-default-final.log
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 Safetensors CUDA parity run (DAC is resolved by the package spec; the aligner
 path is supplied because it is not embedded in the safetensors directory):
 
-```powershell
-build\windows-cuda-release\bin\outetts_warm_bench.exe `
-  --model ..\models\Llama-OuteTTS-1.0-1B `
-  --backend cuda --threads 8 `
-  --request-file tests\outetts\warm_bench_requests.json `
-  --session-option outetts.weight_type=f32 `
-  --session-option outetts.aligner_path=..\models\Qwen3-ForcedAligner-0.6B `
-  --audio-out-dir build\reference\cpp_f32_final_explicit `
-  --log-file build\reference\cpp_f32_final_explicit.log
-```
+[Historical harness/reference commands](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/docs/reports/outetts_validation.md) (pre-cleanup backup; not commands for the current tree).
 
 The memory-saver trace reports a positive
 `outetts.llama.step.released_cache_capacity` after generation and

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/community_models/granite5asr/encoder.h"
+#include "engine/framework/decoders/ctc_host_decoder.h"
 #include "engine/framework/io/text.h"
 #include "engine/framework/runtime/session.h"
 
@@ -61,27 +62,16 @@ inline void accumulate_piece_confidence(CtcPiece & piece, const std::vector<CtcA
 inline std::vector<CtcPiece> ctc_greedy_pieces(
     const std::vector<CtcArgmaxFrame> & frames,
     int64_t blank_id) {
-    std::vector<CtcPiece> pieces;
-    int32_t prev = -1;
-    bool open = false;
-    for (int64_t frame = 0; frame < static_cast<int64_t>(frames.size()); ++frame) {
-        const int32_t id = frames[static_cast<size_t>(frame)].id;
-        if (id == prev) {
-            continue;
-        }
-        if (open) {
-            pieces.back().end_frame = frame;
-            accumulate_piece_confidence(pieces.back(), frames);
-            open = false;
-        }
-        if (id != static_cast<int32_t>(blank_id)) {
-            pieces.push_back(CtcPiece{id, frame, frame + 1, 0.0, 0});
-            open = true;
-        }
-        prev = id;
+    std::vector<int32_t> ids;
+    ids.reserve(frames.size());
+    for (const auto & frame : frames) {
+        ids.push_back(frame.id);
     }
-    if (open && !pieces.empty()) {
-        pieces.back().end_frame = static_cast<int64_t>(frames.size());
+    const auto spans = decoders::CtcHostDecoder(static_cast<int32_t>(blank_id)).decode(ids);
+    std::vector<CtcPiece> pieces;
+    pieces.reserve(spans.size());
+    for (const auto & span : spans) {
+        pieces.push_back(CtcPiece{span.id, span.start_frame, span.end_frame, 0.0, 0});
         accumulate_piece_confidence(pieces.back(), frames);
     }
     return pieces;

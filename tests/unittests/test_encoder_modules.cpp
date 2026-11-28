@@ -1,11 +1,14 @@
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
+#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/attention_modules.h"
 #include "engine/framework/modules/activation_modules.h"
 #include "engine/framework/modules/conditioning_modules.h"
 #include "engine/framework/modules/conformer_modules.h"
 #include "engine/framework/modules/convnext_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
+#include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/structural_modules.h"
 #include "engine/framework/modules/weight_binding.h"
 #include "engine/framework/runtime/graph_optimizer.h"
@@ -220,6 +223,8 @@ engine::runtime::GraphOptimizationBackend graph_optimizer_backend_for_test(engin
             return engine::runtime::GraphOptimizationBackend::Gpu;
         case engine::core::BackendType::Vulkan:
         case engine::core::BackendType::Metal:
+        case engine::core::BackendType::WebGPU:
+        case engine::core::BackendType::Sycl:
         case engine::core::BackendType::BestAvailable:
             return engine::runtime::GraphOptimizationBackend::Other;
     }
@@ -245,6 +250,87 @@ void test_cuda_f16_lowerings_default_off() {
     static_assert(static_cast<int>(modules::ScaledDotProductAttentionLowering::ExplicitCpuPerHead) == 3);
     (void) []() -> modules::SiluModule { return {}; }();
     (void) []() -> modules::AddModule { return {}; }();
+    (void) []() -> modules::MulModule { return {}; }();
+}
+
+void test_mul_optional_broadcasting() {
+    using namespace engine;
+    using core::TensorShape;
+    struct Case {
+        TensorShape shape, rhs_shape;
+        std::vector<float> input, rhs, expected;
+    };
+    const std::vector<Case> cases = {
+        {TensorShape::from_dims({2, 3}), TensorShape::from_dims({2, 3}),
+         {1, -2, 3, 4, -5, 6}, {2, -1, .5F, 4, 2, -.5F}, {2, 2, 1.5F, 16, -10, -3}},
+        {TensorShape::from_dims({2, 3}), TensorShape::from_dims({1}),
+         {1, -2, 3, 4, -5, 6}, {-2}, {-2, 4, -6, -8, 10, -12}},
+        {TensorShape::from_dims({2, 3}), TensorShape::from_dims({1, 3}),
+         {1, -2, 3, 4, -5, 6}, {2, -1, .5F}, {2, 2, 1.5F, 8, 5, 3}},
+        {TensorShape::from_dims({2, 3}), TensorShape::from_dims({2, 1}),
+         {1, -2, 3, 4, -5, 6}, {2, -1}, {2, -4, 6, -4, 5, -6}},
+        {TensorShape::from_dims({2, 2, 3}), TensorShape::from_dims({1, 2, 1}),
+         {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, {2, -1},
+         {2, 4, 6, -4, -5, -6, 14, 16, 18, -10, -11, -12}},
+        {TensorShape::from_dims({4, 2}), TensorShape::from_dims({2, 2}),
+         {1, 2, 3, 4, 5, 6, 7, 8}, {2, -1, 3, .5F}, {2, -2, 9, 2, 10, -6, 21, 4}},
+    };
+    for (size_t i = 0; i < cases.size(); ++i) {
+        const auto & c = cases[i];
+        CpuModuleRunner runner;
+        const auto input = runner.make_f32(c.shape), rhs = runner.make_f32(c.rhs_shape);
+        std::optional<core::TensorValue> strict;
+        bool rejected = false;
+        try {
+            strict = modules::MulModule().build(runner.ctx, input, rhs);
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        require(rejected == (i != 0), "Mul default shape validation changed");
+        const auto output = modules::MulModule(true).build(runner.ctx, input, rhs);
+        core::validate_shape(output, c.shape, "Mul broadcast output");
+        require(output.type == GGML_TYPE_F32, "Mul output type changed");
+        auto * graph = ggml_new_graph_custom(runner.ggml, kTestGraphNodes, false);
+        ggml_build_forward_expand(graph, output.tensor);
+        for (int node = 0; node < ggml_graph_n_nodes(graph); ++node)
+            require(ggml_graph_node(graph, node)->op != GGML_OP_REPEAT, "Mul materialized a broadcast");
+        runner.allocate_tensors();
+        core::write_tensor_f32(input, c.input);
+        core::write_tensor_f32(rhs, c.rhs);
+        require_allclose(runner.run_f32(output), c.expected, 0, "Mul optional broadcast");
+        if (strict) require_allclose(runner.run_f32(*strict), c.expected, 0, "Mul unchanged default");
+    }
+    CpuModuleRunner runner;
+    const auto input = runner.make_f32(TensorShape::from_dims({2, 3}));
+    for (const auto & shape : {TensorShape::from_dims({4, 3}), TensorShape::from_dims({1, 2})}) {
+        bool rejected = false;
+        try {
+            (void)modules::MulModule(true).build(runner.ctx, input, runner.make_f32(shape));
+        } catch (const std::runtime_error &) {
+            rejected = true;
+        }
+        require(rejected, "Mul accepted incompatible RHS broadcasting");
+    }
+}
+
+
+void test_mul_preserved_views() {
+    using namespace engine;
+    CpuModuleRunner runner;
+    const auto packed = runner.make_f32(core::TensorShape::from_dims({2, 6}));
+    const auto lhs = modules::SliceModule({1, 0, 3}).build(runner.ctx, packed);
+    const auto rhs = modules::SliceModule({1, 3, 3}).build(runner.ctx, packed);
+    const auto output = modules::MulModule(false, true).build(runner.ctx, lhs, rhs);
+    require(output.tensor->src[0] == lhs.tensor && output.tensor->src[1] == rhs.tensor,
+            "Mul preserved views were materialized");
+    const auto broadcast_rhs = modules::SliceModule({0, 1, 1}).build(runner.ctx, rhs);
+    const auto broadcast = modules::MulModule(true, true).build(runner.ctx, lhs, broadcast_rhs);
+    const auto original = modules::MulModule().build(runner.ctx, lhs, rhs);
+    runner.allocate_tensors();
+    core::write_tensor_f32(packed, {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+    require_allclose(runner.run_f32(output), {4, 10, 18, 70, 88, 108}, 0, "Mul strided views");
+    require_allclose(runner.run_f32(original), {4, 10, 18, 70, 88, 108}, 0, "Mul default view handling");
+    require_allclose(runner.run_f32(broadcast), {10, 22, 36, 70, 88, 108}, 0, "Mul strided broadcast");
 }
 
 void test_graph_optimizer_elides_metadata_nodes_without_changing_output() {
@@ -545,6 +631,106 @@ void test_relative_attention_fused_qkv_matches_split_and_cached_pos() {
     write_relative_weights(cached_weights, cached_projected_pos);
     const auto cached_values = cached_runner.run_f32(cached_output);
     require_allclose(fused_values, cached_values, 1.0e-5f, "relative attention cached projected pos");
+}
+
+void test_legacy_relative_position_layout() {
+    CpuModuleRunner runner;
+    const auto shape = engine::core::TensorShape::from_dims({1, 2, 2});
+    auto input = runner.make_f32(shape), position = runner.make_f32(shape);
+    engine::modules::RelativeAttentionWeights w;
+    const auto matrix = engine::core::TensorShape::from_dims({2, 2});
+    w.attention.q_weight = runner.make_f32(matrix);
+    w.attention.k_weight = runner.make_f32(matrix);
+    w.attention.v_weight = runner.make_f32(matrix);
+    w.attention.out_weight = runner.make_f32(matrix);
+    w.pos_weight = runner.make_f32(matrix);
+    w.pos_bias_u = runner.make_f32(engine::core::TensorShape::from_dims({1, 2}));
+    w.pos_bias_v = runner.make_f32(engine::core::TensorShape::from_dims({1, 2}));
+    engine::modules::RelativeAttentionConfig config{2, 1, false};
+    bool rejected = false;
+    try { engine::modules::RelativeSelfAttentionModule(config).build(runner.ctx, input, position, w); }
+    catch (const std::runtime_error &) { rejected = true; }
+    require(rejected, "Default relative attention must retain its 2*T-1 position contract");
+    config.legacy_position_layout = true;
+    auto output = engine::modules::RelativeSelfAttentionModule(config).build(runner.ctx, input, position, w);
+    runner.allocate_tensors();
+    const std::vector<float> identity{1, 0, 0, 1};
+    for (const auto & value : {w.attention.q_weight, w.attention.k_weight, w.attention.v_weight, w.attention.out_weight, w.pos_weight})
+        engine::core::write_tensor_f32(value, identity);
+    engine::core::write_tensor_f32(w.pos_bias_u, {0, 0});
+    engine::core::write_tensor_f32(w.pos_bias_v, {0, 0});
+    engine::core::write_tensor_f32(input, {1, 2, 3, 4});
+    engine::core::write_tensor_f32(position, {0.2f, 0.4f, 0.6f, 0.8f});
+    // Independent two-row reference. QK^T=[[5,11],[11,25]]. The original
+    // ESPnet shift maps QP^T to [[2.2,0],[2.2,5]]. Q,K,V and output are identity.
+    const double p0 = 1.0 / (1.0 + std::exp((11.0 - 7.2) / std::sqrt(2.0)));
+    const double p1 = 1.0 / (1.0 + std::exp((30.0 - 13.2) / std::sqrt(2.0)));
+    require_allclose(runner.run_f32(output),
+        {float(3-2*p0), float(4-2*p0), float(3-2*p1), float(4-2*p1)}, 1e-6f,
+        "Legacy relative position independent reference");
+}
+
+void test_relative_conformer_ffn_activation_reference() {
+    using namespace engine;
+    for (const bool relu : {false, true}) {
+        CpuModuleRunner runner;
+        std::vector<std::pair<core::TensorValue, std::vector<float>>> tensors;
+        auto make = [&](core::TensorShape shape, std::vector<float> data) {
+            auto value = runner.make_f32(shape);
+            tensors.emplace_back(value, std::move(data));
+            return value;
+        };
+        const std::vector<float> input_values{-1.2f, 0.3f, 1.1f, 2.4f, 0.8f, -0.5f, 1.7f, -1.1f};
+        auto input = make(core::TensorShape::from_dims({1, 2, 4}), input_values);
+        auto position = make(core::TensorShape::from_dims({1, relu ? 2 : 3, 4}), std::vector<float>((relu ? 2 : 3) * 4, 0));
+        const auto matrix = core::TensorShape::from_dims({4, 4});
+        auto zero = make(matrix, std::vector<float>(16, 0));
+        auto identity = make(matrix, {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
+        auto projection = make(matrix, {0.5f,0,0,0, 0,1,0,0, 0,0,-0.5f,0, 0,0,0,1.5f});
+        auto scale = make(core::TensorShape::from_dims({4}), {1,1,1,1});
+        auto bias = make(core::TensorShape::from_dims({4}), {0,0,0,0});
+        modules::RelativeConformerBlockWeights w;
+        w.ffn1_norm = w.norm1 = w.conv.norm = w.norm2 = w.final_norm = {scale, bias};
+        w.ffn1_fc1 = w.ffn2_fc1 = {identity, std::nullopt};
+        w.ffn1_fc2 = w.ffn2_fc2 = {projection, std::nullopt};
+        w.self_attention.attention.q_weight = w.self_attention.attention.k_weight =
+            w.self_attention.attention.v_weight = w.self_attention.attention.out_weight = zero;
+        w.self_attention.pos_weight = zero;
+        w.self_attention.pos_bias_u = w.self_attention.pos_bias_v =
+            core::reshape_tensor(runner.ctx, bias, core::TensorShape::from_dims({1,4}));
+        w.conv.pointwise_in = {make(core::TensorShape::from_dims({8,4}), std::vector<float>(32, 0)), std::nullopt};
+        w.conv.depthwise = {make(core::TensorShape::from_dims({4,1,3}), std::vector<float>(12, 0)), std::nullopt};
+        w.conv.depthwise_norm = {scale, bias};
+        w.conv.pointwise_out = {zero, std::nullopt};
+        modules::ConformerBlockConfig config{4, 1, 4, 3};
+        config.use_bias = false;
+        config.legacy_position_layout = relu;
+        if (relu) config.ffn_activation = modules::FeedForwardActivation::Relu;
+        auto output = modules::RelativeConformerBlockModule(config).build(runner.ctx, input, position, w);
+        runner.allocate_tensors();
+        for (const auto & entry : tensors) core::write_tensor_f32(entry.first, entry.second);
+
+        // Scalar oracle: attention and convolution projections are zero, so the
+        // block is two normalized FFN residuals followed by final layer norm.
+        std::vector<float> expected;
+        const double diagonal[] = {0.5, 1, -0.5, 1.5};
+        for (size_t row = 0; row < 2; ++row) {
+            double x[4];
+            for (size_t c = 0; c < 4; ++c) x[c] = input_values[row * 4 + c];
+            for (int phase = 0; phase < 3; ++phase) {
+                double mean = 0, variance = 0;
+                for (double value : x) mean += value / 4;
+                for (double value : x) variance += (value - mean) * (value - mean) / 4;
+                for (size_t c = 0; c < 4; ++c) {
+                    const double n = (x[c] - mean) / std::sqrt(variance + 1e-5);
+                    if (phase == 2) expected.push_back(static_cast<float>(n));
+                    else x[c] += 0.5 * diagonal[c] * (relu ? std::max(0.0, n) : n / (1 + std::exp(-n)));
+                }
+            }
+        }
+        require_allclose(runner.run_f32(output), expected, 2e-6f,
+            relu ? "relative Conformer ReLU and T positions" : "relative Conformer default SiLU and 2T-1 positions");
+    }
 }
 
 void test_conformer_conv_pad_mask_ignores_dirty_padded_frames() {
@@ -965,6 +1151,8 @@ void test_timestep_embedding_norm_opt_in() {
     auto legacy = modules::TimestepEmbeddingModule(config).build(runner.ctx, timestep, weights);
     config.norm = modules::TimestepEmbeddingNorm::Rms;
     auto rms = modules::TimestepEmbeddingModule(config).build(runner.ctx, timestep, weights);
+    config.norm = modules::TimestepEmbeddingNorm::None;
+    auto plain = modules::TimestepEmbeddingModule(config).build(runner.ctx, timestep, weights);
     runner.allocate_tensors();
     const float t = 0.7f;
     const std::vector<float> freq_values{1.0f, 0.25f};
@@ -990,6 +1178,7 @@ void test_timestep_embedding_norm_opt_in() {
         expected_legacy.push_back(x[i] * alpha_values[i] / std::sqrt(variance + 1e-5f));
         expected_rms.push_back(x[i] * alpha_values[i] / std::sqrt(mean_square + 1e-5f));
     }
+    require_allclose(runner.run_f32(plain), x, 1e-6f, "unnormalized time embedding");
     require_allclose(runner.run_f32(legacy), expected_legacy, 1e-4f, "legacy variance RMS time embedding");
     require_allclose(runner.run_f32(rms), expected_rms, 1e-5f, "opt-in plain RMS time embedding");
 }
@@ -1013,6 +1202,56 @@ void test_feed_forward_activation_opt_in() {
     for (float v : data) expected.push_back(0.5f * v * (1.0f + std::erf(v / std::sqrt(2.0f))));
     require_allclose(runner.run_f32(legacy), expected, 1e-6f, "legacy GELU");
     require_allclose(runner.run_f32(relu), {0,0,1,2}, 1e-6f, "opt-in ReLU");
+}
+
+void test_feed_forward_precision_and_packing() {
+    using namespace engine;
+    using core::TensorShape;
+    {
+        ModuleRunner runner;
+        const auto input = runner.make_f32(TensorShape::from_dims({2, 4}));
+        const auto identity = runner.make_f32(TensorShape::from_dims({4, 4}));
+        modules::FeedForwardConfig config{4, 4, false, modules::GeluApproximation::Tanh};
+        require(config.precision_policy == modules::FeedForwardPrecisionPolicy::Native, "default FFN precision remains native");
+        config.precision_policy = modules::FeedForwardPrecisionPolicy::Bf16Autocast;
+        const auto output = modules::FeedForwardModule(config).build(runner.ctx, input,
+            {identity, std::nullopt, identity, std::nullopt});
+        runner.allocate_tensors();
+        const std::vector<float> values{-.731f, .239f, 1.417f, -2.137f, .617f, -.331f, 2.117f, -1.217f};
+        core::write_tensor_f32(input, values);
+        core::write_tensor_f32(identity, {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1});
+        auto expected = values;
+        core::round_f32_to_bf16_in_place(expected);
+        for (auto & x : expected) x = .5f * x * (1.f + std::tanh(.7978845608028654f * x * (1.f + .044715f * x * x)));
+        core::round_f32_to_bf16_in_place(expected);
+        require_allclose(runner.run_f32(output), expected, 1e-5f, "autocast FFN rounding boundaries");
+    }
+    for (const bool bias : {false, true}) {
+        ModuleRunner runner;
+        const auto input = runner.make_f32(TensorShape::from_dims({2, 3, 4}));
+        const auto up = runner.make_f32(TensorShape::from_dims({6, 4}));
+        const auto gate = runner.make_f32(TensorShape::from_dims({6, 4}));
+        const auto down = runner.make_f32(TensorShape::from_dims({4, 6}));
+        const auto up_bias = runner.make_f32(TensorShape::from_dims({6}));
+        const auto gate_bias = runner.make_f32(TensorShape::from_dims({6}));
+        const auto down_bias = runner.make_f32(TensorShape::from_dims({4}));
+        const auto packed = modules::ConcatModule({0}).build(runner.ctx, up, gate);
+        const auto packed_bias = modules::ConcatModule({0}).build(runner.ctx, up_bias, gate_bias);
+        modules::GatedFeedForwardConfig config{4, 6, bias, modules::GatedFeedForwardActivation::Silu};
+        const modules::GatedFeedForwardWeights separate{{gate, gate_bias}, {up, up_bias}, {down, down_bias}};
+        const auto reference = modules::GatedFeedForwardModule(config).build(runner.ctx, input, separate);
+        const auto output = modules::GatedFeedForwardModule(config).build(runner.ctx, input,
+            {{}, {}, {down, down_bias}, {packed, packed_bias}});
+        runner.allocate_tensors();
+        core::write_tensor_f32(input, make_patterned_f32(24, .27f, .6f));
+        core::write_tensor_f32(up, make_patterned_f32(24, .4f, .3f));
+        core::write_tensor_f32(gate, make_patterned_f32(24, -.7f, .5f));
+        core::write_tensor_f32(down, make_patterned_f32(24, .1f, .4f));
+        core::write_tensor_f32(up_bias, make_patterned_f32(6, .2f, .3f));
+        core::write_tensor_f32(gate_bias, make_patterned_f32(6, -.3f, .4f));
+        core::write_tensor_f32(down_bias, make_patterned_f32(4, .6f, .2f));
+        require_allclose(runner.run_f32(output), runner.run_f32(reference), 1e-6f, "packed up/gate matches separate FFN");
+    }
 }
 
 void test_cached_decoder_block_matches_composition(bool flash_cross) {
@@ -1194,6 +1433,34 @@ void test_convnext_default_matches_composition() {
     require_allclose(runner.run_f32(actual), runner.run_f32(expected), 0, "ConvNeXt default composition");
 }
 
+void test_gelu_approx_erf_tracks_exact_erf() {
+    using namespace engine;
+    // The lane count leaves a scalar tail on both the AVX2 and AVX-512 paths.
+    std::vector<float> values = {0.0f, -0.0f, 1.0e-40f, -1.0e-40f, 1.0e-6f, -1.0e-6f,
+        1.3119779f, 1.3119781f, -1.3119779f, -1.3119781f, 5.0f, -5.0f, 9.0f, -9.0f, 150.0f, -150.0f};
+    for (int i = -4000; i <= 4000; ++i) values.push_back(static_cast<float>(i) * 0.002f + 0.00037f);
+    values.resize(values.size() / 16 * 16 + 5, 0.75f);
+    CpuModuleRunner runner;
+    const auto input = runner.make_f32(core::TensorShape::from_dims({static_cast<int64_t>(values.size())}));
+    const auto approx = modules::GeluModule({modules::GeluApproximation::ApproxErf}).build(runner.ctx, input);
+    const auto exact = modules::GeluModule({modules::GeluApproximation::ExactErf}).build(runner.ctx, input);
+    runner.allocate_tensors();
+    core::write_tensor_f32(input, values);
+    const auto actual = runner.run_f32(approx);
+    const auto expected = runner.run_f32(exact);
+    for (size_t i = 0; i < values.size(); ++i) {
+        const float reference = 0.5f * values[i] * (1.0f + std::erf(values[i] * 0.70710678f));
+        if (expected[i] != reference) {
+            throw std::runtime_error("exact GELU erf changed at x=" + std::to_string(values[i]));
+        }
+        const float diff = std::fabs(actual[i] - expected[i]);
+        if (!(diff <= 1.0e-6f * std::max(1.0f, std::fabs(values[i])))) {
+            throw std::runtime_error("approximate GELU erf at x=" + std::to_string(values[i]) +
+                " differs from exact by " + std::to_string(diff));
+        }
+    }
+}
+
 void test_prelu_broadcasting() {
     using namespace engine;
     for (size_t axis = 0; axis < 3; ++axis) {
@@ -1221,18 +1488,153 @@ void test_prelu_broadcasting() {
     }
 }
 
+void test_interpolate_align_corners() {
+    using namespace engine;
+    CpuModuleRunner runner;
+    const auto input=runner.make_f32(core::TensorShape::from_dims({1,1,3}));
+    const auto legacy=modules::Interpolate1dModule({5,modules::Interpolate1dMode::Linear}).build(runner.ctx,input);
+    const auto aligned=modules::Interpolate1dModule({5,modules::Interpolate1dMode::Linear,true}).build(runner.ctx,input);
+    const auto single=modules::Interpolate1dModule({1,modules::Interpolate1dMode::Linear,true}).build(runner.ctx,input);
+    runner.allocate_tensors();
+    core::write_tensor_f32(input,{0,1,4});
+    require_allclose(runner.run_f32(legacy),{0,.4F,1,2.8F,4},1.e-6F,"interpolation unchanged default");
+    require_allclose(runner.run_f32(aligned),{0,.5F,1,2.5F,4},1.e-6F,"interpolation aligned corners");
+    require_allclose(runner.run_f32(single),{0},1.e-6F,"interpolation aligned singleton");
+}
+
+void test_batched_rope_matches_independent_rows() {
+    using namespace engine;
+    for (const int64_t batch : {1, 2, 5}) {
+        for (const int64_t steps : {1, 3}) {
+            for (const int mode : {GGML_ROPE_TYPE_NORMAL, GGML_ROPE_TYPE_NEOX}) {
+                for (const bool half : {false, true}) {
+                    for (const bool use_factors : {false, true}) {
+                        CpuModuleRunner runner;
+                        const auto shape = core::TensorShape::from_dims({batch, steps, 3, 8});
+                        const auto source = runner.make_f32(shape);
+                        const auto input = half ? core::wrap_tensor(ggml_cast(runner.ggml, source.tensor, GGML_TYPE_F16),
+                            shape, GGML_TYPE_F16) : source;
+                        const auto positions = runner.make_i32(core::TensorShape::from_dims({batch, steps}));
+                        const auto factors = runner.make_f32(core::TensorShape::from_dims({4}));
+                        const modules::RoPEModule rope({8, mode, 10000.0F});
+                        const auto actual = rope.build_batched(runner.ctx, input, positions, use_factors ? &factors : nullptr);
+                        std::vector<core::TensorValue> independent;
+                        for (int64_t row = 0; row < batch; ++row) {
+                            const auto x = modules::SliceModule({0, row, 1}).build(runner.ctx, input);
+                            auto p = modules::SliceModule({0, row, 1}).build(runner.ctx, positions);
+                            p = core::reshape_tensor(runner.ctx, p, core::TensorShape::from_dims({steps}));
+                            independent.push_back(rope.build(runner.ctx, x, p, use_factors ? &factors : nullptr));
+                        }
+                        auto expected = independent.front();
+                        for (size_t row = 1; row < independent.size(); ++row)
+                            expected = modules::ConcatModule({0}).build(runner.ctx, expected, independent[row]);
+                        const auto actual_f32 = core::wrap_tensor(ggml_cast(runner.ggml, actual.tensor, GGML_TYPE_F32), shape, GGML_TYPE_F32);
+                        const auto expected_f32 = core::wrap_tensor(ggml_cast(runner.ggml, expected.tensor, GGML_TYPE_F32), shape, GGML_TYPE_F32);
+                        runner.allocate_tensors();
+                        core::write_tensor_f32(source, make_patterned_f32(shape.num_elements(), 0.3F, 0.8F));
+                        core::write_tensor_f32(factors, {1.0F, 1.5F, 2.0F, 0.5F});
+                        for (int round = 0; round < 2; ++round) {
+                            std::vector<int32_t> ids(batch * steps);
+                            for (int64_t row = 0; row < batch; ++row)
+                                for (int64_t t = 0; t < steps; ++t) ids[row * steps + t] = row * 137 + t * 3 + round * 4096;
+                            core::write_tensor_i32(positions, ids);
+                            require_allclose(runner.run_f32(actual_f32), runner.run_f32(expected_f32), 0.0F, "Independent batched RoPE");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void test_selu_reference(engine::core::BackendType backend) {
+    using namespace engine;
+    core::ExecutionContext execution({backend, 0, 8});
+    core::PreparedGraph graph(execution, {"selu_test", 2u << 20, 128, 0});
+    auto & ctx = graph.build_context();
+    const auto input = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({8,512}));
+    ggml_set_input(input.tensor);
+    const auto strided = modules::SliceModule({1,1,510}).build(ctx,input);
+    const auto output = modules::SeluModule().build(ctx,input);
+    const auto sliced_output = modules::SeluModule().build(ctx,strided);
+    ggml_set_output(output.tensor);
+    ggml_set_output(sliced_output.tensor);
+    ggml_build_forward_expand(graph.graph(),output.tensor);
+    ggml_build_forward_expand(graph.graph(),sliced_output.tensor);
+    bool has_elu = false, has_expm1 = false;
+    for (int i = 0; i < ggml_graph_n_nodes(graph.graph()); ++i) {
+        const auto * node = ggml_graph_node(graph.graph(),i);
+        if (node->op != GGML_OP_UNARY) continue;
+        has_elu |= ggml_get_unary_op(node) == GGML_UNARY_OP_ELU;
+        has_expm1 |= ggml_get_unary_op(node) == GGML_UNARY_OP_EXPM1;
+    }
+    const bool vulkan = backend == core::BackendType::Vulkan;
+    require(has_elu == vulkan && has_expm1 != vulkan, "SELU backend lowering");
+    graph.allocate();
+    double max_error = 0;
+    for (int round = 0; round < 3; ++round) {
+        std::vector<float> values(8 * 512), expected(values.size()), sliced_expected;
+        const std::vector<float> boundary{-1000,-80,-1,-0.01F,-1e-4F,-1e-6F,-1e-8F,-1e-12F,
+                                        -0.0F,0.0F,1e-12F,1e-8F,1e-6F,0.01F,80,1000};
+        for (size_t i = 0; i < values.size(); ++i) {
+            values[i] = 0.125F * static_cast<float>(static_cast<int>((i + round * 37) % 257) - 128);
+            if (i < boundary.size()) values[i] = boundary[i];
+            // Independent scalar SELU oracle; match the existing F32 constants
+            // and multiplication boundaries, not a second GGML graph.
+            constexpr float alpha = 1.6732632423543772848170429916717F;
+            constexpr float scale = 1.0507009873554804934193349852946F;
+            expected[i] = scale * (values[i] > 0 ? values[i]
+                : alpha * static_cast<float>(std::expm1(static_cast<double>(values[i]))));
+            if (i % 512 > 0 && i % 512 < 511) sliced_expected.push_back(expected[i]);
+        }
+        core::write_tensor_f32(input,values);
+        graph.compute();
+        const auto actual = core::read_tensor_f32(output.tensor);
+        require_allclose(actual,expected,1e-6F,"SELU scalar reference");
+        require_allclose(core::read_tensor_f32(sliced_output.tensor),sliced_expected,1e-6F,"SELU strided scalar reference");
+        for (size_t i = 0; i < actual.size(); ++i)
+            max_error = std::max(max_error,std::abs(static_cast<double>(actual[i]) - expected[i]));
+    }
+    debug::timing_log_scalar("validation.selu.max_abs_error",max_error);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
+    const auto started = std::chrono::steady_clock::now();
     try {
+        std::optional<engine::core::BackendType> selu_backend;
+        for (int i = 1; i < argc; i += 2) {
+            if (i + 1 == argc) throw std::runtime_error("Missing test option value");
+            const std::string flag = argv[i], value = argv[i + 1];
+            if (flag == "--log") engine::debug::configure_logging({true,value});
+            else if (flag == "--selu-backend") {
+                if (value == "cpu") selu_backend = engine::core::BackendType::Cpu;
+                else if (value == "cuda") selu_backend = engine::core::BackendType::Cuda;
+                else if (value == "vulkan") selu_backend = engine::core::BackendType::Vulkan;
+                else throw std::runtime_error("Unsupported SELU test backend: " + value);
+            } else throw std::runtime_error("Usage: encoder_module_test [--log FILE] [--selu-backend cpu|cuda|vulkan]");
+        }
+        test_selu_reference(selu_backend.value_or(engine::core::BackendType::Cpu));
+        if (selu_backend) {
+            engine::debug::timing_log_scalar("session.wall_ms",engine::debug::elapsed_ms(started));
+            std::cout << "SELU reference and backend lowering: passed\n";
+            return 0;
+        }
+        test_batched_rope_matches_independent_rows();
         test_cuda_f16_lowerings_default_off();
+        test_mul_optional_broadcasting();
+        test_mul_preserved_views();
         test_weighted_statistics_and_scale_bias();
         test_convnext_default_matches_composition();
+        test_gelu_approx_erf_tracks_exact_erf();
         test_prelu_broadcasting();
+        test_interpolate_align_corners();
         test_glu_contiguous_gate_opt_in();
         test_depthwise_subsampling_stage_masks();
         test_batch_norm_eval_binding();
         test_feed_forward_activation_opt_in();
+        test_feed_forward_precision_and_packing();
         test_timestep_embedding_norm_opt_in();
         test_cached_decoder_block_matches_composition(false);
         test_cached_decoder_block_matches_composition(true);
@@ -1241,12 +1643,16 @@ int main() {
         test_graph_optimizer_two_sided_broadcast_binary_matches_repeat();
         test_graph_optimizer_unary_broadcast_scale_matches_repeat();
         test_relative_attention_fused_qkv_matches_split_and_cached_pos();
+        test_legacy_relative_position_layout();
         test_relative_attention_specialized_flash_matches_reference_on_realistic_shapes();
+        test_relative_conformer_ffn_activation_reference();
         test_conformer_conv_pad_mask_ignores_dirty_padded_frames();
         std::cout << "encoder_module_test: ok\n";
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         return 0;
     } catch (const std::exception & ex) {
         std::cerr << "encoder_module_test: failed: " << ex.what() << "\n";
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
         return 1;
     }
 }

@@ -1,6 +1,7 @@
 #include "pipeline_internal.h"
 
-#include "engine/framework/codecs/wan_video_vae_runtime.h"
+#include "engine/framework/vision/modules/wan_video_vae_modules.h"
+#include "engine/framework/vision/media/processing.h"
 #include "engine/framework/core/backend.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/debug/profiler.h"
@@ -29,82 +30,6 @@ constexpr int64_t kVAEDecodeSpatialTileSize = 192;
 constexpr int64_t kVAEDecodeSpatialTileOverlap = 64;
 constexpr int64_t kVAEDecodeSpatialTileThreshold = 512;
 constexpr int64_t kVAEDecodeSpatialScale = 8;
-
-struct LiveAvatarVideoTensor4D {
-    int64_t channels = 3;
-    int64_t frames = 0;
-    int64_t height = 0;
-    int64_t width = 0;
-    std::vector<float> values;
-
-    float & at(int64_t c, int64_t t, int64_t y, int64_t x) {
-        return values[static_cast<size_t>(((c * frames + t) * height + y) * width + x)];
-    }
-
-    const float & at(int64_t c, int64_t t, int64_t y, int64_t x) const {
-        return values[static_cast<size_t>(((c * frames + t) * height + y) * width + x)];
-    }
-};
-
-std::pair<std::vector<int64_t>, std::vector<int64_t>> split_spatial_tiles(
-    int64_t input_len,
-    int64_t tile_size,
-    int64_t min_overlap,
-    int64_t ratio) {
-    if (input_len <= 0 || tile_size <= 0 || min_overlap < 0 || ratio <= 0 || tile_size <= min_overlap) {
-        throw std::runtime_error("LiveAvatar VAE tile configuration is invalid");
-    }
-    if (tile_size >= input_len) {
-        return {{0}, {input_len}};
-    }
-    int64_t count = (input_len + tile_size - min_overlap - 1) / (tile_size - min_overlap);
-    while (tile_size * count - min_overlap * (count - 1) < input_len) {
-        ++count;
-    }
-    std::vector<int64_t> overlaps(static_cast<size_t>(count - 1), min_overlap);
-    const int64_t remaining = tile_size * count - min_overlap * (count - 1) - input_len;
-    for (int64_t i = 0; i < remaining / ratio; ++i) {
-        overlaps[static_cast<size_t>(i % (count - 1))] += ratio;
-    }
-    std::vector<int64_t> starts{0};
-    for (int64_t i = 0; i + 1 < count; ++i) {
-        starts.push_back(starts.back() + tile_size - overlaps[static_cast<size_t>(i)]);
-    }
-    return {starts, overlaps};
-}
-
-void blend_height_from_previous(const LiveAvatarVideoTensor4D & previous, LiveAvatarVideoTensor4D & current, int64_t extent) {
-    extent = std::min<int64_t>({extent, previous.height, current.height});
-    for (int64_t y = 0; y < extent; ++y) {
-        const float weight = static_cast<float>(y) / static_cast<float>(extent);
-        const int64_t prev_y = previous.height - extent + y;
-        for (int64_t c = 0; c < current.channels; ++c) {
-            for (int64_t t = 0; t < current.frames; ++t) {
-                for (int64_t x = 0; x < current.width; ++x) {
-                    current.at(c, t, y, x) =
-                        previous.at(c, t, prev_y, x) * (1.0F - weight) + current.at(c, t, y, x) * weight;
-                }
-            }
-        }
-    }
-}
-
-void blend_width_from_previous(const LiveAvatarVideoTensor4D & previous, LiveAvatarVideoTensor4D & current, int64_t extent) {
-    extent = std::min<int64_t>({extent, previous.width, current.width});
-    for (int64_t x = 0; x < extent; ++x) {
-        const float weight = static_cast<float>(x) / static_cast<float>(extent);
-        const int64_t prev_x = previous.width - extent + x;
-        for (int64_t c = 0; c < current.channels; ++c) {
-            for (int64_t t = 0; t < current.frames; ++t) {
-                for (int64_t y = 0; y < current.height; ++y) {
-                    current.at(c, t, y, x) =
-                        previous.at(c, t, y, prev_x) * (1.0F - weight) + current.at(c, t, y, x) * weight;
-                }
-            }
-        }
-    }
-}
-
 
 engine::core::TensorValue load_squeezed_f32(
     engine::core::BackendWeightStore & store,
@@ -1145,12 +1070,12 @@ struct LiveAvatarVAERuntime::Data {
         }
         const int64_t decoded_height = height * kVAEDecodeSpatialScale;
         const int64_t decoded_width = width * kVAEDecodeSpatialScale;
-        const auto [y_starts, y_overlaps] = split_spatial_tiles(
+        const auto [y_starts, y_overlaps] = engine::video::plan_spatial_tiles(
             decoded_height,
             tile_size,
             kVAEDecodeSpatialTileOverlap,
             kVAEDecodeSpatialScale);
-        const auto [x_starts, x_overlaps] = split_spatial_tiles(
+        const auto [x_starts, x_overlaps] = engine::video::plan_spatial_tiles(
             decoded_width,
             tile_size,
             kVAEDecodeSpatialTileOverlap,
@@ -1159,14 +1084,14 @@ struct LiveAvatarVAERuntime::Data {
         engine::debug::trace_log_scalar("liveavatar.vae_decoder.tile_rows", static_cast<int64_t>(y_starts.size()));
         engine::debug::trace_log_scalar("liveavatar.vae_decoder.tile_cols", static_cast<int64_t>(x_starts.size()));
 
-        LiveAvatarVideoTensor4D out;
+        engine::video::FloatVideo out;
         out.height = decoded_height;
         out.width = decoded_width;
-        std::vector<LiveAvatarVideoTensor4D> previous_raw_row;
+        std::vector<engine::video::FloatVideo> previous_raw_row;
         previous_raw_row.reserve(x_starts.size());
         int64_t y_out = 0;
         for (size_t yi = 0; yi < y_starts.size(); ++yi) {
-            std::vector<LiveAvatarVideoTensor4D> current_raw_row;
+            std::vector<engine::video::FloatVideo> current_raw_row;
             current_raw_row.reserve(x_starts.size());
             int64_t x_out = 0;
             for (size_t xi = 0; xi < x_starts.size(); ++xi) {
@@ -1202,7 +1127,7 @@ struct LiveAvatarVAERuntime::Data {
                     tile_shape.dims[3] != tile_decoded_width) {
                     throw std::runtime_error("LiveAvatar tiled VAE decode output shape mismatch");
                 }
-                LiveAvatarVideoTensor4D raw;
+                engine::video::FloatVideo raw;
                 raw.channels = tile_shape.dims[0];
                 raw.frames = tile_shape.dims[1];
                 raw.height = tile_shape.dims[2];
@@ -1218,10 +1143,10 @@ struct LiveAvatarVAERuntime::Data {
 
                 auto tile = raw;
                 if (yi > 0) {
-                    blend_height_from_previous(previous_raw_row[xi], tile, y_overlaps[yi - 1]);
+                    engine::video::blend_height_from_previous(previous_raw_row[xi], tile, y_overlaps[yi - 1]);
                 }
                 if (xi > 0) {
-                    blend_width_from_previous(current_raw_row[xi - 1], tile, x_overlaps[xi - 1]);
+                    engine::video::blend_width_from_previous(current_raw_row[xi - 1], tile, x_overlaps[xi - 1]);
                 }
                 const int64_t keep_h = yi + 1 < y_starts.size() ? tile.height - y_overlaps[yi] : tile.height;
                 const int64_t keep_w = xi + 1 < x_starts.size() ? tile.width - x_overlaps[xi] : tile.width;

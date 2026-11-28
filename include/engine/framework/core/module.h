@@ -17,6 +17,8 @@ enum class BackendType {
     Vulkan,
     Metal,
     BestAvailable,
+    WebGPU,
+    Sycl,
 };
 
 // CUDA and HIP share ggml's ggml-cuda implementation for a small set of
@@ -48,6 +50,8 @@ struct TensorValue {
 
     bool valid() const noexcept;
 };
+
+class PreparedGraph;
 
 struct ModuleBuildContext {
     ggml_context * ggml = nullptr;

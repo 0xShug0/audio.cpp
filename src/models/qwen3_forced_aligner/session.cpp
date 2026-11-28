@@ -192,7 +192,10 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run_single(const runtime::TaskReq
     const int64_t audio_frames =
         static_cast<int64_t>(request.audio_input->samples.size() / static_cast<size_t>(request.audio_input->channels));
     const auto wall_start = Clock::now();
-    if (!has_alignable_words(request.text_input->text, request.text_input->language)) {
+    const auto tokenize_start = Clock::now();
+    auto words = processor_.tokenize_words(request.text_input->text, request.text_input->language);
+    const auto tokenize_end = Clock::now();
+    if (words.empty()) {
         runtime::TaskResult result;
         result.text_output = runtime::Transcript{request.text_input->text, request.text_input->language};
         const auto wall_end = Clock::now();
@@ -215,7 +218,7 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run_single(const runtime::TaskReq
     const auto features = frontend_.extract(*request.audio_input);
     const auto frontend_end = Clock::now();
     const auto prompt_start = Clock::now();
-    const auto align_prompt = processor_.build_prompt(request.text_input->text, request.text_input->language, features.encoder_tokens);
+    const auto align_prompt = processor_.build_prompt(std::move(words), features.encoder_tokens);
     const auto prompt_end = Clock::now();
     const auto encoder_start = Clock::now();
     const auto audio_embeddings = audio_encoder_.encode(features);
@@ -241,7 +244,9 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run_single(const runtime::TaskReq
     auto timestamps = processor_.parse_timestamps(
         align_prompt.words,
         timestamp_ids,
-        assets_->config.sample_rate,
+        // Timestamps are milliseconds of real audio time; convert them into the
+        // uploaded audio's sample domain, not the frontend's 16 kHz frame.
+        request.audio_input->sample_rate,
         audio_frames,
         request_clamp_timestamps_to_audio(request));
     const auto postprocess_end = Clock::now();
@@ -316,7 +321,8 @@ runtime::TaskResult Qwen3ForcedAlignerSession::run_single(const runtime::TaskReq
         }
     }
     debug::timing_log_scalar("qwen3_forced_aligner.frontend_ms", engine::debug::elapsed_ms(frontend_start, frontend_end));
-    debug::timing_log_scalar("qwen3_forced_aligner.prompt_ms", engine::debug::elapsed_ms(prompt_start, prompt_end));
+    debug::timing_log_scalar("qwen3_forced_aligner.prompt_ms",
+        engine::debug::elapsed_ms(tokenize_start, tokenize_end) + engine::debug::elapsed_ms(prompt_start, prompt_end));
     debug::timing_log_scalar("qwen3_forced_aligner.audio_encoder_ms", engine::debug::elapsed_ms(encoder_start, encoder_end));
     debug::timing_log_scalar("qwen3_forced_aligner.thinker_ms", engine::debug::elapsed_ms(thinker_start, thinker_end));
     debug::timing_log_scalar("qwen3_forced_aligner.postprocess_ms", engine::debug::elapsed_ms(postprocess_start, postprocess_end));

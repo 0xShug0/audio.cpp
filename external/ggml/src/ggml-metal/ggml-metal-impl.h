@@ -101,6 +101,8 @@
 #define FC_SUM_ROWS                    1400
 #define FC_UPSCALE                     1500
 #define FC_GATED_DELTA_NET             1600
+#define FC_CONV_2D_IMPLICIT            1700
+#define FC_SSM_SCAN_MAMBA1             1800
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
@@ -720,6 +722,20 @@ typedef struct {
     int32_t  KHW; // KH * KW, pre-computed on CPU to save GPU resources
 } ggml_metal_kargs_im2col;
 
+// IM2COL_3D packs [N*IC, ID, IH, IW] into [N*OD, OH, OW, IC*KD*KH*KW].
+typedef struct {
+    uint64_t n;
+    uint64_t nb11;
+    uint64_t nb12;
+    uint64_t nb13;
+    int32_t IW, IH, ID;
+    int32_t OW, OH, OD;
+    int32_t KW, KH, KD, IC;
+    int32_t s0, s1, s2;
+    int32_t p0, p1, p2;
+    int32_t d0, d1, d2;
+} ggml_metal_kargs_im2col_3d;
+
 typedef struct {
     int32_t  IW;
     int32_t  IH;
@@ -906,6 +922,17 @@ typedef struct {
     uint64_t nb53;
     uint64_t nb0;
 } ggml_metal_kargs_ssm_scan;
+
+typedef struct {
+    int64_t channels, tokens;
+    uint64_t nb0, nb1, nb2;
+} ggml_metal_kargs_ssm_conv_causal_silu;
+
+typedef struct {
+    int64_t channels, tokens, sequences, rank, a_size;
+    uint64_t x_nb2, x_nb3, p_nb1, p_nb2, gate_nb1, gate_nb2;
+    uint64_t state_nb2, state_nb3;
+} ggml_metal_kargs_ssm_scan_mamba1;
 
 typedef struct {
     int32_t  ne00;

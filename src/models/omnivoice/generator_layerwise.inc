@@ -110,12 +110,14 @@ public:
     void rebuild(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
+        int64_t rows,
         int64_t total_token_capacity) {
         clear_graph();
         runtime_ = std::move(runtime);
         graph_arena_bytes_ = graph_arena_bytes;
+        rows_ = rows;
         total_tokens_capacity_ = total_token_capacity;
-        if (runtime_ == nullptr || total_tokens_capacity_ <= 0) {
+        if (runtime_ == nullptr || rows_ <= 0 || total_tokens_capacity_ <= 0) {
             throw std::runtime_error("OmniVoice layerwise embedding stage requires valid runtime and token capacity");
         }
 
@@ -130,20 +132,20 @@ public:
         core::ModuleBuildContext ctx{ctx_.get(), "omnivoice.generator.layerwise.embedding", runtime_->backend_type()};
         std::array<core::TensorValue, 8> audio_id_values = {};
         auto text_ids =
-            core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({2, total_tokens_capacity_}));
+            core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows_, total_tokens_capacity_}));
         text_ids_ = text_ids.tensor;
         ggml_set_input(text_ids_);
         for (int64_t codebook = 0; codebook < config.num_audio_codebook; ++codebook) {
             auto audio_ids =
-                core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({2, total_tokens_capacity_}));
+                core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows_, total_tokens_capacity_}));
             audio_ids_[static_cast<size_t>(codebook)] = audio_ids.tensor;
             ggml_set_input(audio_ids_[static_cast<size_t>(codebook)]);
             audio_id_values[static_cast<size_t>(codebook)] = audio_ids;
         }
         auto audio_mask =
-            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, total_tokens_capacity_, 1}));
+            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows_, total_tokens_capacity_, 1}));
         auto text_mask =
-            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, total_tokens_capacity_, 1}));
+            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows_, total_tokens_capacity_, 1}));
         audio_mask_ = audio_mask.tensor;
         text_mask_ = text_mask.tensor;
         ggml_set_input(audio_mask_);
@@ -179,7 +181,7 @@ public:
         ggml_backend_tensor_set(text_mask_, text_mask.data(), 0, text_mask.size() * sizeof(float));
         compute_graph(compute_ms);
         const size_t hidden_count = static_cast<size_t>(
-            2 * total_tokens_capacity_ * runtime_->assets().config.llm.hidden_size);
+            rows_ * total_tokens_capacity_ * runtime_->assets().config.llm.hidden_size);
         if (output.size() != hidden_count) {
             output.assign(hidden_count, 0.0F);
         }
@@ -219,6 +221,7 @@ private:
 
     std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
+    int64_t rows_ = 0;
     int64_t total_tokens_capacity_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * text_ids_ = nullptr;
@@ -239,14 +242,16 @@ public:
     void rebuild(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
+        int64_t rows,
         int64_t total_token_capacity,
         int64_t layer_index) {
         clear_graph();
         runtime_ = std::move(runtime);
         graph_arena_bytes_ = graph_arena_bytes;
+        rows_ = rows;
         total_tokens_capacity_ = total_token_capacity;
         layer_index_ = layer_index;
-        if (runtime_ == nullptr || total_tokens_capacity_ <= 0) {
+        if (runtime_ == nullptr || rows_ <= 0 || total_tokens_capacity_ <= 0) {
             throw std::runtime_error("OmniVoice layerwise decoder stage requires valid runtime and token capacity");
         }
         const auto & config = runtime_->assets().config;
@@ -262,7 +267,7 @@ public:
 
         core::ModuleBuildContext ctx{ctx_.get(), "omnivoice.generator.layerwise.decoder", runtime_->backend_type()};
         auto input =
-            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, total_tokens_capacity_, config.llm.hidden_size}));
+            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows_, total_tokens_capacity_, config.llm.hidden_size}));
         input_ = input.tensor;
         ggml_set_input(input_);
         positions_ =
@@ -271,7 +276,7 @@ public:
         auto positions =
             core::wrap_tensor(positions_, core::TensorShape::from_dims({total_tokens_capacity_}), GGML_TYPE_I32);
         auto attention_mask =
-            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, 1, total_tokens_capacity_, total_tokens_capacity_}));
+            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({rows_, 1, total_tokens_capacity_, total_tokens_capacity_}));
         attention_mask_ = attention_mask.tensor;
         ggml_set_input(attention_mask_);
         auto output = decoder_layer(
@@ -291,6 +296,7 @@ public:
     void run(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
+        int64_t rows,
         int64_t total_token_capacity,
         int64_t layer_index,
         const std::vector<int32_t> & positions,
@@ -299,7 +305,7 @@ public:
         std::vector<float> & output,
         double & compute_ms,
         double & readback_ms) {
-        rebuild(std::move(runtime), graph_arena_bytes, total_token_capacity, layer_index);
+        rebuild(std::move(runtime), graph_arena_bytes, rows, total_token_capacity, layer_index);
         ggml_backend_tensor_set(input_, input.data(), 0, input.size() * sizeof(float));
         ggml_backend_tensor_set(positions_, positions.data(), 0, positions.size() * sizeof(int32_t));
         ggml_backend_tensor_set(attention_mask_, attention_mask.data(), 0, attention_mask.size() * sizeof(float));
@@ -336,6 +342,7 @@ public:
 private:
     std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
+    int64_t rows_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t layer_index_ = -1;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
@@ -356,14 +363,16 @@ public:
     void rebuild(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
+        int64_t batch,
         int64_t total_token_capacity,
         int64_t target_frame_capacity) {
         clear_graph();
         runtime_ = std::move(runtime);
         graph_arena_bytes_ = graph_arena_bytes;
+        batch_ = batch;
         total_tokens_capacity_ = total_token_capacity;
         target_frame_capacity_ = target_frame_capacity;
-        if (runtime_ == nullptr || total_tokens_capacity_ <= 0 || target_frame_capacity_ <= 0) {
+        if (runtime_ == nullptr || batch_ <= 0 || total_tokens_capacity_ <= 0 || target_frame_capacity_ <= 0) {
             throw std::runtime_error("OmniVoice layerwise head stage requires valid runtime and capacities");
         }
 
@@ -374,75 +383,32 @@ public:
         }
 
         const auto & config = runtime_->assets().config;
-        const auto & weights = runtime_->weights();
+        const int64_t rows = 2 * batch_;
         core::ModuleBuildContext ctx{ctx_.get(), "omnivoice.generator.layerwise.head", runtime_->backend_type()};
-        auto input =
-            core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({2, total_tokens_capacity_, config.llm.hidden_size}));
+        auto input = core::make_tensor(
+            ctx,
+            GGML_TYPE_F32,
+            core::TensorShape::from_dims({rows, total_tokens_capacity_, config.llm.hidden_size}));
         input_ = input.tensor;
         ggml_set_input(input_);
-        conditional_target_indices_ =
-            core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({target_frame_capacity_})).tensor;
-        unconditional_target_indices_ =
-            core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({target_frame_capacity_})).tensor;
-        guidance_scale_ = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({1})).tensor;
-        ggml_set_input(conditional_target_indices_);
-        ggml_set_input(unconditional_target_indices_);
-        ggml_set_input(guidance_scale_);
+        auto target_indices =
+            core::make_tensor(ctx, GGML_TYPE_I32, core::TensorShape::from_dims({rows * target_frame_capacity_}));
+        target_indices_ = target_indices.tensor;
+        ggml_set_input(target_indices_);
+        auto guidance_scales = core::make_tensor(ctx, GGML_TYPE_F32, core::TensorShape::from_dims({batch_}));
+        guidance_scales_ = guidance_scales.tensor;
+        ggml_set_input(guidance_scales_);
 
-        auto x = modules::RMSNormModule({config.llm.hidden_size, config.llm.rms_norm_eps, true, false})
-                     .build(ctx, input, binding::norm_data(ctx, weights.norm));
-        auto conditional_hidden = modules::SliceModule({0, 0, 1}).build(ctx, x);
-        conditional_hidden = core::reshape_tensor(
+        logits_ = build_guided_logits(
             ctx,
-            ensure_contiguous(ctx, conditional_hidden),
-            core::TensorShape::from_dims({total_tokens_capacity_, config.llm.hidden_size}));
-        auto conditional_index_value = core::wrap_tensor(
-            conditional_target_indices_,
-            core::TensorShape::from_dims({target_frame_capacity_}),
-            GGML_TYPE_I32);
-        conditional_hidden = modules::EmbeddingModule({total_tokens_capacity_, config.llm.hidden_size})
-                                 .build(ctx, conditional_index_value, conditional_hidden);
-        conditional_hidden = core::reshape_tensor(
-            ctx,
-            conditional_hidden,
-            core::TensorShape::from_dims({1, target_frame_capacity_, config.llm.hidden_size}));
-        auto unconditional_hidden = modules::SliceModule({0, 1, 1}).build(ctx, x);
-        unconditional_hidden = core::reshape_tensor(
-            ctx,
-            ensure_contiguous(ctx, unconditional_hidden),
-            core::TensorShape::from_dims({total_tokens_capacity_, config.llm.hidden_size}));
-        auto unconditional_index_value = core::wrap_tensor(
-            unconditional_target_indices_,
-            core::TensorShape::from_dims({target_frame_capacity_}),
-            GGML_TYPE_I32);
-        unconditional_hidden = modules::EmbeddingModule({total_tokens_capacity_, config.llm.hidden_size})
-                                   .build(ctx, unconditional_index_value, unconditional_hidden);
-        unconditional_hidden = core::reshape_tensor(
-            ctx,
-            unconditional_hidden,
-            core::TensorShape::from_dims({1, target_frame_capacity_, config.llm.hidden_size}));
-        auto hidden = modules::ConcatModule({0}).build(ctx, conditional_hidden, unconditional_hidden);
-        auto logits = modules::LinearModule(
-                          binding::linear_config(
-                              config.llm.hidden_size,
-                              config.num_audio_codebook * config.audio_vocab_size,
-                              false))
-                          .build(ctx, hidden, binding::linear_data(ctx, weights.audio_head));
-        auto conditional_logits = modules::SliceModule({0, 0, 1}).build(ctx, logits);
-        auto unconditional_logits = modules::SliceModule({0, 1, 1}).build(ctx, logits);
-        auto guidance_scale_value = core::wrap_tensor(
-            guidance_scale_,
-            core::TensorShape::from_dims({1}),
-            GGML_TYPE_F32);
-        guidance_scale_value = core::reshape_tensor(ctx, guidance_scale_value, core::TensorShape::from_dims({1, 1, 1}));
-        auto guidance_scale_expanded = modules::RepeatModule({conditional_logits.shape}).build(ctx, guidance_scale_value);
-        auto diff = core::wrap_tensor(
-            ggml_sub(ctx.ggml, conditional_logits.tensor, unconditional_logits.tensor),
-            conditional_logits.shape,
-            GGML_TYPE_F32);
-        auto scaled_diff = modules::MulModule{}.build(ctx, diff, guidance_scale_expanded);
-        auto combined_raw = modules::AddModule{}.build(ctx, conditional_logits, scaled_diff);
-        logits_ = ensure_contiguous(ctx, combined_raw).tensor;
+            config,
+            runtime_->weights(),
+            input,
+            target_indices,
+            guidance_scales,
+            batch_,
+            rows * total_tokens_capacity_,
+            target_frame_capacity_).tensor;
         graph_ = ggml_new_graph_custom(ctx_.get(), 32768, false);
         ggml_set_output(logits_);
         ggml_build_forward_expand(graph_, logits_);
@@ -451,9 +417,8 @@ public:
 
     void run(
         const std::vector<float> & hidden,
-        const std::vector<int32_t> & conditional_indices,
-        const std::vector<int32_t> & unconditional_indices,
-        float guidance_scale,
+        const std::vector<int32_t> & target_indices,
+        const std::vector<float> & guidance_scales,
         std::vector<float> & logits,
         double & compute_ms,
         double & readback_ms) {
@@ -461,9 +426,8 @@ public:
             throw std::runtime_error("OmniVoice layerwise head stage is not built");
         }
         ggml_backend_tensor_set(input_, hidden.data(), 0, hidden.size() * sizeof(float));
-        ggml_backend_tensor_set(conditional_target_indices_, conditional_indices.data(), 0, conditional_indices.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(unconditional_target_indices_, unconditional_indices.data(), 0, unconditional_indices.size() * sizeof(int32_t));
-        ggml_backend_tensor_set(guidance_scale_, &guidance_scale, 0, sizeof(guidance_scale));
+        ggml_backend_tensor_set(target_indices_, target_indices.data(), 0, target_indices.size() * sizeof(int32_t));
+        ggml_backend_tensor_set(guidance_scales_, guidance_scales.data(), 0, guidance_scales.size() * sizeof(float));
         core::set_backend_threads(runtime_->backend(), runtime_->threads());
         const auto compute_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(runtime_->backend(), graph_);
@@ -474,7 +438,8 @@ public:
         }
         compute_ms += engine::debug::elapsed_ms(compute_start, compute_end);
         const size_t logits_count = static_cast<size_t>(
-            target_frame_capacity_ * runtime_->assets().config.num_audio_codebook * runtime_->assets().config.audio_vocab_size);
+            batch_ * target_frame_capacity_ * runtime_->assets().config.num_audio_codebook *
+            runtime_->assets().config.audio_vocab_size);
         if (logits.size() != logits_count) {
             logits.assign(logits_count, 0.0F);
         }
@@ -490,9 +455,8 @@ public:
         }
         graph_ = nullptr;
         logits_ = nullptr;
-        guidance_scale_ = nullptr;
-        unconditional_target_indices_ = nullptr;
-        conditional_target_indices_ = nullptr;
+        guidance_scales_ = nullptr;
+        target_indices_ = nullptr;
         input_ = nullptr;
         ctx_.reset();
     }
@@ -500,13 +464,13 @@ public:
 private:
     std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
+    int64_t batch_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
     ggml_tensor * input_ = nullptr;
-    ggml_tensor * conditional_target_indices_ = nullptr;
-    ggml_tensor * unconditional_target_indices_ = nullptr;
-    ggml_tensor * guidance_scale_ = nullptr;
+    ggml_tensor * target_indices_ = nullptr;
+    ggml_tensor * guidance_scales_ = nullptr;
     ggml_tensor * logits_ = nullptr;
     ggml_cgraph * graph_ = nullptr;
     GraphBufferSet buffers_;
@@ -517,23 +481,25 @@ public:
     Qwen3DiffusionLayerwiseGraph(
         std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime,
         size_t graph_arena_bytes,
-        int64_t total_token_capacity,
-        int64_t target_frame_capacity)
+        const std::vector<GraphItemShape> & items)
         : runtime_(std::move(runtime)),
           graph_arena_bytes_(graph_arena_bytes) {
-        rebuild(total_token_capacity, target_frame_capacity);
+        rebuild(items);
     }
 
-    bool matches(const Qwen3DiffusionWeightsRuntime & runtime, int64_t total_tokens, int64_t target_frames) const override {
+    bool matches(const Qwen3DiffusionWeightsRuntime & runtime, const std::vector<GraphItemShape> & items) const override {
+        const GraphCapacity capacity(items);
         return runtime_.get() == &runtime &&
-            total_tokens_capacity_ == total_tokens &&
-            target_frame_capacity_ == target_frames;
+            batch_capacity_ == capacity.batch &&
+            total_tokens_capacity_ == capacity.total_tokens &&
+            target_frame_capacity_ == capacity.target_frames;
     }
 
-    void rebuild(int64_t total_token_capacity, int64_t target_frame_capacity) override {
-        if (total_token_capacity <= 0 || target_frame_capacity <= 0) {
-            throw std::runtime_error("OmniVoice layerwise generator capacities are invalid");
-        }
+    void rebuild(const std::vector<GraphItemShape> & items) override {
+        const GraphCapacity capacity(items);
+        const int64_t batch = capacity.batch;
+        const int64_t total_token_capacity = capacity.total_tokens;
+        const int64_t target_frame_capacity = capacity.target_frames;
         const auto clear_start = Clock::now();
         embedding_.clear_graph();
         decoder_.clear_graph();
@@ -541,135 +507,59 @@ public:
         const auto clear_end = Clock::now();
         rebuild_clear_ms_ = engine::debug::elapsed_ms(clear_start, clear_end);
 
+        batch_capacity_ = batch;
         total_tokens_capacity_ = total_token_capacity;
         target_frame_capacity_ = target_frame_capacity;
 
         const auto build_start = Clock::now();
-        embedding_.rebuild(runtime_, graph_arena_bytes_, total_tokens_capacity_);
-        head_.rebuild(runtime_, graph_arena_bytes_, total_tokens_capacity_, target_frame_capacity_);
+        embedding_.rebuild(runtime_, graph_arena_bytes_, 2 * batch_capacity_, total_tokens_capacity_);
+        head_.rebuild(runtime_, graph_arena_bytes_, batch_capacity_, total_tokens_capacity_, target_frame_capacity_);
         const auto build_end = Clock::now();
         rebuild_build_ms_ = engine::debug::elapsed_ms(build_start, build_end);
         rebuild_alloc_ms_ = 0.0;
 
         const auto init_start = Clock::now();
-        position_host_.assign(static_cast<size_t>(total_tokens_capacity_), 0);
-        for (int64_t i = 0; i < total_tokens_capacity_; ++i) {
-            position_host_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
-        }
-        text_ids_host_.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0);
-        conditional_target_indices_host_.assign(static_cast<size_t>(target_frame_capacity_), 0);
-        unconditional_target_indices_host_.assign(static_cast<size_t>(target_frame_capacity_), 0);
-        audio_mask_values_host_.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0.0F);
-        text_mask_values_host_.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0.0F);
-        attention_values_host_.assign(
-            static_cast<size_t>(2 * total_tokens_capacity_ * total_tokens_capacity_),
-            kMaskedAttentionBias);
-        for (auto & ids : audio_ids_host_) {
-            ids.assign(static_cast<size_t>(2 * total_tokens_capacity_), 0);
-        }
+        // The layerwise stages use the unpacked [2 * batch, tokens] layout.
+        host_.reset(
+            runtime_->assets(),
+            std::vector<int64_t>(static_cast<size_t>(batch_capacity_), total_tokens_capacity_),
+            std::vector<int64_t>(static_cast<size_t>(batch_capacity_), total_tokens_capacity_),
+            target_frame_capacity_,
+            false);
         hidden_a_.clear();
         hidden_b_.clear();
         logits_host_.clear();
-        current_total_tokens_ = 0;
-        current_target_frames_ = 0;
-        current_conditional_target_start_ = 0;
-        last_target_frames_ = -1;
-        last_conditional_target_start_ = -1;
-        last_mask_conditional_total_ = -1;
-        last_mask_conditional_audio_start_ = -1;
-        last_mask_unconditional_total_ = -1;
-        guidance_scale_host_ = 0.0F;
         rebuild_init_ms_ = engine::debug::elapsed_ms(init_start, Clock::now());
     }
 
-    void prepare_request(const PackedInputs & inputs) override {
-        const int64_t total_tokens =
-            inputs.style_tokens + inputs.text_tokens + inputs.reference_frames + inputs.target_frames;
-        if (total_tokens <= 0 ||
-            total_tokens > total_tokens_capacity_ ||
-            inputs.target_frames > target_frame_capacity_) {
-            throw std::runtime_error("OmniVoice layerwise packed input shape exceeds graph capacity");
-        }
-        current_total_tokens_ = total_tokens;
-        current_target_frames_ = inputs.target_frames;
-        current_conditional_target_start_ =
-            inputs.style_tokens + inputs.text_tokens + inputs.reference_frames;
-        std::fill(
-            text_ids_host_.begin(),
-            text_ids_host_.end(),
-            static_cast<int32_t>(runtime_->assets().config.audio_mask_id));
-        for (int64_t pos = 0; pos < total_tokens; ++pos) {
-            text_ids_host_[static_cast<size_t>(pos)] = inputs.conditional_text_ids[static_cast<size_t>(pos)];
-            text_ids_host_[static_cast<size_t>(total_tokens_capacity_ + pos)] =
-                inputs.unconditional_text_ids[static_cast<size_t>(pos)];
-        }
-        for (int64_t codebook = 0; codebook < runtime_->assets().config.num_audio_codebook; ++codebook) {
-            const auto & conditional_ids = inputs.conditional_audio_ids[static_cast<size_t>(codebook)];
-            const auto & unconditional_ids = inputs.unconditional_audio_ids[static_cast<size_t>(codebook)];
-            auto & ids = audio_ids_host_[static_cast<size_t>(codebook)];
-            std::fill(
-                ids.begin(),
-                ids.end(),
-                static_cast<int32_t>(codebook * runtime_->assets().config.audio_vocab_size +
-                                     runtime_->assets().config.audio_mask_id));
-            for (int64_t pos = 0; pos < total_tokens; ++pos) {
-                ids[static_cast<size_t>(pos)] = conditional_ids[static_cast<size_t>(pos)];
-                ids[static_cast<size_t>(total_tokens_capacity_ + pos)] =
-                    unconditional_ids[static_cast<size_t>(pos)];
-            }
-        }
-        if (last_conditional_target_start_ != current_conditional_target_start_ ||
-            last_target_frames_ != current_target_frames_) {
-            for (int64_t frame = 0; frame < inputs.target_frames; ++frame) {
-                conditional_target_indices_host_[static_cast<size_t>(frame)] =
-                    static_cast<int32_t>(current_conditional_target_start_ + frame);
-                unconditional_target_indices_host_[static_cast<size_t>(frame)] =
-                    static_cast<int32_t>(frame);
-            }
-            last_conditional_target_start_ = current_conditional_target_start_;
-            last_target_frames_ = current_target_frames_;
-        }
-        const int64_t conditional_total =
-            inputs.style_tokens + inputs.text_tokens + inputs.reference_frames + inputs.target_frames;
-        const int64_t conditional_audio_start = inputs.style_tokens + inputs.text_tokens;
-        const int64_t unconditional_total = inputs.target_frames;
-        if (last_mask_conditional_total_ != conditional_total ||
-            last_mask_conditional_audio_start_ != conditional_audio_start ||
-            last_mask_unconditional_total_ != unconditional_total) {
-            rebuild_runtime_masks(conditional_total, conditional_audio_start, unconditional_total);
-            last_mask_conditional_total_ = conditional_total;
-            last_mask_conditional_audio_start_ = conditional_audio_start;
-            last_mask_unconditional_total_ = unconditional_total;
-        }
+    void prepare_request(const std::vector<PackedInputs> & inputs, const std::vector<float> & guidance_scales) override {
+        // Every stage reads the host copies on each compute, so nothing is
+        // uploaded here.
+        host_.prepare(inputs, guidance_scales);
+        (void) host_.take_layout_dirty();
+        (void) host_.take_guidance_dirty();
     }
 
-    void set_guidance_scale(float value) noexcept override {
-        guidance_scale_host_ = value;
+    void update_generated_target_tokens(const std::vector<PackedInputs> & inputs) override {
+        host_.update_targets(inputs);
     }
 
-    void update_generated_target_tokens(const PackedInputs & inputs) override {
-        if (current_total_tokens_ <= 0 || current_target_frames_ != inputs.target_frames) {
-            throw std::runtime_error("OmniVoice layerwise target token update requires a prepared request");
-        }
-        for (int64_t codebook = 0; codebook < runtime_->assets().config.num_audio_codebook; ++codebook) {
-            const auto & conditional_ids = inputs.conditional_audio_ids[static_cast<size_t>(codebook)];
-            const auto & unconditional_ids = inputs.unconditional_audio_ids[static_cast<size_t>(codebook)];
-            auto & host_ids = audio_ids_host_[static_cast<size_t>(codebook)];
-            for (int64_t frame = 0; frame < current_target_frames_; ++frame) {
-                host_ids[static_cast<size_t>(current_conditional_target_start_ + frame)] =
-                    conditional_ids[static_cast<size_t>(current_conditional_target_start_ + frame)];
-                host_ids[static_cast<size_t>(total_tokens_capacity_ + frame)] =
-                    unconditional_ids[static_cast<size_t>(frame)];
-            }
-        }
+    bool computes_best_tokens() const noexcept override {
+        return false;
     }
 
-    const std::vector<float> & compute_logits(double & compute_ms, double & readback_ms) override {
+    GraphStepOutputs compute(bool, bool read_best_tokens, double & compute_ms, double & readback_ms) override {
+        if (read_best_tokens) {
+            throw std::runtime_error("OmniVoice layerwise generator does not score on the device");
+        }
+        if (!host_.prepared()) {
+            throw std::runtime_error("OmniVoice layerwise generator compute requires a prepared request");
+        }
         embedding_.run(
-            text_ids_host_,
-            audio_ids_host_,
-            audio_mask_values_host_,
-            text_mask_values_host_,
+            host_.text_ids,
+            host_.audio_ids,
+            host_.audio_mask,
+            host_.text_mask,
             hidden_a_,
             compute_ms,
             readback_ms);
@@ -680,10 +570,11 @@ public:
             decoder_.run(
                 runtime_,
                 graph_arena_bytes_,
+                2 * batch_capacity_,
                 total_tokens_capacity_,
                 layer,
-                position_host_,
-                attention_values_host_,
+                host_.positions,
+                host_.attention_f32,
                 *input,
                 *output,
                 compute_ms,
@@ -692,15 +583,17 @@ public:
         }
         head_.run(
             *input,
-            conditional_target_indices_host_,
-            unconditional_target_indices_host_,
-            guidance_scale_host_,
+            host_.target_indices,
+            host_.guidance_scales,
             logits_host_,
             compute_ms,
             readback_ms);
-        return logits_host_;
+        GraphStepOutputs out;
+        out.logits = &logits_host_;
+        return out;
     }
 
+    int64_t batch_capacity() const noexcept override { return batch_capacity_; }
     int64_t total_token_capacity() const noexcept override { return total_tokens_capacity_; }
     int64_t target_frame_capacity() const noexcept override { return target_frame_capacity_; }
     double rebuild_clear_ms() const noexcept override { return rebuild_clear_ms_; }
@@ -709,71 +602,15 @@ public:
     double rebuild_init_ms() const noexcept override { return rebuild_init_ms_; }
 
 private:
-    void rebuild_runtime_masks(
-        int64_t conditional_total,
-        int64_t conditional_audio_start,
-        int64_t unconditional_total) {
-        std::fill(audio_mask_values_host_.begin(), audio_mask_values_host_.end(), 0.0F);
-        std::fill(text_mask_values_host_.begin(), text_mask_values_host_.end(), 1.0F);
-        for (int64_t pos = 0; pos < conditional_total; ++pos) {
-            if (pos >= conditional_audio_start) {
-                audio_mask_values_host_[static_cast<size_t>(pos)] = 1.0F;
-                text_mask_values_host_[static_cast<size_t>(pos)] = 0.0F;
-            }
-        }
-        for (int64_t pos = 0; pos < unconditional_total; ++pos) {
-            const size_t offset = static_cast<size_t>(total_tokens_capacity_ + pos);
-            audio_mask_values_host_[offset] = 1.0F;
-            text_mask_values_host_[offset] = 0.0F;
-        }
-        std::fill(attention_values_host_.begin(), attention_values_host_.end(), kMaskedAttentionBias);
-        const auto write_zero = [&](int batch, int64_t q, int64_t k) {
-            const size_t index = static_cast<size_t>(
-                k + total_tokens_capacity_ * (q + total_tokens_capacity_ * batch));
-            attention_values_host_[index] = 0.0F;
-        };
-        for (int64_t q = 0; q < conditional_total; ++q) {
-            for (int64_t k = 0; k < conditional_total; ++k) {
-                write_zero(0, q, k);
-            }
-        }
-        for (int64_t q = conditional_total; q < total_tokens_capacity_; ++q) {
-            write_zero(0, q, q);
-        }
-        for (int64_t q = 0; q < unconditional_total; ++q) {
-            for (int64_t k = 0; k < unconditional_total; ++k) {
-                write_zero(1, q, k);
-            }
-        }
-        for (int64_t q = unconditional_total; q < total_tokens_capacity_; ++q) {
-            write_zero(1, q, q);
-        }
-    }
-
     std::shared_ptr<Qwen3DiffusionWeightsRuntime> runtime_;
     size_t graph_arena_bytes_ = 0;
+    int64_t batch_capacity_ = 0;
     int64_t total_tokens_capacity_ = 0;
     int64_t target_frame_capacity_ = 0;
-    int64_t current_total_tokens_ = 0;
-    int64_t current_target_frames_ = 0;
-    int64_t current_conditional_target_start_ = 0;
-    int64_t last_target_frames_ = -1;
-    int64_t last_conditional_target_start_ = -1;
-    int64_t last_mask_conditional_total_ = -1;
-    int64_t last_mask_conditional_audio_start_ = -1;
-    int64_t last_mask_unconditional_total_ = -1;
-    std::vector<int32_t> position_host_;
-    std::vector<int32_t> text_ids_host_;
-    std::array<std::vector<int32_t>, 8> audio_ids_host_{};
-    std::vector<int32_t> conditional_target_indices_host_;
-    std::vector<int32_t> unconditional_target_indices_host_;
-    std::vector<float> audio_mask_values_host_;
-    std::vector<float> text_mask_values_host_;
-    std::vector<float> attention_values_host_;
+    BatchedGraphInputs host_;
     std::vector<float> hidden_a_;
     std::vector<float> hidden_b_;
     std::vector<float> logits_host_;
-    float guidance_scale_host_ = 0.0F;
     double rebuild_clear_ms_ = 0.0;
     double rebuild_build_ms_ = 0.0;
     double rebuild_alloc_ms_ = 0.0;

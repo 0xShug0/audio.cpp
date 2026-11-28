@@ -78,24 +78,6 @@ std::unordered_map<std::string, std::vector<std::string>> load_token_table(
 }
 
 // ---------------------------------------------------------------------------
-// Text shaping (mirrors EmiliaTokenizer::map_punctuations)
-
-std::string map_punctuations(std::string text) {
-    static const std::pair<std::string_view, std::string_view> kMap[] = {
-        {"，", ","}, {"。", "."}, {"！", "!"}, {"？", "?"}, {"；", ";"},
-        {"：", ":"}, {"、", ","}, {"‘", "'"}, {"“", "\""}, {"”", "\""},
-        {"’", "'"}, {"⋯", "…"}, {"···", "…"}, {"・・・", "…"}, {"...", "…"},
-    };
-    for (const auto & [from, to] : kMap) {
-        for (size_t pos = 0; (pos = text.find(from, pos)) != std::string::npos;) {
-            text.replace(pos, from.size(), to);
-            pos += to.size();
-        }
-    }
-    return text;
-}
-
-// ---------------------------------------------------------------------------
 // Tone sandhi (pypinyin contrib/tone_sandhi.py semantics)
 //
 // Scope note: the reference only reaches this with a word the pypinyin
@@ -303,7 +285,7 @@ std::vector<int32_t> EmiliaTokenizer::encode(const std::string & raw_text) const
                     throw std::runtime_error(
                         "zipvoice: jieba dictionaries missing (expected zh_jieba_dict.txt "
                         "and zh_hmm_model.txt in the package or next to it); run "
-                        "tools/community_models/export_zipvoice_zh_dict.py");
+                        "tools/gguf/zipvoice/zipvoice_zh_dictionary_export.py");
                 }
                 segmenter_ = std::make_unique<JiebaSegmenter>(
                     tables_.jieba_dict, tables_.hmm_model);

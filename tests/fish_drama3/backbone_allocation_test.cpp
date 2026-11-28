@@ -1,0 +1,405 @@
+#include <ggml-alloc.h>
+#include <ggml-backend.h>
+#include "ggml-backend-impl.h"
+#include "engine/framework/io/safetensors.h"
+#include "engine/framework/debug/profiler.h"
+
+#include <cmath>
+#include <iostream>
+#include <set>
+#include <map>
+#include <stdexcept>
+#include <random>
+
+namespace {
+bool fail_buffer = false;
+bool fail_graph = false;
+std::set<ggml_backend_buffer_t> live_buffers;
+
+size_t allocation_calls = 0;
+using FreeBuffer = void (*)(ggml_backend_buffer_t);
+std::map<ggml_backend_buffer_t, FreeBuffer> original_frees;
+
+// Inject failure at the real backend boundary, including allocations made by
+// PreparedGraph. The first allocation is persistent state; later ones are scratch.
+class AllocationFailures {
+public:
+    explicit AllocationFailures(ggml_backend_t backend)
+        : type_(ggml_backend_get_default_buffer_type(backend)), original_(type_->iface.alloc_buffer) {
+        active_ = this;
+        type_->iface.alloc_buffer = [](ggml_backend_buffer_type_t type, size_t bytes) {
+            const auto call = allocation_calls++;
+            if (fail_buffer || (fail_graph && call > 0)) return ggml_backend_buffer_t{nullptr};
+            auto * buffer = active_->original_(type, bytes);
+            if (buffer) {
+                live_buffers.insert(buffer);
+                original_frees.emplace(buffer, buffer->iface.free_buffer);
+                buffer->iface.free_buffer = [](ggml_backend_buffer_t value) {
+                    const auto original = original_frees.at(value);
+                    original_frees.erase(value);
+                    live_buffers.erase(value);
+                    if (original) original(value);
+                };
+            }
+            return buffer;
+        };
+    }
+    ~AllocationFailures() { type_->iface.alloc_buffer = original_; active_ = nullptr; }
+private:
+    ggml_backend_buffer_type_t type_;
+    ggml_backend_buffer_t (*original_)(ggml_backend_buffer_type_t, size_t);
+    static AllocationFailures * active_;
+};
+AllocationFailures * AllocationFailures::active_ = nullptr;
+}  // namespace
+
+#include "../../src/community_models/fish_drama3/backbone.cpp"
+
+int main(int argc, char ** argv) {
+    try {
+        namespace drama = engine::models::fish_drama3;
+        engine::core::BackendConfig backend;
+        backend.threads = 1;
+        engine::core::ExecutionContext execution(backend);
+        struct FixtureDirectory {
+            std::filesystem::path path = std::filesystem::temp_directory_path() /
+                ("drama3_prefill_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            FixtureDirectory() { std::filesystem::create_directories(path); }
+            ~FixtureDirectory() { std::error_code error; std::filesystem::remove_all(path, error); }
+        } fixture;
+        std::unique_ptr<ggml_context, drama::GgmlContextDeleter> context(
+            ggml_init({1024 * 1024, nullptr, false}));
+        if (!context) throw std::runtime_error("test weight context allocation failed");
+        auto * norm = ggml_new_tensor_1d(context.get(), GGML_TYPE_F32, 16);
+        std::fill_n(static_cast<float *>(norm->data), 16, 1.0F);
+        const auto norm_safe = fixture.path / "allocation.safetensors";
+        const auto norm_gguf = fixture.path / "allocation.gguf";
+        std::vector<unsigned char> norm_bytes(16 * sizeof(float));
+        std::memcpy(norm_bytes.data(), norm->data, norm_bytes.size());
+        engine::io::write_safetensors_file(norm_safe, {{"norm", "F32", {16}, std::move(norm_bytes)}});
+        engine::assets::convert_tensor_sources_to_gguf({{norm_safe, ""}}, norm_gguf,
+            engine::assets::TensorStorageType::F32, true, false, {}, {}, std::nullopt);
+        auto norm_source = engine::assets::open_tensor_source(norm_gguf);
+        drama::Drama3BackboneDecoderConfig config;
+        config.hidden_size = 16;
+        config.layers = 0;
+        config.linear_key_head_dim = config.linear_value_head_dim = 4;
+        config.linear_num_key_heads = config.linear_num_value_heads = 1;
+        auto weights = std::make_shared<drama::Drama3BackboneWeights>(config);
+        weights->final_norm.weight = engine::core::wrap_tensor(
+            norm, engine::core::TensorShape::from_dims({16}), GGML_TYPE_F32);
+
+        int failures = 0, head_recoveries = 0;
+        {
+        AllocationFailures injection(execution.backend());
+        for (bool split : {false, true}) {
+            weights->experts.reset();
+            weights->store = std::make_shared<engine::core::BackendWeightStore>(execution.backend(),
+                execution.backend_type(), "test.drama3.primary", 1024 * 1024);
+            engine::moe::EngineConfig policy;
+            policy.residency = split ? engine::moe::Residency::Staged : engine::moe::Residency::Resident;
+            weights->experts = std::make_unique<engine::moe::MoeEngine>(execution, *weights->store, *norm_source,
+                policy, "test.drama3.cpu", 1024 * 1024);
+            for (bool buffer_failure : {true, false}) {
+                fail_buffer = buffer_failure;
+                fail_graph = !buffer_failure;
+                for (int attempt = 0; attempt < 3; ++attempt) {
+                    bool rejected = false;
+                    allocation_calls = 0;
+                    try {
+                        drama::Drama3BackboneCachedDecodeGraph graph(execution, weights, config, 32, 8 * 1024 * 1024);
+                    } catch (const std::runtime_error & error) {
+                        const std::string expected = buffer_failure ? "failed to allocate Drama 3 backbone cached decode graph"
+                            : "cannot reserve graph activation workspace";
+                        if (std::string(error.what()) != expected) throw;
+                        rejected = true;
+                    }
+                    if (!rejected) throw std::runtime_error("injected allocation failure was not rejected");
+                    if (!live_buffers.empty()) throw std::runtime_error("failed construction leaked a persistent buffer");
+                    ++failures;
+                }
+            }
+            fail_buffer = fail_graph = false;
+            {
+                drama::Drama3BackboneCachedDecodeGraph graph(execution, weights, config, 32, 8 * 1024 * 1024);
+                const auto hidden = graph.run_embedding_step(std::vector<float>(16, 0.5F));
+                if (hidden.size() != 16 || !std::all_of(hidden.begin(), hidden.end(),
+                        [](float value) { return std::isfinite(value); })) {
+                    throw std::runtime_error("decode did not recover after allocation failures");
+                }
+            }
+            if (!live_buffers.empty()) throw std::runtime_error("normal destruction leaked a persistent buffer");
+        }
+        auto * head_weight = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, 16, 16);
+        std::fill_n(static_cast<float *>(head_weight->data), 256, 0.125F);
+        weights->lm_head.weight = engine::core::wrap_tensor(head_weight,
+            engine::core::TensorShape::from_dims({16, 16}));
+        config.vocab_size = 16;
+        for (bool buffer_failure : {true, false}) {
+            {
+                drama::LmHeadGraph head(execution, weights, config, 8 * 1024 * 1024);
+                fail_buffer = buffer_failure;
+                fail_graph = !buffer_failure;
+                allocation_calls = 0;
+                bool rejected = false;
+                try { head.run(std::vector<float>(16, 0.5F)); }
+                catch (const std::runtime_error & error) {
+                    const std::string expected = buffer_failure ? "Cannot allocate drama3_backbone.lm_head persistent tensors"
+                        : "cannot reserve graph activation workspace";
+                    if (std::string(error.what()) != expected) throw;
+                    rejected = true;
+                }
+                if (!rejected || !live_buffers.empty())
+                    throw std::runtime_error("failed LM-head preparation published or leaked partial resources");
+                fail_buffer = fail_graph = false;
+                if (head.run(std::vector<float>(16, 0.5F)) != std::vector<float>(16, 1.0F))
+                    throw std::runtime_error("LM head did not recover after failed cached graph preparation");
+                ++head_recoveries;
+            }
+            if (!live_buffers.empty()) throw std::runtime_error("LM-head teardown leaked prepared resources");
+        }
+        }
+        std::cout << "cached_head_recoveries=" << head_recoveries << '\n';
+        std::cout << "rejected_allocations=" << failures << " live_buffers=0 recovery_cases=2\n";
+
+        engine::debug::configure_logging({true, std::nullopt});
+        const auto started = std::chrono::steady_clock::now();
+        auto test_backend = backend;
+        if (argc > 1 && std::string(argv[1]) == "cuda") test_backend.type = engine::core::BackendType::Cuda;
+        if (argc > 1 && std::string(argv[1]) == "vulkan") test_backend.type = engine::core::BackendType::Vulkan;
+        engine::core::ExecutionContext prefill_execution(test_backend);
+        auto c = config;
+        c.kv_cache_type = GGML_TYPE_F32;
+        c.vocab_size = 16;
+        c.hidden_size = c.intermediate_size = 256;
+        c.layers = 2;
+        c.experts = 32;
+        c.experts_per_token = 2;
+        c.moe.cache_slots = 4;
+        c.heads = 4;
+        c.kv_heads = 2;
+        c.head_dim = 64;
+        c.full_attention_interval = 2;
+        c.linear_key_head_dim = c.linear_value_head_dim = 128;
+        c.linear_num_key_heads = 2;
+        c.linear_num_value_heads = 4;
+        std::vector<engine::io::SafeTensorWriteEntry> entries;
+        std::mt19937 random(1234);
+        std::uniform_real_distribution<float> distribution(-1.0F, 1.0F);
+        auto add = [&](const std::string & name, std::vector<int64_t> shape, float scale = .025F, float offset = 0.0F) {
+            size_t count = 1;
+            for (auto dim : shape) count *= static_cast<size_t>(dim);
+            std::vector<float> data(count);
+            for (size_t i = 0; i < count; ++i) data[i] = offset + scale * distribution(random);
+            std::vector<unsigned char> bytes(count * sizeof(float));
+            std::memcpy(bytes.data(), data.data(), bytes.size());
+            entries.push_back({"model_weights/" + name, "F32", std::move(shape), std::move(bytes)});
+        };
+        add(c.weight_prefix + ".embed_tokens.weight", {16, 256});
+        add("lm_head.weight", {16, 256});
+        add(c.weight_prefix + ".norm.weight", {256});
+        for (int layer = 0; layer < 2; ++layer) {
+            const auto p = c.weight_prefix + ".layers." + std::to_string(layer);
+            add(p + ".input_layernorm.weight", {256});
+            add(p + ".post_attention_layernorm.weight", {256});
+            if (layer == 0) {
+                const auto a = p + ".linear_attn";
+                add(a + ".in_proj_qkv.weight", {1024, 256});
+                add(a + ".in_proj_z.weight", {512, 256});
+                add(a + ".in_proj_b.weight", {4, 256});
+                add(a + ".in_proj_a.weight", {4, 256});
+                add(a + ".conv1d.weight", {1024, 1, 4});
+                add(a + ".dt_bias", {4});
+                add(a + ".A_log", {4});
+                add(a + ".norm.weight", {128}, 0, 1);
+                add(a + ".out_proj.weight", {256, 512});
+            } else {
+                const auto a = p + ".self_attn";
+                add(a + ".q_proj.weight", {512, 256});
+                add(a + ".k_proj.weight", {128, 256});
+                add(a + ".v_proj.weight", {128, 256});
+                add(a + ".o_proj.weight", {256, 256});
+                add(a + ".q_norm.weight", {64});
+                add(a + ".k_norm.weight", {64});
+            }
+            for (const auto * projection : {"gate_proj", "up_proj", "down_proj"}) {
+                add(p + ".mlp.shared_expert." + projection + ".weight", {256, 256});
+                add(p + ".mlp.experts." + projection + ".weight", {c.experts, 256, 256});
+            }
+            add(p + ".mlp.gate.weight", {c.experts, 256});
+            add(p + ".mlp.shared_expert_gate.weight", {1, 256});
+        }
+        const auto safe = fixture.path / "weights.safetensors";
+        const auto gguf = fixture.path / "weights.gguf";
+        engine::io::write_safetensors_file(safe, entries);
+        engine::assets::convert_tensor_sources_to_gguf({{safe, ""}}, gguf, engine::assets::TensorStorageType::F32,
+            true, false, {}, {}, std::nullopt);
+        auto source = engine::assets::open_tensor_source(gguf, "model_weights/");
+        auto resident = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        std::vector<std::pair<std::string, engine::core::TensorValue>> gemma_scales{
+            {c.weight_prefix + ".norm.weight", *resident->final_norm.weight}};
+        for (size_t index = 0; index < resident->layers.size(); ++index) {
+            const auto & layer = resident->layers[index];
+            const auto prefix = c.weight_prefix + ".layers." + std::to_string(index);
+            gemma_scales.emplace_back(prefix + ".input_layernorm.weight", *layer.input_norm.weight);
+            gemma_scales.emplace_back(prefix + ".post_attention_layernorm.weight", *layer.post_norm.weight);
+            if (layer.full) {
+                gemma_scales.emplace_back(prefix + ".self_attn.q_norm.weight", *layer.full->q_norm.weight);
+                gemma_scales.emplace_back(prefix + ".self_attn.k_norm.weight", *layer.full->k_norm.weight);
+            } else {
+                const auto actual = engine::core::read_tensor_f32(layer.linear->norm.weight->tensor);
+                if (actual != source->require_f32(prefix + ".linear_attn.norm.weight", {128}))
+                    throw std::runtime_error("ordinary GDN normalization scale changed");
+            }
+        }
+        for (const auto & entry : gemma_scales) {
+            const auto actual = engine::core::read_tensor_f32(entry.second.tensor);
+            auto expected = source->require_f32(entry.first, {static_cast<int64_t>(actual.size())});
+            for (auto & value : expected) value += 1.0F;
+            if (actual != expected) throw std::runtime_error("Gemma normalization scale was not folded exactly once");
+        }
+        {
+            drama::LmHeadGraph full(prefill_execution, resident, c, 4 * 1024 * 1024);
+            auto selected_config = c;
+            selected_config.lm_head_token_ids = {9, 2, 3, 4, 15};
+            drama::LmHeadGraph selected(prefill_execution, resident, selected_config, 4 * 1024 * 1024);
+            for (float value : {.2F, -.3F, .2F}) {
+                const std::vector<float> hidden(256, value);
+                const auto expected = full.run(hidden);
+                const auto actual = selected.run(hidden);
+                if (actual.size() != selected_config.lm_head_token_ids.size())
+                    throw std::runtime_error("selected LM head candidate count mismatch");
+                for (size_t i = 0; i < actual.size(); ++i)
+                    if (std::abs(actual[i] - expected.at(selected_config.lm_head_token_ids[i])) > 1e-5F)
+                        throw std::runtime_error("selected LM head changed candidate logits");
+                selected.release_graph();
+            }
+        }
+        if (test_backend.type == engine::core::BackendType::Cuda) {
+            for (int variant = 0; variant < 4; ++variant) {
+                auto candidate_config = c;
+                candidate_config.kv_cache_type = variant == 0 || variant == 3 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+                candidate_config.fused_moe = variant == 1 || variant == 3;
+                candidate_config.kv_cache_alignment = variant >= 2 ? 8 : 1;
+                drama::Drama3BackboneCachedDecodeGraph baseline(prefill_execution, resident, c, 32, 8 * 1024 * 1024);
+                drama::Drama3BackboneCachedDecodeGraph candidate(prefill_execution, resident, candidate_config, 32, 8 * 1024 * 1024);
+                float maximum = 0;
+                for (int steps : {7, 1, 7}) {
+                    std::vector<float> input(steps * 256);
+                    for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
+                    baseline.reset();
+                    candidate.reset();
+                    const auto expected = baseline.prefill_embeddings(input, steps).hidden;
+                    const auto actual = candidate.prefill_embeddings(input, steps).hidden;
+                    if (expected != actual) throw std::runtime_error("decode optimization changed prompt prefill");
+                    for (int step = 0; step < 8; ++step) {
+                        std::vector<float> next(256);
+                        for (size_t i = 0; i < next.size(); ++i) next[i] = std::sin(float(i + step * 256) * .037F);
+                        const auto reference = baseline.run_embedding_step(next);
+                        const auto output = candidate.run_embedding_step(next);
+                        for (size_t i = 0; i < output.size(); ++i) {
+                            if (!std::isfinite(output[i])) throw std::runtime_error("decode optimization produced nonfinite output");
+                            maximum = std::max(maximum, std::abs(reference[i] - output[i]));
+                        }
+                    }
+                }
+                std::cout << "decode_variant=" << variant << " max_abs=" << maximum << '\n';
+                if (maximum > 1e-4F) throw std::runtime_error("decode optimization changed fixed-input continuation");
+            }
+        }
+        {
+            drama::Drama3BackboneCachedDecodeGraph cache(prefill_execution, resident, c, 32, 8 * 1024 * 1024);
+            const std::vector<float> next(256, .3F);
+            for (int64_t prefix : {2, 3, 2}) {
+                const int64_t steps = prefix + 5;
+                std::vector<float> input(steps * 256);
+                for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
+                const auto cut = input.begin() + prefix * 256;
+                cache.reset();
+                const auto full = cache.prefill_embeddings(input, steps).hidden;
+                const auto full_snapshot = cache.capture_prefill();
+                const auto expected_next = cache.run_embedding_step(next);
+                cache.restore_prefill(full_snapshot, steps);
+                if (cache.run_embedding_step(next) != expected_next)
+                    throw std::runtime_error("full prefill snapshot changed cached decode");
+
+                cache.reset();
+                cache.prefill_embeddings({input.begin(), cut}, prefix);
+                const auto prefix_snapshot = cache.capture_prefill();
+                const auto first_suffix = cache.prefill_embeddings({cut, input.end()}, steps - prefix, prefix).hidden;
+                const auto first_next = cache.run_embedding_step(next);
+                cache.restore_prefill(prefix_snapshot, prefix);
+                const auto second_suffix = cache.prefill_embeddings({cut, input.end()}, steps - prefix, prefix).hidden;
+                if (first_suffix != second_suffix || cache.valid_steps() != steps || cache.run_embedding_step(next) != first_next)
+                    throw std::runtime_error("restored prefix snapshot changed suffix prefill or cached decode");
+                for (size_t i = 0; i < first_suffix.size(); ++i) {
+                    const auto value = first_suffix[i];
+                    if (!std::isfinite(value) || std::abs(value - full[prefix * 256 + i]) > 1e-3F)
+                        throw std::runtime_error("split prefill changed the expected fixed-input hidden state");
+                }
+                std::cout << "prefill_snapshot_prefix=" << prefix << " suffix=" << steps - prefix << '\n';
+            }
+        }
+        c.moe.residency = engine::moe::Residency::Staged;
+        auto disk = drama::load_qwen35_weights(*source, c, prefill_execution, 4 * 1024 * 1024, engine::assets::TensorStorageType::Native);
+        for (int64_t steps : {1, 7}) {
+            std::unique_ptr<ggml_context, drama::GgmlContextDeleter> routing_context(
+                ggml_init({1024 * 1024, nullptr, true}));
+            engine::core::ModuleBuildContext routing_ctx{routing_context.get(), "routing_layout", test_backend.type};
+            auto * input = ggml_new_tensor_3d(routing_ctx.ggml, GGML_TYPE_F32, c.hidden_size, steps, 1);
+            const auto & layer = disk->layers.front();
+            const auto routed = disk->experts->route(routing_ctx, layer.expert,
+                ggml_reshape_2d(routing_ctx.ggml, input, c.hidden_size, steps));
+            if (!ggml_is_contiguous(routed.ids))
+                throw std::runtime_error("Drama 3 offload routing IDs must remain compact");
+            if (steps == 1 && routed.ids->op == GGML_OP_CONT)
+                throw std::runtime_error("single-token routing must not copy already compact IDs");
+        }
+        drama::Drama3BackboneCachedDecodeGraph reference(prefill_execution, resident, c, 1024, 8 * 1024 * 1024);
+        drama::Drama3BackboneCachedDecodeGraph grouped(prefill_execution, disk, c, 1024, 8 * 1024 * 1024);
+        std::vector<float> first_hidden, first_next;
+        for (int steps : {7, 129, 513, 7}) {
+            std::vector<float> input(steps * 256);
+            for (size_t i = 0; i < input.size(); ++i) input[i] = std::cos(float(i) * .091F);
+            reference.reset();
+            const auto reference_hidden = reference.prefill_embeddings(input, steps).hidden;
+            grouped.reset(true);
+            const auto actual = grouped.prefill_embeddings(input, steps);
+            float maximum = 0;
+            double square = 0, energy = 0;
+            for (size_t i = 0; i < actual.hidden.size(); ++i) {
+                maximum = std::max(maximum, std::abs(actual.hidden[i] - reference_hidden[i]));
+                square += std::pow(actual.hidden[i] - reference_hidden[i], 2);
+                energy += reference_hidden[i] * reference_hidden[i];
+            }
+            std::cout << "batched_steps=" << steps << " max_abs=" << maximum
+                      << " relative_rmse=" << std::sqrt(square / energy) << '\n';
+            if (!std::all_of(actual.hidden.begin(), actual.hidden.end(), [](float value) { return std::isfinite(value); }) ||
+                maximum > 1e-3F || square > 1e-8 * energy)
+                throw std::runtime_error("grouped and resident batched prefill mismatch");
+            const std::vector<float> next(256, .3F);
+            const auto valid_steps = grouped.valid_steps();
+            grouped.release_prefill_graphs();
+            if (grouped.valid_steps() != valid_steps)
+                throw std::runtime_error("releasing prefill graphs reset continuation state");
+            const auto expected_next = reference.run_embedding_step(next);
+            const auto actual_next = grouped.run_embedding_step(next);
+            maximum = 0;
+            for (size_t i = 0; i < next.size(); ++i) maximum = std::max(maximum, std::abs(expected_next[i] - actual_next[i]));
+            std::cout << "continuation_steps=" << steps << " max_abs=" << maximum << '\n';
+            if (maximum > 1e-4F) throw std::runtime_error("grouped prefill corrupted continuation state");
+            if (steps == 7) {
+                if (first_hidden.empty()) {
+                    first_hidden = actual.hidden;
+                    first_next = actual_next;
+                } else if (first_hidden != actual.hidden || first_next != actual_next) {
+                    throw std::runtime_error("offload prefill retained state after prompt length changed");
+                }
+            }
+        }
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
+    } catch (const std::exception & error) {
+        std::cerr << error.what() << '\n';
+        return 1;
+    }
+}

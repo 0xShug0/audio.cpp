@@ -48,6 +48,22 @@ static __dpct_inline__ T op_abs(T x) {
     return sycl::fabs(x);
 }
 
+static __dpct_inline__ float op_round_bf16(float x) {
+    // Matches ggml_compute_fp32_to_bf16 (round to nearest even, quiet NaN) widened back to f32.
+    uint32_t u = sycl::bit_cast<uint32_t>(x);
+    if ((u & 0x7fffffff) > 0x7f800000) {
+        u = ((u >> 16) | 64) << 16;
+    } else {
+        u = ((u + (0x7fff + ((u >> 16) & 1))) >> 16) << 16;
+    }
+    return sycl::bit_cast<float>(u);
+}
+
+template<typename T>
+static __dpct_inline__ T op_expm1(T x) {
+    return sycl::expm1(x);
+}
+
 template<typename T>
 static __dpct_inline__ T op_elu(T x) {
     return (x > static_cast<T>(0.f)) ? x : sycl::expm1(x);
@@ -605,6 +621,62 @@ static inline void ggml_sycl_op_exp(ggml_backend_sycl_context & ctx, ggml_tensor
     });
 }
 
+// Any of f32/f16/bf16 in, always contiguous f32 out; src rows may have arbitrary strides.
+template <typename T>
+static void round_bf16_sycl(const ggml_tensor * src0, float * dst, dpct::queue_ptr stream) {
+    const int64_t k    = ggml_nelements(src0);
+    const char *  cx   = (const char *) src0->data;
+    const int64_t ne0  = src0->ne[0];
+    const int64_t ne1  = src0->ne[1];
+    const int64_t ne2  = src0->ne[2];
+    const size_t  nb01 = src0->nb[1];
+    const size_t  nb02 = src0->nb[2];
+    const size_t  nb03 = src0->nb[3];
+    const int64_t num_blocks = ceil_div(k, SYCL_NEG_BLOCK_SIZE);
+    stream->parallel_for(
+        sycl::nd_range<1>(sycl::range<1>(num_blocks) * sycl::range<1>(SYCL_NEG_BLOCK_SIZE),
+                          sycl::range<1>(SYCL_NEG_BLOCK_SIZE)),
+        [=](sycl::nd_item<1> item_ct1) {
+            const int64_t i = item_ct1.get_global_id(0);
+            if (i >= k) {
+                return;
+            }
+            const int64_t i0 = i % ne0;
+            const int64_t i1 = (i / ne0) % ne1;
+            const int64_t i2 = (i / (ne0 * ne1)) % ne2;
+            const int64_t i3 = i / (ne0 * ne1 * ne2);
+            const T * x = (const T *) (cx + i1 * nb01 + i2 * nb02 + i3 * nb03);
+            dst[i] = op_round_bf16(static_cast<float>(x[i0]));
+        });
+}
+
+static inline void ggml_sycl_op_round_bf16(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+    GGML_ASSERT(dst->type == GGML_TYPE_F32);
+    GGML_ASSERT(ggml_is_contiguous(dst));
+    GGML_ASSERT(ggml_is_contiguous_rows(src0));
+    dpct::queue_ptr main_stream = ctx.stream();
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            round_bf16_sycl<float>(src0, (float *) dst->data, main_stream);
+            break;
+        case GGML_TYPE_F16:
+            round_bf16_sycl<sycl::half>(src0, (float *) dst->data, main_stream);
+            break;
+        case GGML_TYPE_BF16:
+            round_bf16_sycl<sycl::ext::oneapi::bfloat16>(src0, (float *) dst->data, main_stream);
+            break;
+        default:
+            GGML_ABORT("%s: unsupported src type %s", __func__, ggml_type_name(src0->type));
+    }
+}
+
+static inline void ggml_sycl_op_expm1(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    ggml_sycl_detail::ggml_sycl_op_unary(ctx, dst, [](auto x) {
+        return op_expm1(x);
+    });
+}
+
 static inline void ggml_sycl_op_log(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
     ggml_sycl_detail::dispatch_ggml_sycl_op_unary(ctx, dst,
         [](const auto* src, auto* dst_ptr, int k_elements, queue_ptr stream) {
@@ -1016,6 +1088,16 @@ void ggml_sycl_hardswish(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
 void ggml_sycl_exp(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
     scope_op_debug_print scope_dbg_print(__func__, dst, /*num_src=*/1);
     ggml_sycl_op_exp(ctx, dst);
+}
+
+void ggml_sycl_expm1(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    scope_op_debug_print scope_dbg_print(__func__, dst, /*num_src=*/1);
+    ggml_sycl_op_expm1(ctx, dst);
+}
+
+void ggml_sycl_round_bf16(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
+    scope_op_debug_print scope_dbg_print(__func__, dst, /*num_src=*/1);
+    ggml_sycl_op_round_bf16(ctx, dst);
 }
 
 void ggml_sycl_log(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {

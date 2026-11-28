@@ -82,3 +82,17 @@ UI_BASE_URL=http://127.0.0.1:8080 node webui/native/tests/ui-workflows.mjs
 storage and deterministic HTTP fixtures, exercising Studio status/native
 chunking, Arena task changes, and dubbing request routing, recovery and downloads.
 They do not load models. Actual model/audio validation is a separate check.
+
+## Voice chat
+
+The Voice chat app combines selectable ASR with LFM3-Audio conversation and
+built-in-voice synthesis, then SoulX-FlashHead portrait animation. Recognition
+and conversation inference run asynchronously. The app retains native LFM3
+conversation artifacts. The `voice-chat-avatar` recipe queues conversation text
+for selected-voice synthesis as it arrives and feeds PCM directly into the
+avatar. The browser
+plays matching audio/video chunks without waiting for reply completion.
+It owns its state without changing the voice library database or Studio state.
+See [its workflow documentation](voice-chat/README.md) and
+[the example config](../../../../../examples/server/voice-chat-avatar.json)
+for configuration and validation.

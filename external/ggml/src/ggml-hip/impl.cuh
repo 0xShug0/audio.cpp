@@ -7,6 +7,6 @@
 struct ggml_hip_impl {
     const char * name;
     bool (*mul_mat)(const ggml_tensor *, const ggml_tensor *, ggml_tensor *, hipStream_t, int cc);
-    bool (*im2col)(const ggml_tensor *, ggml_tensor *, hipStream_t);
+    bool (*im2col)(const ggml_tensor *, ggml_tensor *, hipStream_t, int nsm);
     bool (*cpy)(const ggml_tensor *, ggml_tensor *, hipStream_t);
 };

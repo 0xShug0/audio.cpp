@@ -134,7 +134,11 @@ public:
         bool mem_saver,
         bool packed_projections,
         int64_t kv_cache_alignment,
-        int64_t vae_tile_frames)
+        int64_t vae_tile_frames,
+        int64_t nar_window_frames,
+        int64_t nar_overlap_frames,
+        bool nar_prefix_cache,
+        bool compact_kv)
         : execution(&execution),
           assets(std::move(assets)),
           tokenizer(this->assets->tiktoken_path),
@@ -150,7 +154,11 @@ public:
           mem_saver(mem_saver),
           packed_projections(packed_projections),
           kv_cache_alignment(kv_cache_alignment),
-          vae_tile_frames(vae_tile_frames) {
+          vae_tile_frames(vae_tile_frames),
+          nar_window_frames(nar_window_frames),
+          nar_overlap_frames(nar_overlap_frames),
+          nar_prefix_cache(nar_prefix_cache),
+          compact_kv(compact_kv) {
         if (!this->assets) {
             throw std::runtime_error("Yue2 pipeline requires assets");
         }
@@ -226,8 +234,8 @@ public:
         return nar->synthesize(
             semantic.plan.prefix,
             codec,
-            [this](const std::vector<int32_t> & tokens) {
-                return ar->prefill_device_state(tokens);
+            [this](const std::vector<int32_t> & tokens, size_t shared_prefix) {
+                return ar->prefill_device_state(tokens, shared_prefix);
             },
             noise,
             seed,
@@ -436,7 +444,9 @@ private:
             ar_prefill_graph_arena_bytes,
             ar_decode_graph_arena_bytes,
             packed_projections,
-            kv_cache_alignment);
+            kv_cache_alignment,
+            nar_prefix_cache,
+            compact_kv);
         engine::debug::timing_log_scalar("yue2.ar.init_ms", engine::debug::elapsed_ms(start));
     }
 
@@ -476,7 +486,9 @@ private:
             model_weight_context_bytes,
             nar_graph_arena_bytes,
             allow_flash_attention,
-            nar_attention_tile_rows);
+            nar_attention_tile_rows,
+            nar_window_frames,
+            nar_overlap_frames);
         engine::debug::timing_log_scalar("yue2.nar.init_ms", engine::debug::elapsed_ms(start));
     }
 
@@ -497,6 +509,10 @@ private:
     bool packed_projections = false;
     int64_t kv_cache_alignment = 1;
     int64_t vae_tile_frames = 0;
+    int64_t nar_window_frames = 0;
+    int64_t nar_overlap_frames = 0;
+    bool nar_prefix_cache = false;
+    bool compact_kv = false;
     std::unique_ptr<codecs::OobleckAudioVaeRuntime> vae;
     std::unique_ptr<Yue2ARRuntime> ar;
     std::unique_ptr<Yue2NARRuntime> nar;
@@ -518,7 +534,11 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
     bool mem_saver,
     bool packed_projections,
     int64_t kv_cache_alignment,
-    int64_t vae_tile_frames)
+    int64_t vae_tile_frames,
+    int64_t nar_window_frames,
+    int64_t nar_overlap_frames,
+    bool nar_prefix_cache,
+    bool compact_kv)
     : impl_(std::make_unique<Impl>(
           execution,
           std::move(assets),
@@ -535,7 +555,11 @@ Yue2PipelineRuntime::Yue2PipelineRuntime(
           mem_saver,
           packed_projections,
           kv_cache_alignment,
-          vae_tile_frames)) {}
+          vae_tile_frames,
+          nar_window_frames,
+          nar_overlap_frames,
+          nar_prefix_cache,
+          compact_kv)) {}
 
 Yue2PipelineRuntime::~Yue2PipelineRuntime() = default;
 

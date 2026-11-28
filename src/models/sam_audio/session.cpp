@@ -105,7 +105,7 @@ public:
                     std::fill_n(conditioning.video.begin() + c * conditioning.frames,
                                 conditioning.frames, features.at(c));
             } else {
-                const auto video = load_video_frames(*video_path);
+                const auto video = io::load_video_rgb(*video_path);
                 const int64_t hop = std::accumulate(assets_->codec.encoder_rates.begin(), assets_->codec.encoder_rates.end(),
                                                     int64_t{1}, std::multiplies<>());
                 conditioning.video = vision_->encode_video(video, conditioning.frames, hop, assets_->sample_rate);

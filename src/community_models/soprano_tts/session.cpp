@@ -162,6 +162,7 @@ void SopranoTTSOfflineSession::prepare(const runtime::SessionPreparationRequest 
 
 
 runtime::TaskResult SopranoTTSOfflineSession::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("Soprano run");
     if (task_.mode != runtime::RunMode::Offline) {
         throw std::runtime_error("Soprano run requires an offline session");
@@ -171,6 +172,7 @@ runtime::TaskResult SopranoTTSOfflineSession::run(const runtime::TaskRequest & r
 
     runtime::TaskResult result;
     result.audio_output = audio;
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
 
@@ -221,6 +223,7 @@ runtime::StreamingPolicy SopranoTTSOfflineSession::streaming_policy() const {
     return policy;
 }
 void SopranoTTSOfflineSession::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("Soprano start_stream");
     runtime::validate_spec_backed_request_options(request.options, *contract_, "Soprano");
     if (task_.mode != runtime::RunMode::Streaming) {
@@ -286,6 +289,7 @@ runtime::TaskResult SopranoTTSOfflineSession::finish_stream() {
     }
     result.audio_output = std::move(merged);
     reset();
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return result;
 }
 void SopranoTTSOfflineSession::reset() {

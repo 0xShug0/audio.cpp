@@ -19,8 +19,13 @@ class IrodoriTextTokenizer {
 public:
     explicit IrodoriTextTokenizer(std::shared_ptr<const IrodoriTTSAssets> assets);
 
+    // The text to speak. With the v4 Small tokenizer, rare long pieces are left
+    // out, as in Python Irodori-TTS (see tokenizer_text.cpp).
     IrodoriTokenizedText encode_padded(const std::string & text, int64_t max_length) const;
     std::vector<int32_t> encode(const std::string & text) const;
+    // The caption, with every piece of the tokenizer: Python does not split captions.
+    IrodoriTokenizedText encode_caption_padded(const std::string & caption, int64_t max_length) const;
+    std::vector<int32_t> encode_caption(const std::string & caption) const;
     int32_t bos_id() const noexcept;
     int32_t pad_id() const noexcept;
     int32_t unk_id() const noexcept;

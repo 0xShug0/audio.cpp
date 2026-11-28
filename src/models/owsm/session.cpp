@@ -114,11 +114,7 @@ private:
         auto mono = audio::convert_interleaved_audio_to_mono_linear_resampled(
             input.samples, input.sample_rate, input.channels, input.sample_rate);
         if (input.sample_rate != 16000) {
-            const auto resampled = audio::try_resample_mono_soxr(mono, input.sample_rate, 16000, {});
-            if (!resampled) {
-                throw std::runtime_error("OWSM v4 requires SOXR for resampling; provide 16 kHz audio");
-            }
-            mono = *resampled;
+            mono = audio::resample_mono_soxr_or_sinc(mono, input.sample_rate, 16000, {});
         }
         if (mono.empty()) {
             throw std::runtime_error("OWSM v4 audio input is empty");

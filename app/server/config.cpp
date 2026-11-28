@@ -5,6 +5,7 @@
 
 #include "engine/framework/io/json.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -229,11 +230,7 @@ engine::core::BackendType parse_server_backend(const std::string & value) {
     return backend;
 }
 
-ServerConfig load_server_config(const std::filesystem::path & path) {
-    return load_server_config(path, false);
-}
-
-ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs) {
+ServerConfig parse_server_config(const std::filesystem::path & path, bool parallel_jobs) {
     const auto root = engine::io::json::parse_file(path);
     const auto base = path.parent_path();
     ServerConfig config;
@@ -243,8 +240,26 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     config.ui_enabled = engine::io::json::optional_bool(root, "ui", config.ui_enabled);
     config.ui_requested = engine::io::json::optional_bool(root, "ui", false);
     config.ui_management = engine::io::json::optional_bool(root, "ui_management", config.ui_management);
+    if (const auto * value = root.find("models_root")) {
+        if (!value->is_string() || value->as_string().empty()) {
+            throw std::runtime_error("server models_root must be a non-empty string");
+        }
+        config.models_root = resolve_path(base, value->as_string());
+    }
+    config.backend_explicit = root.find("backend") != nullptr;
     config.backend = parse_server_backend(engine::io::json::optional_string(root, "backend", "cuda"));
     config.backend_impl = engine::io::json::optional_string(root, "backend_impl", "");
+    const bool has_device = root.find("device") != nullptr;
+    const auto * device_name = root.find("device_name");
+    if (has_device && device_name != nullptr) {
+        throw std::runtime_error("server config cannot specify both device and device_name");
+    }
+    if (device_name != nullptr) {
+        if (!device_name->is_string()) {
+            throw std::runtime_error("server device_name must be a string");
+        }
+        config.device_name = device_name->as_string();
+    }
     config.device = engine::io::json::optional_i32(root, "device", config.device);
     config.threads = engine::io::json::optional_i32(root, "threads", config.threads);
     config.lazy_load = engine::io::json::optional_bool(root, "lazy_load", config.lazy_load);
@@ -349,12 +364,23 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
         model.task = engine::io::json::optional_string(item, "task", model.task);
         model.mode = engine::io::json::optional_string(item, "mode", model.mode);
         model.lazy = engine::io::json::optional_bool(item, "lazy", config.lazy_load);
-        if (item.find("device") != nullptr) {
+        const bool has_model_device = item.find("device") != nullptr;
+        const auto * model_device_name = item.find("device_name");
+        if (has_model_device && model_device_name != nullptr) {
+            throw std::runtime_error("model " + model.id + " cannot specify both device and device_name");
+        }
+        if (has_model_device) {
             const int device = engine::io::json::optional_i32(item, "device", config.device);
             if (device < 0) {
                 throw std::runtime_error("device for model " + model.id + " must be >= 0");
             }
             model.device = device;
+        }
+        if (model_device_name != nullptr) {
+            if (!model_device_name->is_string()) {
+                throw std::runtime_error("device_name for model " + model.id + " must be a string");
+            }
+            model.device_name = model_device_name->as_string();
         }
         if (!parallel_jobs && item.find("slots") != nullptr) {
             throw std::runtime_error("slots requires --parallel-jobs at server startup");
@@ -440,12 +466,175 @@ ServerConfig load_server_config(const std::filesystem::path & path, bool paralle
     return config;
 }
 
+void resolve_model_device(
+    engine::core::BackendType server_backend,
+    ServerModelConfig & model,
+    const std::vector<engine::core::BackendDeviceInfo> & devices) {
+    if (!model.device_name.has_value()) {
+        return;
+    }
+    try {
+        const auto resolved = engine::core::resolve_backend_device(*model.device_name, server_backend, devices);
+        model.device = resolved.device;
+        model.device_name.reset();
+    } catch (const std::exception & error) {
+        throw std::runtime_error("device_name for model " + model.id + ": " + error.what());
+    }
+}
+
+void resolve_model_device(engine::core::BackendType server_backend, ServerModelConfig & model) {
+    if (!model.device_name.has_value()) {
+        return;
+    }
+    resolve_model_device(server_backend, model, engine::core::list_backend_devices(false));
+}
+
+void resolve_server_devices(
+    ServerConfig & config,
+    const std::vector<engine::core::BackendDeviceInfo> & devices) {
+    if (config.device_name.has_value()) {
+        const std::optional<engine::core::BackendType> filter =
+            config.backend_explicit ? std::optional<engine::core::BackendType>(config.backend) : std::nullopt;
+        const auto resolved = engine::core::resolve_backend_device(*config.device_name, filter, devices);
+        config.backend = resolved.type;
+        config.device = resolved.device;
+        config.device_name.reset();
+    }
+    for (auto & model : config.models) {
+        resolve_model_device(config.backend, model, devices);
+    }
+}
+
+void resolve_server_devices(ServerConfig & config) {
+    const bool needs_resolution = config.device_name.has_value() ||
+        std::any_of(config.models.begin(), config.models.end(), [](const ServerModelConfig & model) {
+            return model.device_name.has_value();
+        });
+    if (!needs_resolution) {
+        return;
+    }
+    resolve_server_devices(config, engine::core::list_backend_devices(false));
+}
+
+ServerConfig load_server_config(const std::filesystem::path & path) {
+    return load_server_config(path, false);
+}
+
+ServerConfig load_server_config(const std::filesystem::path & path, bool parallel_jobs) {
+    auto config = parse_server_config(path, parallel_jobs);
+    resolve_server_devices(config);
+    return config;
+}
+
+ServerConfig load_server_config(
+    const std::filesystem::path & path,
+    bool parallel_jobs,
+    const std::vector<engine::core::BackendDeviceInfo> & devices) {
+    auto config = parse_server_config(path, parallel_jobs);
+    resolve_server_devices(config, devices);
+    return config;
+}
+
 void apply_default_session_options(const ServerConfig & config, ServerModelConfig & model) {
     const std::string prefix = model.family + ".";
     for (const auto & [key, value] : config.default_session_options) {
         if (key.rfind(prefix, 0) == 0) {
             model.session_options.emplace(key, value);
         }
+    }
+}
+
+void apply_model_cli_options(ServerConfig & config, int argc, char ** argv) {
+    std::unordered_map<std::string, std::string> fields, load, session, request;
+    const auto & request_aliases = minitts::cli::request_option_aliases();
+    const auto & session_aliases = minitts::cli::moe_session_option_aliases();
+    for (int i = 1; i < argc; ++i) {
+        const std::string flag = argv[i];
+        if (flag == "--text") {
+            throw std::runtime_error("--text is request input; send input to /v1/audio/speech or enter text in Studio");
+        }
+        const bool field = flag == "--model" || flag == "--model-id" || flag == "--family" ||
+                           flag == "--task" || flag == "--mode" || flag == "--voice-ref" || flag == "--voice-id";
+        const bool options = flag == "--load-option" || flag == "--session-option" || flag == "--request-option";
+        const auto request_alias = request_aliases.find(flag);
+        const auto session_alias = session_aliases.find(flag);
+        if (!field && !options && request_alias == request_aliases.end() && session_alias == session_aliases.end()) {
+            continue;
+        }
+        if (i + 1 == argc || std::string(argv[i + 1]).empty() ||
+            ((field || options) && std::string(argv[i + 1]).rfind("--", 0) == 0)) {
+            throw std::runtime_error(flag + " requires a value");
+        }
+        const std::string value = argv[++i];
+        if (field) {
+            fields[flag] = value;
+        } else if (options) {
+            const auto separator = value.find('=');
+            if (separator == std::string::npos || separator == 0 || separator + 1 == value.size()) {
+                throw std::runtime_error(flag + " requires key=value");
+            }
+            auto & target = flag == "--load-option" ? load : flag == "--session-option" ? session : request;
+            minitts::cli::set_option(target, value.substr(0, separator), value.substr(separator + 1));
+        } else if (request_alias != request_aliases.end()) {
+            minitts::cli::set_option(request, request_alias->second, value);
+        } else {
+            minitts::cli::set_option(session, session_alias->second, value);
+        }
+    }
+    if (fields.empty() && load.empty() && session.empty() && request.empty()) {
+        return;
+    }
+
+    const auto id = fields.find("--model-id");
+    if (config.models.empty()) {
+        if (fields.count("--model") == 0 || fields.count("--family") == 0) {
+            throw std::runtime_error("creating a server model requires --model and --family");
+        }
+        ServerModelConfig model;
+        model.id = id != fields.end() ? id->second : fields.at("--family");
+        model.lazy = config.lazy_load;
+        config.models.push_back(std::move(model));
+    }
+    auto selected = config.models.begin();
+    if (id != fields.end()) {
+        selected = std::find_if(config.models.begin(), config.models.end(), [&](const ServerModelConfig & model) {
+            return model.id == id->second;
+        });
+        if (selected == config.models.end()) {
+            throw std::runtime_error("unknown --model-id: " + id->second);
+        }
+    } else if (config.models.size() != 1) {
+        throw std::runtime_error("model overrides require --model-id when the config contains multiple models");
+    }
+    auto & model = *selected;
+    if (fields.count("--model")) model.path = std::filesystem::absolute(fields.at("--model"));
+    if (fields.count("--family")) model.family = fields.at("--family");
+    if (fields.count("--task")) model.task = fields.at("--task");
+    if (fields.count("--mode")) model.mode = fields.at("--mode");
+    for (const auto & [key, value] : load) model.load_options[key] = value;
+    for (const auto & [key, value] : session) model.session_options[key] = value;
+    for (const auto & [key, value] : request) model.default_request_options[key] = value;
+    apply_default_session_options(config, model);
+
+    const bool voice_source = fields.count("--voice-ref") || fields.count("--voice-id");
+    if (voice_source || request.count("reference_text") ||
+        (!request.empty() && (model.default_voice_preset || model.default_voice_preset_id))) {
+        auto preset = voice_source ? ServerModelConfig::VoicePreset{} : model.default_voice_preset_id
+            ? model.voice_presets.at(*model.default_voice_preset_id)
+            : model.default_voice_preset.value_or(ServerModelConfig::VoicePreset{});
+        if (fields.count("--voice-ref")) {
+            preset.voice_ref = std::filesystem::absolute(fields.at("--voice-ref"));
+        }
+        if (fields.count("--voice-id")) preset.voice_id = fields.at("--voice-id");
+        if (request.count("reference_text")) preset.reference_text = request.at("reference_text");
+        // CLI defaults supersede the configured default preset too. Explicit
+        // request voices still select the original, unmodified named presets.
+        for (const auto & [key, value] : request) {
+            (void) value;
+            preset.options.erase(key);
+        }
+        model.default_voice_preset = std::move(preset);
+        model.default_voice_preset_id.reset();
     }
 }
 

@@ -436,9 +436,10 @@ std::string ModelInstaller::start(
             std::lock_guard<std::mutex> lock(shared->mutex);
             auto & job = shared->jobs.at(package_id);
             job.state = job.cancel_requested ? "cancelled" : "failed";
+            const std::string detail = error.what() != nullptr ? std::string(error.what()) : std::string{};
             job.message = job.cancel_requested
                 ? "Download stopped; completed staging files were removed"
-                : error.what();
+                : (!detail.empty() ? detail : "Model installation failed");
             job.exit_code = -1;
             job.finished_at_ms = now_ms();
         }
@@ -562,6 +563,14 @@ std::string ModelInstaller::clean_partial(const std::string & package_id) {
     return "{\"id\":" + json_quote(package_id) +
         ",\"cleaned\":true,\"message\":" +
         json_quote(message.empty() ? "Partial download files cleaned" : message) + "}";
+}
+
+std::optional<engine::package_manager::PackageInfo> ModelInstaller::package_info(
+    const std::string & package_id) const {
+    if (!valid_package_id(package_id)) {
+        return std::nullopt;
+    }
+    return state_->native_manager->package_info(package_id);
 }
 
 std::string ModelInstaller::remove(const std::string & package_id) {

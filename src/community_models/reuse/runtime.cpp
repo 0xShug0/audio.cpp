@@ -114,6 +114,14 @@ public:
             auto * node = ggml_graph_node(graph_, i);
             if (node->op == GGML_OP_MUL_MAT) {
                 ggml_mul_mat_set_prec(node, GGML_PREC_F32);
+                // Mamba activations can exceed FP16 range; F32 accumulation alone
+                // does not prevent Metal's ordinary input narrowing from overflowing.
+                if (execution.backend_type() == core::BackendType::Metal &&
+                    node->src[0]->type == GGML_TYPE_F32 && node->src[1]->type == GGML_TYPE_F32) {
+                    ggml_mul_mat_set_lowering(node, GGML_MUL_MAT_LOWERING_METAL_F32_INPUTS);
+                }
+            } else if (execution.backend_type() == core::BackendType::Metal && node->op == GGML_OP_IM2COL) {
+                ggml_im2col_2d_set_lowering(node, GGML_IM2COL_2D_LOWERING_METAL_TILED);
             } else if (execution.backend_type() == core::BackendType::Cuda &&
                        node->op == GGML_OP_IM2COL && node->type == GGML_TYPE_F32 &&
                        node->src[0]->ne[0] == 3 && node->src[0]->ne[1] == 3 &&
@@ -196,8 +204,10 @@ private:
         // Spatial tiling bounds im2col memory without changing global normalization or Mamba context.
         const int64_t bytes_per_row = width * shape.dims[1] * shape.dims[2] * shape.dims[3] * sizeof(float);
         const bool cuda_f32 = ctx.backend_type == core::BackendType::Cuda && weight.type == GGML_TYPE_F32;
+        const bool metal_implicit = ctx.backend_type == core::BackendType::Metal && weight.type == GGML_TYPE_F32 &&
+            shape.dims[1] >= 64 && shape.dims[1] % 32 == 0 && shape.dims[0] > 8 && width > 8;
         const int64_t tile_bytes = (cuda_f32 ? 512LL : 128LL) * 1024 * 1024;
-        const int64_t tile = std::max<int64_t>(1, std::min<int64_t>(height, tile_bytes / bytes_per_row));
+        const int64_t tile = metal_implicit ? height : std::max<int64_t>(1, std::min<int64_t>(height, tile_bytes / bytes_per_row));
         if (pad_time) {
             input = modules::Pad2dModule({0, 0, pad_time, pad_time}).build(ctx,
                 core::wrap_tensor(input, TensorShape::from_dims({batch, input->ne[2], input->ne[1], input->ne[0]}))).tensor;
@@ -208,8 +218,10 @@ private:
             const int64_t input_rows = (rows - 1) * stride_time + receptive;
             const auto value = modules::SliceModule({2, start * stride_time, input_rows}).build(ctx,
                 core::wrap_tensor(input, TensorShape::from_dims({batch, input->ne[2], input->ne[1], input->ne[0]})));
-            tiles.push_back(modules::Conv2dModule({shape.dims[1], shape.dims[0], shape.dims[2], shape.dims[3],
-                stride_time, stride_frequency, 0, pad_frequency, dilation, 1, false})
+            auto config = modules::Conv2dConfig{shape.dims[1], shape.dims[0], shape.dims[2], shape.dims[3],
+                stride_time, stride_frequency, 0, pad_frequency, dilation, 1, false};
+            config.implicit_gemm = metal_implicit;
+            tiles.push_back(modules::Conv2dModule(config)
                 .build(ctx, value, {weight, std::nullopt}).tensor);
         }
         while (tiles.size() > 1) {
@@ -238,7 +250,9 @@ private:
         auto & ctx = *ctx_;
         const auto value = core::wrap_tensor(
             input, TensorShape::from_dims({input->ne[3], 64, input->ne[1], input->ne[0]}));
-        const auto x = modules::GroupNormModule({64, 64, 1e-5f, true, true}).build(ctx, value,
+        auto config = modules::GroupNormConfig{64, 64, 1e-5f, true, true};
+        config.metal_row_norm = ctx.backend_type == core::BackendType::Metal;
+        const auto x = modules::GroupNormModule(config).build(ctx, value,
             {weights_.at(prefix + ".1.weight"), weights_.at(prefix + ".1.bias")});
         return modules::PReluModule({1})
             .build(ctx, x, weights_.at(prefix + ".2.weight")).tensor;
@@ -310,21 +324,47 @@ private:
         }
         const auto projection = modules::SliceModule({2, 0, 256}).build(ctx, packed);
         auto * projected = modules::TransposeModule({{0, 2, 1, 3}, 3}).build(ctx, projection).tensor;
-        // Preserve the strided causal-padding/SSM-convolution fusion layout.
-        projected = ggml_pad_ext(ctx.ggml, projected, 3, 0, 0, 0, 0, 0, 0, 0);
-        projected = ggml_ssm_conv(ctx.ggml, projected, weights_.at(prefix + ".conv1d.weight").tensor);
-        if (ctx.backend_type == core::BackendType::Cuda) {
-            ggml_ssm_conv_set_fusion(projected, GGML_SSM_CONV_FUSION_CAUSAL_PAD);
-        }
+        // The explicit causal op consumes the strided projection directly; conv weights are F32.
+        const bool fused_mamba = ctx.backend_type == core::BackendType::Metal ||
+            ctx.backend_type == core::BackendType::Vulkan;
+        const bool compact_scan = fused_mamba &&
+            weights_.at(prefix + ".dt_proj.weight").tensor->type == GGML_TYPE_F32;
         const auto sequence_shape = TensorShape::from_dims({batch, length, 256});
-        const auto bias = core::wrap_tensor(weights_.at(prefix + ".conv1d.bias").tensor,
-            TensorShape::from_dims({1, 1, 256}));
-        const auto value = modules::SiluModule().build(ctx, modules::AddModule().build(ctx,
-            core::wrap_tensor(projected, sequence_shape),
-            modules::RepeatModule({sequence_shape}).build(ctx, bias)));
+        core::TensorValue value;
+        if (fused_mamba) {
+            projected = ggml_ssm_conv_causal_silu(ctx.ggml, projected,
+                weights_.at(prefix + ".conv1d.weight").tensor,
+                weights_.at(prefix + ".conv1d.bias").tensor);
+            value = core::wrap_tensor(projected, sequence_shape);
+        } else {
+            // Preserve the strided causal-padding/SSM-convolution fusion layout.
+            projected = ggml_pad_ext(ctx.ggml, projected, 3, 0, 0, 0, 0, 0, 0, 0);
+            projected = ggml_ssm_conv(ctx.ggml, projected, weights_.at(prefix + ".conv1d.weight").tensor);
+            if (ctx.backend_type == core::BackendType::Cuda) {
+                ggml_ssm_conv_set_fusion(projected, GGML_SSM_CONV_FUSION_CAUSAL_PAD);
+            }
+            const auto bias = core::wrap_tensor(weights_.at(prefix + ".conv1d.bias").tensor,
+                TensorShape::from_dims({1, 1, 256}));
+            value = modules::SiluModule().build(ctx, modules::AddModule().build(ctx,
+                core::wrap_tensor(projected, sequence_shape),
+                modules::RepeatModule({sequence_shape}).build(ctx, bias)));
+        }
         projected = value.tensor;
         auto * parameters = modules::LinearModule({256, 36, false, GGML_PREC_F32, false, precise_vulkan_projection}).build(ctx, value,
             {weights_.at(prefix + ".x_proj.weight"), std::nullopt}).tensor;
+        if (compact_scan) {
+            auto * scan = ggml_ssm_scan_mamba1(ctx.ggml, state,
+                core::reshape_tensor(ctx, value, TensorShape::from_dims({batch, length, 256, 1})).tensor,
+                parameters, weights_.at(prefix + ".A_log").tensor, ids,
+                weights_.at(prefix + ".dt_proj.weight").tensor,
+                weights_.at(prefix + ".dt_proj.bias").tensor,
+                weights_.at(prefix + ".D").tensor, gate);
+            auto * y = ggml_view_3d(ctx.ggml, scan, 256, length, batch,
+                256*sizeof(float), 256*length*sizeof(float), 0);
+            return modules::LinearModule({256, 64, false, GGML_PREC_F32, false, precise_vulkan_projection}).build(ctx,
+                core::wrap_tensor(y, sequence_shape),
+                {weights_.at(prefix + ".out_proj.weight"), std::nullopt}).tensor;
+        }
         const auto parameter_value = core::wrap_tensor(parameters, TensorShape::from_dims({batch, length, 36}));
         auto * dt = core::ensure_backend_addressable_layout(ctx,
             modules::SliceModule({2, 0, 4}).build(ctx, parameter_value)).tensor;
@@ -350,6 +390,8 @@ private:
             weights_.at(prefix + ".A_log").tensor, b, c, ids);
         if (ctx.backend_type == core::BackendType::Cuda) {
             ggml_ssm_scan_set_fusion(scan, GGML_SSM_SCAN_FUSION_GATE);
+        } else if (ctx.backend_type == core::BackendType::Metal) {
+            ggml_ssm_scan_set_lowering(scan, GGML_SSM_SCAN_LOWERING_METAL_REGISTER16);
         }
         auto * y = ggml_view_3d(ctx.ggml, scan, 256, length, batch,
             256 * sizeof(float), 256 * length * sizeof(float), 0);

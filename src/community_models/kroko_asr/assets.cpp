@@ -14,6 +14,7 @@ namespace {
 KrokoASRConfig parse_config(const assets::ResourceBundle & resources) {
     const auto root = resources.parse_json("config");
     KrokoASRConfig config;
+    config.streaming = json::optional_bool(root, "streaming", true);
     config.model_type = json::optional_string(root, "model_type", config.model_type);
     config.variant = json::optional_string(root, "variant", config.variant);
     config.sample_rate = json::optional_i64(root, "sample_rate", config.sample_rate);
@@ -43,14 +44,13 @@ void validate_config(const KrokoASRConfig & config) {
     if (config.model_type != "zipformer2") {
         throw std::runtime_error("Kroko ASR currently supports only Zipformer2 packages");
     }
-    if (config.sample_rate != 16000 || config.feature_dim != 80) {
-        throw std::runtime_error("Kroko ASR currently expects 16 kHz audio and 80-bin filterbanks");
+    if (config.sample_rate != 16000 || config.feature_dim != 80 || config.subsampling_factor != 4) {
+        throw std::runtime_error("Kroko ASR expects 16 kHz audio, 80-bin filterbanks and 4x subsampling");
     }
-    if (config.chunk_size <= config.chunk_shift ||
+    if (config.streaming && (config.chunk_size <= config.chunk_shift ||
         config.chunk_size != config.chunk_shift + 13 ||
         config.chunk_shift <= 0 ||
-        config.chunk_shift % 4 != 0 ||
-        config.subsampling_factor != 4) {
+        config.chunk_shift % 4 != 0)) {
         throw std::runtime_error("Kroko ASR streaming chunk metadata is invalid");
     }
     const size_t stacks = config.encoder_dims.size();

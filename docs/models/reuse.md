@@ -43,7 +43,7 @@ hf download nvidia/RE-USE \
   --revision 022e920d727347a64d6c21fbf0628f2a5f37ad78 \
   --local-dir models/RE-USE-original
 
-python tests/reuse/convert_reuse_gguf.py \
+python tools/gguf/reuse_convert.py \
   --source models/RE-USE-original \
   --output models/RE-USE-GGUF/reuse-f32.gguf \
   --audiocpp-gguf build/debug/bin/audiocpp_gguf \

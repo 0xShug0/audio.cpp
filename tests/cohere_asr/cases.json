@@ -1,73 +1,73 @@
 [
   {
-    "id": "demo-pnc",
-    "audio": "models/cohere-transcribe-03-2026/demo/voxpopuli_test_en_demo.wav",
+    "id": "librispeech-pnc",
+    "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
     "language": "en",
     "pnc": true
   },
   {
-    "id": "demo-no-pnc",
-    "audio": "models/cohere-transcribe-03-2026/demo/voxpopuli_test_en_demo.wav",
+    "id": "librispeech-no-pnc",
+    "audio": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
     "language": "en",
     "pnc": false
   },
   {
     "id": "held-out-pnc",
-    "audio": "resources/sample_16k.wav",
+    "audio": "assets/resources/sample_16k.wav",
     "language": "en",
     "pnc": true
   },
   {
     "id": "held-out-no-pnc",
-    "audio": "resources/sample_16k.wav",
+    "audio": "assets/resources/sample_16k.wav",
     "language": "en",
     "pnc": false
   },
   {
     "id": "long-pnc",
-    "audio": "build/logs/canary_asr/long-16k.wav",
+    "audio": "assets/resources/qwen3_tts_longform_asr_input.wav",
     "language": "en",
     "pnc": true
   },
   {
     "id": "long-no-pnc",
-    "audio": "build/logs/canary_asr/long-16k.wav",
+    "audio": "assets/resources/qwen3_tts_longform_asr_input.wav",
     "language": "en",
     "pnc": false
   },
   {
     "id": "de-pnc",
-    "audio": "build/logs/canary_asr/translation/de-16k.wav",
+    "audio": "reference/cohere_asr/inputs/de-16k.wav",
     "language": "de",
     "pnc": true
   },
   {
     "id": "de-no-pnc",
-    "audio": "build/logs/canary_asr/translation/de-16k.wav",
+    "audio": "reference/cohere_asr/inputs/de-16k.wav",
     "language": "de",
     "pnc": false
   },
   {
     "id": "fr-pnc",
-    "audio": "build/logs/canary_asr/translation/fr-16k.wav",
+    "audio": "reference/cohere_asr/inputs/fr-16k.wav",
     "language": "fr",
     "pnc": true
   },
   {
     "id": "fr-no-pnc",
-    "audio": "build/logs/canary_asr/translation/fr-16k.wav",
+    "audio": "reference/cohere_asr/inputs/fr-16k.wav",
     "language": "fr",
     "pnc": false
   },
   {
     "id": "es-pnc",
-    "audio": "build/logs/canary_asr/translation/es-16k.wav",
+    "audio": "reference/cohere_asr/inputs/es-16k.wav",
     "language": "es",
     "pnc": true
   },
   {
     "id": "es-no-pnc",
-    "audio": "build/logs/canary_asr/translation/es-16k.wav",
+    "audio": "reference/cohere_asr/inputs/es-16k.wav",
     "language": "es",
     "pnc": false
   }

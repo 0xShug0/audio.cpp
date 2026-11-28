@@ -1,5 +1,7 @@
 #include "engine/community_models/sortformer_diar/session.h"
 
+#include "engine/framework/debug/profiler.h"
+
 #include "engine/framework/core/backend.h"
 #include "engine/framework/runtime/options.h"
 #include "engine/framework/runtime/spec_backed_model.h"
@@ -272,6 +274,7 @@ std::vector<runtime::SpeakerTurn> SortformerV2Session::decode_turns(
 }
 
 runtime::TaskResult SortformerV2Session::run(const runtime::TaskRequest & request) {
+    const auto wall_start = std::chrono::steady_clock::now();
     require_prepared("Sortformer v2 run()");
     if (task_.mode != runtime::RunMode::Offline) throw std::runtime_error("Sortformer v2 run() requires offline mode");
     if (!request.audio_input.has_value()) throw std::runtime_error("Sortformer v2 run() requires audio_input");
@@ -283,11 +286,15 @@ runtime::TaskResult SortformerV2Session::run(const runtime::TaskRequest & reques
     const auto features = compute_sortformer_v2_features(
         *request.audio_input, *assets_, execution_context().config().threads);
     const int64_t valid_frames = valid_encoder_frames(features, *assets_);
-    if (valid_frames <= 0) return {};
+    if (valid_frames <= 0) {
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
+        return {};
+    }
     const auto probabilities = run_graph(features, 0, valid_frames, nullptr, nullptr);
     runtime::TaskResult result;
     result.speaker_turns = decode_turns(
         probabilities, valid_frames, decode_config(request.options), true);
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(wall_start));
     return result;
 }
 
@@ -302,6 +309,7 @@ runtime::StreamingPolicy SortformerV2Session::streaming_policy() const {
 }
 
 void SortformerV2Session::start_stream(const runtime::TaskRequest & request) {
+    stream_wall_start_ = std::chrono::steady_clock::now();
     require_prepared("Sortformer v2 start_stream()");
     if (task_.mode != runtime::RunMode::Streaming) throw std::runtime_error("Sortformer v2 start_stream() requires streaming mode");
     runtime::validate_spec_backed_request_options(request.options, *contract_, "Sortformer v2");
@@ -417,6 +425,7 @@ runtime::TaskResult SortformerV2Session::finalize() {
     auto result = finalize_stream_result();
     finalized_ = true;
     stream_started_ = false;
+    engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(stream_wall_start_));
     return result;
 }
 

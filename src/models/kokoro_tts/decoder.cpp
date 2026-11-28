@@ -330,7 +330,7 @@ modules::ConvTranspose1dWeights make_conv_transpose1d_weights(
     const KokoroWeights::WeightNormConvTranspose1dWeights & conv) {
     (void)ctx;
     modules::ConvTranspose1dWeights weights = {};
-    weights.weight = conv.groups == 1 ? conv.weight : conv.dense_weight;
+    weights.weight = conv.weight;
     if (conv.use_bias) {
         weights.bias = conv.bias;
     }
@@ -450,7 +450,8 @@ bool can_use_phase_shuffle_conv_transpose1d(const KokoroWeights::WeightNormConvT
 ggml_tensor * build_phase_shuffle_conv_transpose1d_bct_decoder(
     ggml_context * ctx,
     ggml_tensor * input,
-    const KokoroWeights::WeightNormConvTranspose1dWeights & conv) {
+    const KokoroWeights::WeightNormConvTranspose1dWeights & conv,
+    bool allow_cpu_fastpath) {
     if (!can_use_phase_shuffle_conv_transpose1d(conv)) {
         throw std::runtime_error("kokoro decoder phase-shuffle conv transpose shape is unsupported");
     }
@@ -458,7 +459,7 @@ ggml_tensor * build_phase_shuffle_conv_transpose1d_bct_decoder(
         throw std::runtime_error("kokoro decoder phase-shuffle conv was not prepared");
     }
 
-    ggml_tensor * phases = build_decoder_conv1d_bct(ctx, input, *conv.phase_shuffle_conv, false);
+    ggml_tensor * phases = build_decoder_conv1d_bct(ctx, input, *conv.phase_shuffle_conv, allow_cpu_fastpath);
     phases = ggml_reshape_4d(ctx, phases, phases->ne[0], conv.stride, conv.out_channels, 1);
     ggml_tensor * interleaved = ggml_cont(ctx, ggml_permute(ctx, phases, 1, 0, 2, 3));
     return ggml_reshape_3d(ctx, interleaved, input->ne[0] * conv.stride, conv.out_channels, 1);
@@ -955,6 +956,8 @@ struct GeneratorGraphSession {
     ggml_cgraph * graph = nullptr;
     ggml_backend_t backend = nullptr;
     ggml_gallocr_t gallocr = nullptr;
+    std::unique_ptr<ggml_backend, decltype(&ggml_backend_free)> blas{nullptr, ggml_backend_free};
+    std::unique_ptr<ggml_backend_sched, decltype(&ggml_backend_sched_free)> scheduler{nullptr, ggml_backend_sched_free};
 
     GeneratorGraphSession(
         const KokoroWeights::GeneratorWeights & weights_in,
@@ -984,6 +987,19 @@ struct GeneratorGraphSession {
 
         try {
             const bool allow_cpu_fastpath = !use_device_backend;
+            // All generator convolutions share conv_weight_type. Preserve the existing
+            // non-F32 convolution path instead of asking BLAS to dequantize it.
+            if (!use_device_backend && weights->conv_post.weight.type == GGML_TYPE_F32 &&
+                ggml_backend_reg_by_name("BLAS")) {
+                blas.reset(ggml_backend_init_by_name("BLAS", nullptr));
+                if (!blas) throw std::runtime_error("Kokoro generator BLAS initialization failed");
+                const auto reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(blas.get()));
+                const auto set_threads = reinterpret_cast<ggml_backend_set_n_threads_t>(
+                    ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_n_threads"));
+                if (!set_threads) throw std::runtime_error("Kokoro BLAS backend has no thread control");
+                set_threads(blas.get(), n_threads);
+            }
+            engine::debug::trace_log_scalar("kokoro.decoder.generator.blas_enabled", static_cast<bool>(blas));
 
             decoder_x_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, decoder_frame_capacity, 512, 1);
             conditioning_in = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, conditioning_frame_capacity, 22, 1);
@@ -1010,8 +1026,8 @@ struct GeneratorGraphSession {
                     false);
 
                 ggml_tensor * x = ggml_leaky_relu(ctx, current, 0.1f, false);
-                x = use_device_backend
-                    ? build_phase_shuffle_conv_transpose1d_bct_decoder(ctx, x, *stage.up)
+                x = (use_device_backend || blas)
+                    ? build_phase_shuffle_conv_transpose1d_bct_decoder(ctx, x, *stage.up, allow_cpu_fastpath)
                     : build_conv_transpose1d_bct_decoder(ctx, x, *stage.up);
                 if (stage.reflect_pad) {
                     x = reflect_pad_left_1_bct_decoder(ctx, x);
@@ -1043,19 +1059,32 @@ struct GeneratorGraphSession {
 
             core::set_backend_threads(backend, n_threads);
             const double alloc_ms = measure_ms([&]() {
-                gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
-                if (gallocr != nullptr) {
-                    if (!ggml_gallocr_alloc_graph(gallocr, graph)) {
+                if (blas) {
+                    ggml_backend_t backends[] = {blas.get(), backend};
+                    scheduler.reset(ggml_backend_sched_new(backends, nullptr, 2, ggml_graph_size(graph), false, false));
+                    if (!scheduler) throw std::runtime_error("Kokoro BLAS scheduler creation failed");
+                    if (!ggml_backend_sched_alloc_graph(scheduler.get(), graph))
+                        throw std::runtime_error("Kokoro generator scheduled allocation failed");
+                } else {
+                    gallocr = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
+                    if (gallocr != nullptr && !ggml_gallocr_alloc_graph(gallocr, graph)) {
                         ggml_gallocr_free(gallocr);
                         gallocr = nullptr;
                     }
                 }
             });
-            if (gallocr == nullptr) {
+            if (!scheduler && gallocr == nullptr) {
                 throw std::runtime_error(
                     std::string("failed to allocate Kokoro generator graph ") +
                     (use_device_backend ? "device" : "host") +
                     " tensors");
+            }
+            if (scheduler) {
+                int blas_nodes = 0;
+                for (int i = 0; i < ggml_graph_n_nodes(graph); ++i)
+                    blas_nodes += ggml_graph_node(graph, i)->op == GGML_OP_MUL_MAT &&
+                        ggml_backend_sched_get_tensor_backend(scheduler.get(), ggml_graph_node(graph, i)) == blas.get();
+                engine::debug::trace_log_scalar("kokoro.decoder.generator.blas_matmul_nodes", blas_nodes);
             }
             const double materialize_ms = measure_ms([&]() {
                 std::vector<float> decoder(static_cast<size_t>(512 * decoder_frame_capacity), 0.0f);
@@ -1069,6 +1098,7 @@ struct GeneratorGraphSession {
             engine::debug::timing_log_scalar("kokoro.graph.build.decoder_generator_alloc_ms", alloc_ms);
             engine::debug::timing_log_scalar("kokoro.graph.build.decoder_generator_materialize_ms", materialize_ms);
         } catch (...) {
+            scheduler.reset();
             if (gallocr) {
                 ggml_gallocr_free(gallocr);
             }
@@ -1081,6 +1111,7 @@ struct GeneratorGraphSession {
     }
 
     ~GeneratorGraphSession() {
+        scheduler.reset();
         if (gallocr) {
             ggml_gallocr_free(gallocr);
         }
@@ -1161,7 +1192,8 @@ struct GeneratorGraphSession {
         core::set_backend_threads(backend, n_threads);
         ggml_status status = GGML_STATUS_SUCCESS;
         const double compute_ms = measure_ms([&]() {
-            status = engine::core::compute_backend_graph(backend, graph);
+            status = scheduler ? ggml_backend_sched_graph_compute(scheduler.get(), graph)
+                               : engine::core::compute_backend_graph(backend, graph);
         });
         engine::debug::timing_log_scalar("kokoro.decoder.generator.graph.compute_ms", compute_ms);
         if (status != GGML_STATUS_SUCCESS) {

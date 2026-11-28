@@ -27,8 +27,8 @@
         {
           "id": "short_clone_en",
           "text": "Please leave the lamp beside the window.",
-          "voice_ref": "resources/a.wav",
-          "options": {"language": "en", "seed": 42}
+          "voice_ref": "assets/asr_validation/librispeech/librispeech_test_clean_6930-75918-0000.wav",
+          "options": {"reference_text": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS", "language": "en", "seed": 42}
         }
       ]
     }

@@ -67,7 +67,7 @@ Options parse(int argc, char ** argv) {
             options.backend.threads = std::stoi(value());
         } else if (argument == "--decoder-impl") {
             const auto impl = value();
-            if (impl != "host" && impl != "neon") throw std::invalid_argument("Unknown decoder implementation: " + impl);
+            if (impl != "native" && impl != "neon") throw std::invalid_argument("Unknown decoder implementation: " + impl);
             options.use_neon = impl == "neon";
         } else if (argument == "--tolerance") {
             options.tolerance = std::stod(value());
@@ -78,7 +78,7 @@ Options parse(int argc, char ** argv) {
     if (positional.empty() || positional.size() > 3) {
         throw std::invalid_argument(
             "Pass <GGUF> [16k-mono.wav] [expected transcript] [--full] "
-            "[--reference <dump-dir>] [--tolerance <fraction>] [--dump <dir>] (encoder tensors and decoder logits/tokens/transcript) [--backend cpu|metal] [--threads n] [--decoder-impl host|neon]");
+            "[--reference <dump-dir>] [--tolerance <fraction>] [--dump <dir>] (encoder tensors and decoder logits/tokens/transcript) [--backend cpu|metal] [--threads n] [--decoder-impl native|neon]");
     }
     options.gguf = positional[0];
     if (positional.size() > 1) options.wav = positional[1];

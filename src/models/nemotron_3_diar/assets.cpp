@@ -100,26 +100,24 @@ std::shared_ptr<ModelWeights> load_weights(
     const auto stacked = config.encoder.feature_size * config.encoder.subsampling_factor;
     result->pre_encode = modules::binding::linear_from_source(
         store, source, "encoder.pre_encode.proj", storage_type, hidden, stacked, false);
-    result->embed_norm = modules::binding::norm_from_source(store, source, "encoder.embed_norm", hidden);
-    result->layers.reserve(static_cast<size_t>(config.encoder.layers));
+    result->encoder.input_norm = modules::binding::norm_from_source(store, source, "encoder.embed_norm", hidden);
+    result->encoder.layers.reserve(static_cast<size_t>(config.encoder.layers));
     for (int64_t index = 0; index < config.encoder.layers; ++index) {
         const std::string prefix = "encoder.layers." + std::to_string(index);
-        EncoderLayerWeights layer;
+        modules::RopeTransformerEncoderLayerWeights layer;
         layer.norm1 = modules::binding::norm_from_source(store, source, prefix + ".norm1", hidden);
-        layer.attention.qkv_weight = store.load_tensor(
-            source, prefix + ".attn.w_qkv.weight", storage_type, {3 * hidden, hidden});
-        layer.attention.out_weight = store.load_tensor(
-            source, prefix + ".attn.out_proj.weight", storage_type, {hidden, hidden});
-        layer.attention.out_bias = store.load_f32_tensor(
-            source, prefix + ".attn.out_proj.bias", {hidden});
+        layer.qkv = modules::binding::linear_from_source(
+            store, source, prefix + ".attn.w_qkv", storage_type, 3 * hidden, hidden, false);
+        layer.attention_output = modules::binding::linear_from_source(
+            store, source, prefix + ".attn.out_proj", storage_type, hidden, hidden, true);
         layer.norm2 = modules::binding::norm_from_source(store, source, prefix + ".norm2", hidden);
         layer.ffn_in = modules::binding::linear_from_source(
             store, source, prefix + ".ffn.net.0", storage_type, intermediate, hidden, true);
         layer.ffn_out = modules::binding::linear_from_source(
             store, source, prefix + ".ffn.net.3", storage_type, hidden, intermediate, true);
-        result->layers.push_back(std::move(layer));
+        result->encoder.layers.push_back(std::move(layer));
     }
-    result->final_norm = modules::binding::norm_from_source(store, source, "encoder.final_norm", hidden);
+    result->encoder.final_norm = modules::binding::norm_from_source(store, source, "encoder.final_norm", hidden);
     result->encoder_projection = modules::binding::linear_from_source(
         store, source, "sortformer_modules.encoder_proj", storage_type,
         config.head.hidden_size, hidden, true);

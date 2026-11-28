@@ -807,9 +807,6 @@ struct HiggsQwen3DecodeGraph::Impl {
 
         timing_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(runtime->backend(), graph);
-        if (log_timing || engine::debug::timing_log_enabled()) {
-            ggml_backend_synchronize(runtime->backend());
-        }
         const double graph_compute_delta_ms = engine::debug::elapsed_ms(timing_start, Clock::now());
         graph_compute_ms += graph_compute_delta_ms;
         if (log_timing) {

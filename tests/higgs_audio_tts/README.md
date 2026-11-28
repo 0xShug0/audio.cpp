@@ -7,32 +7,10 @@ grouped FlashAttention, packed SwiGLU, direct KV updates, and the
 `ROPE -> VIEW -> SET_ROWS` fusion pattern.
 
 ```powershell
-cmake --build build/windows-cuda-release --config Release --target decoder_packed_projection_test higgs_audio_tts_warm_bench -j 8
+cmake --build build/windows-cuda-release --config Release --target decoder_packed_projection_test -j 8
 ctest --test-dir build/windows-cuda-release -C Release -R decoder_packed_projection_test --output-on-failure
 ```
 
-Run the fixed-seed, five-request CUDA benchmark and save every generated WAV:
-
-```powershell
-tests/higgs_audio_tts/run_cuda_performance.ps1 `
-  -Model ../models/higgs-audio-v3-tts-4b_Q8/higgs-audio-v3-tts-4b_Q8.gguf `
-  -Label candidate
-```
-
-Compare a candidate run with a prior result directory request by request:
-
-```powershell
-tests/higgs_audio_tts/run_cuda_performance.ps1 `
-  -Model ../models/higgs-audio-v3-tts-4b_Q8/higgs-audio-v3-tts-4b_Q8.gguf `
-  -Label candidate `
-  -Baseline tests/higgs_audio_tts/results/baseline
-```
-
-The comparison reports frame counts, wall time, RTF, speedup, waveform cosine,
-and 80-band log-mel cosine. Result WAVs, logs, and JSON reports are written below
-`tests/higgs_audio_tts/results/`, which is intentionally ignored by Git.
-The comparison helper requires Python 3 with NumPy.
-
-Add `-RequireSameFrames` when comparing paths that are expected to be
-deterministic and numerically identical. Sampled or mixed-precision paths still
-report their frame drift and similarity metrics without hiding the results.
+The removed five-request benchmark driver, comparison options and output
+conventions are preserved in the [pre-cleanup guide](https://github.com/0xShug0/audio.cpp/blob/checkpoint/before-tests-cleanup/tests/higgs_audio_tts/README.md).
+The framework unit test above remains independent of that timing workflow.

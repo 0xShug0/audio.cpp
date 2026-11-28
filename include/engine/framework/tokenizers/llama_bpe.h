@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -128,6 +129,12 @@ struct LlamaBpeTokenizerSpec {
     bool honor_ignore_merges = false;
     // Used instead of the files when set.
     std::optional<LlamaBpeGgufVocabulary> gguf_vocabulary;
+    // Optional model-owned splitter over raw UTF-8 fragments. Return pieces
+    // in the selected tokenizer's BPE representation, including its byte
+    // alphabet encoding when applicable. Added-token matching runs first.
+    // Empty preserves the selected pre_type.
+    // Shared tokenizer instances require a deterministic, thread-safe callback.
+    std::function<std::vector<std::string>(const std::string &)> pre_tokenize;
 };
 
 class LlamaBpeTokenizer final : public ITokenizer {
@@ -142,6 +149,7 @@ public:
     std::string decode(const std::vector<int32_t> & token_ids, bool skip_special_tokens = false) const;
 
     std::optional<int32_t> find_token_id(const std::string & token) const;
+    bool contains_token_id(int32_t token_id) const noexcept;
     bool is_special_token_id(int32_t token_id) const;
     bool is_control_token_id(int32_t token_id) const;
     std::optional<int32_t> configured_pad_token_id() const noexcept;

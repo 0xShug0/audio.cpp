@@ -2095,7 +2095,7 @@ def install_composite_snapshot(
             subprocess.run(
                 [
                     sys.executable,
-                    str(REPO_ROOT / "tools" / "community_models" / "convert_glm_tts.py"),
+                    str(REPO_ROOT / 'tools/gguf/glm_tts_weights_prepare.py'),
                     "--model-dir",
                     str(staged_package_root),
                     "--overwrite",

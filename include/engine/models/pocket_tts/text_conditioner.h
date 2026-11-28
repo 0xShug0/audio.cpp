@@ -37,6 +37,10 @@ public:
         const std::string & text,
         int64_t max_tokens) const;
 
+    // The text after the config's replace_characters step (the first step of the reference
+    // prepare_text_prompt), or `text` unchanged when the config has no table.
+    std::string apply_replace_characters(const PocketTTSAssets & manifest, const std::string & text) const;
+
 private:
     TextConditionerConfig config_;
 };

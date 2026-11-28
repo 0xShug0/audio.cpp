@@ -1,23 +1,88 @@
 #pragma once
 
-// LFM3-Audio generation: the text/audio/interleaved mode machine and the slot
-// loop that drives the backbone, the depth decoder and the samplers with it.
-
 #include "engine/community_models/lfm3_audio/assets.h"
-#include "engine/community_models/lfm3_audio/backbone.h"
-#include "engine/community_models/lfm3_audio/chat.h"
-#include "engine/community_models/lfm3_audio/depth.h"
-#include "engine/community_models/lfm3_audio/encoder.h"
+#include "engine/community_models/lfm3_audio/frontend.h"
 #include "engine/community_models/lfm3_audio/prompt.h"
-#include "engine/community_models/lfm3_audio/sampling.h"
-#include "engine/community_models/lfm3_audio/tokenizer.h"
-
+#include "engine/community_models/lfm3_audio/weights.h"
+#include "engine/framework/core/execution_context.h"
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <vector>
+#include "engine/community_models/lfm3_audio/depth.h"
+#include "engine/framework/sampling/hf_sampler.h"
+#include <array>
+#include <optional>
+#include <random>
 
 namespace engine::community_models::lfm3_audio {
+
+enum class Lfm3Output { Logits, Hidden };  // Logits = [vocab_size], Hidden = final-normed [2048]
+
+class Lfm3BackboneRuntime {
+public:
+    static constexpr int64_t kPrefillBlock = 256;
+
+    Lfm3BackboneRuntime(Lfm3BackboneWeights weights, const Lfm3BackboneConfig & config,
+                        int64_t codebooks, int64_t audio_vocab_size, core::ExecutionContext & execution,
+                        const Lfm3WeightOptions & options);
+    ~Lfm3BackboneRuntime();
+
+    // Resets state, ensures cache capacity L + max_new_steps rounded up to 256, fills <|audio|> rows with `audio` and
+    // <|audio_out|> rows with prompt.frames' embeddings in order, and returns the output for the last position.
+    std::vector<float> prefill(const Lfm3Prompt & prompt, int32_t audio_id, int32_t audio_out_id,
+                               const Lfm3AudioEmbeddings & audio, int64_t max_new_steps, Lfm3Output output);
+    std::vector<float> step_text(int32_t token, Lfm3Output output);
+    std::vector<float> step_frame(const std::vector<int32_t> & codes, Lfm3Output output);  // sum_k codebook_embedding[k*2017+c_k]
+    std::vector<float> logits(const std::vector<float> & hidden);  // tied head on a given hidden
+    // Input embeddings of audio frames, row-major [frames][hidden], summed exactly as prefill and step_frame sum them.
+    std::vector<float> embed_frames(const std::vector<std::vector<int32_t>> & frames);
+    [[nodiscard]] int64_t position() const noexcept;  // next position
+    [[nodiscard]] int64_t capacity() const noexcept;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+struct Lfm3AudioSampling {
+    std::optional<float> temperature = 0.4f;  // nullopt: unset (greedy unless top_k is set)
+    int64_t top_k = 0;                        // 0: unset
+    float repetition_penalty = 1.2f;          // 1: off
+    int64_t penalty_window = 64;              // frames of history per codebook
+};
+
+struct Lfm3TextSampling {
+    std::optional<float> temperature = 0.0f;  // nullopt: unset (greedy unless top_k is set)
+    int64_t top_k = 0;                        // 0: unset
+};
+
+class Lfm3AudioSampler {
+public:
+    Lfm3AudioSampler(const Lfm3AudioSampling & sampling, uint64_t seed);
+    Lfm3Codes next_order();  // Fisher-Yates with j = rng() % (i+1): portable, unlike std::shuffle
+    int32_t pick(int64_t codebook, std::vector<float> & logits);
+    void commit(const Lfm3Codes & frame);  // non-EOS frames only; keeps last penalty_window per codebook
+
+private:
+    Lfm3AudioSampling sampling_;
+    sampling::HfSamplingOptions options_;
+    std::mt19937 rng_;  // one stream for orders and draws (HF uses one global RNG)
+    sampling::HfSampler sampler_;
+    sampling::HfSamplerScratch scratch_;
+    std::array<std::vector<int32_t>, 12> history_;  // oldest first
+};
+
+class Lfm3TextSampler {
+public:
+    Lfm3TextSampler(const Lfm3TextSampling & sampling, uint64_t seed);  // own stream, seed mixed as Lfm2CodeSampler
+    int32_t pick(std::vector<float> & logits, const std::vector<int32_t> & suppress);
+
+private:
+    sampling::HfSamplingOptions options_;
+    std::mt19937 rng_;
+    sampling::HfSampler sampler_;
+    sampling::HfSamplerScratch scratch_;
+};
 
 enum class Lfm3SlotKind { Text, Audio };
 
@@ -66,7 +131,6 @@ struct Lfm3GenerationOptions {
     // At most this many tail frames are sampled after <|text_end|> in an interleaved block; the next audio slot then
     // emits the EOS frame (2016x12) unsampled and goes on as for a sampled EOS. 0 = no cap.
     int64_t max_audio_tail_frames = 0;      // S2S session default 375 (30 s)
-    std::vector<Lfm3Codes> maskgit_orders;  // test/debug override, consumed one per frame, then RNG
 };
 
 class Lfm3Generator {
@@ -75,8 +139,7 @@ public:
                   const Lfm3Tokenizer & tokenizer, const Lfm3GenerationConfig & config, const Lfm3DepthConfig & depth_config,
                   Lfm3Prompt prompt, const Lfm3AudioEmbeddings & audio, Lfm3GenerationOptions options);
     ~Lfm3Generator();
-    // The first call prefills; nullopt when finished or max_steps used. With LFM3_AUDIO_DUMP_DIR set it writes
-    // the steps, maskgit_orders and depth_logits_f{f}_p{p} dumps (the backbone writes the prefill ones).
+    // The first call prefills; nullopt when finished or max_steps used.
     std::optional<Lfm3Step> next();
     [[nodiscard]] bool ended() const noexcept;  // finished by the mode machine / stop rule, not by max_steps
     [[nodiscard]] const std::vector<Lfm3Step> & steps() const noexcept;  // all emitted, EOS frame included (history artifact)

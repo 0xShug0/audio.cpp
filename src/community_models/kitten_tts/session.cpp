@@ -1,4 +1,6 @@
 #include "engine/community_models/kitten_tts/session.h"
+#include "engine/framework/io/text.h"
+#include "engine/framework/audio/chunking.h"
 
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/debug/trace.h"
@@ -18,6 +20,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <cmath>
+#include <numeric>
 
 namespace engine::models::kitten_tts {
 
@@ -26,6 +30,27 @@ using engine::debug::measure_ms;
 constexpr int64_t kDefaultTextChunkSize = 400;
 constexpr const char *kFamily = "kitten_tts";
 constexpr const char *kModelName = "Kitten TTS";
+
+std::vector<std::string> supplied_phonemes(
+    const std::unordered_map<std::string, std::string> & options,
+    const std::unordered_map<std::string, std::vector<std::string>> & arrays) {
+    const auto it = arrays.find("phonemes");
+    const auto scalar = options.find("phonemes");
+    if (it != arrays.end() && scalar != options.end()) throw std::runtime_error("Kitten phonemes was supplied twice");
+    std::vector<std::string> chunks;
+    if (it != arrays.end()) chunks = it->second;
+    else if (scalar != options.end()) {
+        // CLI/server option maps transport JSON arrays as strings; the native
+        // C++/C API has typed option_arrays. Both represent the same contract.
+        const auto values = engine::io::json::parse(scalar->second);
+        for (const auto & value : values.as_array()) chunks.push_back(value.as_string());
+    } else return chunks;
+    if (chunks.empty()) throw std::runtime_error("Kitten phonemes must contain at least one chunk");
+    for (const auto & chunk : chunks) {
+        if (engine::io::trim_ascii_whitespace(chunk).empty()) throw std::runtime_error("Kitten phoneme chunks must not be empty");
+    }
+    return chunks;
+}
 
 std::filesystem::path session_path(const runtime::SessionOptions &options, const char *key) {
     const auto found = options.options.find(key);
@@ -42,10 +67,15 @@ std::optional<runtime::VoiceCondition> voice_with_request_options(
     const std::unordered_map<std::string, std::string> &options) {
     const auto rate = runtime::parse_positive_finite_float_option(options, {"speed"});
     const auto voice_id = runtime::find_option(options, {"voice_id"});
-    if (!rate.has_value() && !voice_id.has_value()) {
+    const auto language = runtime::find_option(options, {"language"});
+    if (!rate.has_value() && !voice_id.has_value() && !language.has_value()) {
         return voice;
     }
     auto resolved = voice.value_or(runtime::VoiceCondition{});
+    if (language && (!resolved.style || !resolved.style->language)) {
+        if (!resolved.style) resolved.style = runtime::StyleCondition{};
+        resolved.style->language = *language;
+    }
     if (voice_id.has_value() && (!resolved.speaker.has_value() || !resolved.speaker->cached_voice_id.has_value())) {
         if (!resolved.speaker.has_value()) resolved.speaker = runtime::VoiceReference{};
         resolved.speaker->cached_voice_id = *voice_id;
@@ -90,7 +120,7 @@ KittenTTSSession::KittenTTSSession(runtime::TaskSpec task, runtime::SessionOptio
         load_kitten_backend_weights(*assets_, execution_context().backend(), execution_context().backend_type(),
                                     matmul_weight_storage_type_, conv_weight_storage_type_, weight_context_bytes_);
     const auto graph_capacity_mode = runtime::resolve_graph_capacity_mode(
-        RuntimeSessionBase::options(), runtime::GraphCapacityMode::Fixed, {"kitten_tts.graph_capacity_mode"});
+        RuntimeSessionBase::options(), runtime::GraphCapacityMode::Grow, {"kitten_tts.graph_capacity_mode"});
     if (graph_capacity_mode == runtime::GraphCapacityMode::Unsupported) {
         throw std::runtime_error("Kitten TTS graph_capacity_mode=unsupported is not implemented");
     }
@@ -105,10 +135,7 @@ KittenTTSSession::KittenTTSSession(runtime::TaskSpec task, runtime::SessionOptio
     if (fixed_token_capacity_ > weights_->context_length) {
         throw std::runtime_error("Kitten fixed token capacity exceeds model context length");
     }
-    if (pre_tail_token_capacity_ == 0) {
-        pre_tail_token_capacity_ = fixed_token_capacity_;
-    }
-    if (pre_tail_token_capacity_ < fixed_token_capacity_) {
+    if (pre_tail_token_capacity_ > 0 && pre_tail_token_capacity_ < fixed_token_capacity_) {
         throw std::runtime_error("Kitten pre-tail token capacity must be at least max_input_tokens");
     }
     if (pre_tail_token_capacity_ > weights_->context_length) {
@@ -117,6 +144,18 @@ KittenTTSSession::KittenTTSSession(runtime::TaskSpec task, runtime::SessionOptio
 }
 
 KittenTTSSession::~KittenTTSSession() = default;
+
+const engine::audio::EspeakPhonemizer & KittenTTSSession::phonemizer_for(const std::string & language) {
+    if (assets_->route->variant == KittenVariant::Mini08 || language == "en") return *phonemizer_;
+    auto & entry = language_phonemizers_[language];
+    if (!entry) {
+        const auto espeak_voice = language == "pt" ? "pt-br" : language == "fr" ? "fr-fr" : language;
+        entry = std::make_unique<engine::audio::EspeakPhonemizer>(
+            session_path(options(), "kitten_tts.espeak_library_path"),
+            session_path(options(), "kitten_tts.espeak_data_path"), std::vector<std::string>{espeak_voice});
+    }
+    return *entry;
+}
 
 std::string KittenTTSSession::family() const { return kFamily; }
 
@@ -180,7 +219,7 @@ void KittenTTSSession::prepare_graph_capacity(int64_t capacity) {
     const bool use_device_backend = !execution_context().uses_host_graph_plan();
     ggml_backend_t backend = execution_context().backend();
     const int64_t plbert_fixed_token_capacity = capacity;
-    const int64_t predictor_pre_tail_capacity = pre_tail_token_capacity_;
+    const int64_t predictor_pre_tail_capacity = pre_tail_token_capacity_ > 0 ? pre_tail_token_capacity_ : capacity;
     prepared_predictor_.reset();
     prepared_session_capacity_ = 0;
     double build_ms = 0.0;
@@ -238,14 +277,19 @@ void KittenTTSSession::prepare(const runtime::SessionPreparationRequest &request
             engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
         const auto chunk_mode = engine::text::parse_text_chunk_mode_override(request.options)
                                     .value_or(engine::text::TextChunkMode::Default);
-        const auto text_chunks = engine::text::split_text_chunks(request.text->text, text_chunk_size, chunk_mode);
+        const auto phoneme_chunks = supplied_phonemes(request.options, request.option_arrays);
+        const auto text_chunks = !phoneme_chunks.empty() ? std::vector<std::string>(phoneme_chunks.size(), request.text->text) :
+            engine::text::split_text_chunks(request.text->text, text_chunk_size, chunk_mode);
+        size_t chunk_index = 0;
         for (const auto &chunk : text_chunks) {
+            const auto phonemes = phoneme_chunks.empty() ? std::nullopt : std::optional<std::string_view>(phoneme_chunks[chunk_index++]);
             runtime::SessionPreparationRequest chunk_request = request;
             chunk_request.text = runtime::Transcript{chunk, request.text->language};
             const auto frontend_state =
                 resolve_kitten_frontend_session_state(chunk_request.text, voice, *assets_);
-            request_size = std::max(
-                request_size, estimate_kitten_request_tokens(chunk_request, frontend_state, *assets_, *phonemizer_));
+            const auto input = build_kitten_synthesis_input(*chunk_request.text, frontend_state, *assets_,
+                phonemizer_for(frontend_state.language_code), phonemes);
+            request_size = std::max(request_size, static_cast<int64_t>(input.input_ids.size()));
         }
     }
     if (request_size > 0) {
@@ -272,7 +316,9 @@ runtime::TaskResult KittenTTSSession::run(const runtime::TaskRequest &request) {
         engine::text::parse_text_chunk_size_override(request.options).value_or(kDefaultTextChunkSize);
     const auto chunk_mode =
         engine::text::parse_text_chunk_mode_override(request.options).value_or(engine::text::TextChunkMode::Default);
-    const auto text_chunk_requests = runtime::chunk_text_request(request, text_chunk_size, chunk_mode);
+    const auto phoneme_chunks = supplied_phonemes(request.options, request.option_arrays);
+    const auto text_chunk_requests = !phoneme_chunks.empty() ? std::vector<runtime::TaskRequest>(phoneme_chunks.size(), request) :
+        runtime::chunk_text_request(request, text_chunk_size, chunk_mode);
     engine::debug::trace_log_scalar("kitten.text_chunk_size", text_chunk_size);
     engine::debug::trace_log_scalar("kitten.text_chunk_mode", engine::text::text_chunk_mode_name(chunk_mode));
     engine::debug::trace_log_scalar("kitten.text_chunk_count", static_cast<int64_t>(text_chunk_requests.size()));
@@ -281,17 +327,21 @@ runtime::TaskResult KittenTTSSession::run(const runtime::TaskRequest &request) {
     double predictor_ms = 0.0;
     double decoder_ms = 0.0;
     runtime::AudioBuffer merged_audio;
+    size_t chunk_index = 0;
     for (const auto &chunk_request : text_chunk_requests) {
+        const auto phonemes = phoneme_chunks.empty() ? std::nullopt : std::optional<std::string_view>(phoneme_chunks[chunk_index++]);
         const auto frontend_state =
             resolve_kitten_frontend_session_state(chunk_request.text_input, voice, *assets_);
-        const std::string cache_key = request_cache_key(*chunk_request.text_input, frontend_state);
+        const std::string cache_key = request_cache_key(*chunk_request.text_input, frontend_state) +
+            (phonemes ? "\nphonemes:" + std::string(*phonemes) : "");
         KittenSynthesisInput input;
         frontend_ms += measure_ms([&]() {
             if (!cache_key.empty() && cached_input_ && cache_key == cached_request_key_) {
                 input = *cached_input_;
                 return;
             }
-            input = build_kitten_synthesis_input(*chunk_request.text_input, frontend_state, *assets_, *phonemizer_);
+            input = build_kitten_synthesis_input(*chunk_request.text_input, frontend_state, *assets_,
+                phonemizer_for(frontend_state.language_code), phonemes);
             if (!cache_key.empty()) {
                 cached_request_key_ = cache_key;
                 cached_input_ = std::make_unique<KittenSynthesisInput>(input);
@@ -330,10 +380,31 @@ runtime::TaskResult KittenTTSSession::run(const runtime::TaskRequest &request) {
         }
         std::vector<float> audio;
         decoder_ms += measure_ms([&]() { audio = prepared_decoder_->decode(predictor, input.style); });
-        if (audio.size() <= 5000) {
-            throw std::runtime_error("Kitten decoder output is too short for reference tail trim");
+        if (assets_->route->variant == KittenVariant::Mini2) {
+            const int64_t duration = std::accumulate(predictor.durations.begin(), predictor.durations.end(), int64_t{0});
+            if (duration <= 0) throw std::runtime_error("Kitten predictor returned no duration frames");
+            const int64_t samples_per_frame = std::max<int64_t>(1, std::llround(static_cast<double>(audio.size()) / duration));
+            const int64_t lead = merged_audio.samples.empty() ? 0 : std::max<int64_t>(0, predictor.durations.front() - 1) * samples_per_frame;
+            const int64_t tail = std::max<int64_t>(0, predictor.durations.back() - 1) * samples_per_frame;
+            for (auto & sample : audio) sample = std::clamp(sample, -1.0f, 1.0f);
+            if (lead + tail + samples_per_frame < static_cast<int64_t>(audio.size())) {
+                audio = std::vector<float>(audio.begin() + lead, audio.end() - tail);
+            }
+            const size_t fade = std::min<size_t>(120, audio.size() / 8);
+            if (fade > 1) {
+                const auto window = engine::audio::make_linear_fade_window(static_cast<int64_t>(2 * fade), static_cast<int64_t>(fade));
+                for (size_t i = 0; i < fade; ++i) {
+                    audio[i] *= window[i];
+                    audio[audio.size() - fade + i] *= window[fade + i];
+                }
+            }
+            if (!merged_audio.samples.empty()) merged_audio.samples.insert(merged_audio.samples.end(), 3600, 0.0f);
+        } else {
+            if (audio.size() <= 5000) {
+                throw std::runtime_error("Kitten decoder output is too short for reference tail trim");
+            }
+            audio.resize(audio.size() - 5000);
         }
-        audio.resize(audio.size() - 5000);
         const auto inference_ended = std::chrono::steady_clock::now();
         inference_ms += std::chrono::duration<double, std::milli>(inference_ended - inference_started).count();
         runtime::append_audio_buffer(merged_audio, runtime::AudioBuffer{24000, 1, std::move(audio)});

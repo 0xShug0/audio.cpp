@@ -1,10 +1,10 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { onDestroy, onMount } from 'svelte';
-  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
+  import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Mic, Play, RefreshCw, SlidersHorizontal, Square, Trash2, User, Users, Video } from '@lucide/svelte';
   import { browserDecodeToWav, concatenateAudioBlobs } from '$lib/audio';
   import {
-    base64AudioUrl,
+    base64AudioBlob,
     availableVoices,
     browseDirectories,
     cleanPartialModelInstall,
@@ -18,6 +18,7 @@
     models,
     pathStatus,
     runTask,
+    taskStreamEvents,
     setModelsRoot,
     speech,
     stopModelInstall,
@@ -31,8 +32,11 @@
     type ModelPackageSize,
     type DirectoryBrowserResponse
   } from '$lib/api';
-  import { catalog, parameterCatalog, requirePackageLoadTarget, taskLabels, withPackageLoadTarget } from '$lib/catalog';
+  import { catalog, parameterCatalog, requirePackageLoadTarget, taskLabels, streamingFamilies, withPackageLoadTarget } from '$lib/catalog';
   import { createTranslator, resolveUiLanguage, uiLanguages } from '$lib/i18n';
+  import { StreamPlayback } from '$lib/media/stream_playback';
+  import { base64Bytes } from '$lib/media/pcm_wav';
+  import { sessionOptionsMatch } from '$lib/session_drift';
   import MediaPreview from '$lib/MediaPreview.svelte';
   import LoraControls from '$lib/LoraControls.svelte';
   import VoicePicker from '$lib/VoicePicker.svelte';
@@ -40,6 +44,7 @@
   import { UI_THEME_STORAGE_KEY, resolvedTheme, resolveUiTheme, uiThemes, type UiTheme } from '$lib/theme';
   import { modelStudioPanelFor, type GenericControlReplacements } from '$lib/models/panels';
   import AceStepPanel from '$lib/models/ace_step/AceStepPanel.svelte';
+  import { pickYue2WeightValue, resolveYue2ComponentChoices } from '$lib/models/yue2/weights';
   import type { PanelRunner } from '$lib/models/panel_runner';
   import { prepareRgb24Output } from '$lib/media/rgb24_video';
   import Arena from './Arena.svelte';
@@ -47,7 +52,18 @@
   import Configuration from './Configuration.svelte';
   import ModelLibrary from './ModelLibrary.svelte';
   import Library from './Library.svelte';
-  import { loadUiConfiguration, uiConfiguration, uiConfigurationError } from '$lib/configuration';
+  import { loadUiConfiguration, uiConfiguration, uiConfigurationError, updateUiConfiguration } from '$lib/configuration';
+  import {
+    autoSaveDirectory,
+    autoSaveFiles,
+    dataUrlToBlob,
+    ensureAutoSavePermissionOnUserGesture,
+    formatAutoSaveTimestamp,
+    loadAutoSaveDirectory,
+    requestAutoSaveDirectoryPermission,
+    sanitizeFilenameSegment,
+    type AutoSaveFile
+  } from '$lib/auto_save';
   import type {
     AudioOutput,
     CatalogEntry,
@@ -67,6 +83,8 @@
   let tab: 'studio' | 'arena' | 'models' | 'logs' | 'configuration' | 'library' | 'apps' = 'studio';
   let library: Library | null = null;
   let appsPage: Apps | null = null;
+  let modelSearch = '';
+  let modelTask = '';
   let appsOpened = false;
   $: if (tab === 'apps') appsOpened = true;
   let arenaComponent: { runArena: () => Promise<void> } | null = null;
@@ -80,6 +98,24 @@
   let loadingModel = false;
   let loraUploading = false;
   let running = false;
+  let streamOutput = false;
+  let autoplay = false;
+  let liveText = '';
+  let playbackWarning = '';
+  let autoSaveNotice = '';
+  let autoSaveWarning = '';
+  let playbackActive = false;
+  let streamedAudioPlayed = false;
+  let pendingLiveAudio: ArrayBuffer[] = [];
+  let liveAudioReady = false;
+  let livePlaybackStart: Promise<void> | null = null;
+  let playbackGeneration = 0;
+  const streamLoadedModels = new Set<string>();
+  const playback = new StreamPlayback();
+  playback.onchange = () => { playbackActive = playback.playing; };
+  $: canStreamOutput = !usesPanelRequest && streamingFamilies.has(selected?.family) &&
+    (!isConfiguredEntry(selected) || loadedModels.some(model => model.id === selectedId && model.mode === 'streaming'));
+  $: useStreamOutput = streamOutput && canStreamOutput;
   let rewritingCaption = false;
   let status = 'Ready';
   let warningStatus = '';
@@ -109,7 +145,7 @@
   let advancedValues: Record<string, unknown> = {};
   let paramSpecs: ParamSpec[] = [];
   let outputAudio: AudioOutput[] = [];
-  let outputArtifacts: Array<{ id: string; url: string; extension: string; mime: string }> = [];
+  let outputArtifacts: Array<{ id: string; url: string; extension: string; mime: string; blob?: Blob }> = [];
   let outputText = '';
   let outputJson = '';
   let outputSettings: { url: string; filename: string } | null = null;
@@ -173,8 +209,10 @@
   let packageSizes: Record<string, ModelPackageSize> = {};
   let packageSizeState: 'idle' | 'running' | 'complete' | 'failed' = 'idle';
   let packageSizePoll: number | null = null;
-  let packageSizeRefreshInFlight = false;
+  let packageSizeRefreshPromise: Promise<void> | null = null;
   let refreshedInstallFinishes: Record<string, number> = {};
+  let reportedInstallFailures: Record<string, number> = {};
+  let dismissedInstallFailures: Record<string, number> = {};
   let quickStartVoices: string[] = [];
   let configuredVoices: string[] = [];
   let quickStartVoice = '';
@@ -193,7 +231,7 @@
     demo_4_woman: 'demo_4_woman'
   };
   const exposeAllStudioPackageFamilies = new Set([
-    'ming3_tts', 'ming3_audio', 'latentsync', 'xtts_v2',
+    'lfm3_audio', 'ming3_tts', 'ming3_audio', 'latentsync', 'xtts_v2',
     'kugelaudio', 'crisperwhisper', 'index_echo', 'audio_flamingo', 'owsm', 'owsm_ctc', 'reuse', 'sidon', 'smart_turn',
     'maya1',
     'gigaam_asr',
@@ -289,21 +327,21 @@
     return translate(`param.${selected?.family}.${spec.name}.${field}`, {}, fallback);
   }
 
-  function localizedModelHint(translate = tr) {
-    const fallback = selected?.input_hint_en || selected?.input_hint || '';
-    return translate(`model.${selected?.family}.hint`, {}, fallback);
+  function localizedModelHint(entry: typeof selected, translate = tr) {
+    const fallback = entry?.input_hint_en || entry?.input_hint || '';
+    return translate(`model.${entry?.family}.hint`, {}, fallback);
   }
 
   // MiniMax-H3 accepts frame counts with the 17n+3 temporal alignment used by
   // its joint audio/video DiT. Keep the user-facing duration and expert frame
-  // control synchronized so duration_seconds actually changes output length.
+  // control synchronized so the duration setting actually changes output length.
   function miniMaxFramesForDuration(seconds: number) {
     const target = Math.max(1, Number.isFinite(seconds) ? seconds : 1) * 24;
     return Math.max(5, Math.round((target - 3) / 17) * 17 + 3);
   }
 
   function setDuration(value: number) {
-    const minimum = selected?.family === 'ace_step' ? -1 : 1;
+    const minimum = selected?.family === 'moss_soundeffect' ? 0.1 : selected?.family === 'ace_step' ? -1 : 1;
     duration = Math.max(minimum, Number.isFinite(value) ? value : minimum);
     if (selected?.family === 'minimax_h3') {
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration) };
@@ -321,10 +359,6 @@
       importedSessionOptions = { ...importedSessionOptions };
       delete importedSessionOptions[spec.session_option || `${selected.family}.lora`];
       if (spec.group === 'lora') delete importedSessionOptions[`${selected.family}.lora_scale`];
-    }
-    if ((spec.group === 'lora' || ['auk', 'yue2', 'liveavatar', 'fish_drama3', 'ace_step'].includes(selected?.family || '')) && spec.scope === 'session') {
-      isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
-        modelMatchesSelectedPackage(model, selected));
     }
     if (selected?.family === 'minimax_h3' && spec.name === 'num_frames') {
       const frames = Number(value);
@@ -364,7 +398,12 @@
     fish_drama3: 'Fish Audio Drama 3',
     kugelaudio: 'KugelAudio', crisperwhisper: 'CrisperWhisper', index_echo: 'Index-Echo S2TT',
     audio_flamingo: 'Audio Flamingo', owsm: 'OWSM', owsm_ctc: 'OWSM-CTC',
-    reuse: 'RE-USE', sidon: 'Sidon', smart_turn: 'Smart Turn',
+    reuse: 'RE-USE', realtime_reuse: 'Real-time RE-USE', voice_isolator: 'Inworld Voice Isolator',
+    haas_asr: 'Haas Japanese ASR', lfm_d1_omni: 'd1-Omni audio decisions',
+    nemotron_transcribe: 'Nemotron 3.5 Transcribe', phonon2_asr: 'Phonon-2 ASR',
+    voxmel_tts: 'VoxMel', tiny_voca: 'tiny-voca', soulx_singer: 'SoulX-Singer', rosvot: 'ROSVOT',
+    m5_tts: 'M5-TTS', pocket_tts_small: 'PocketTTS Small', underdog_bark3: 'Underdog Bark 3',
+    magenta_realtime_2: 'Magenta RealTime 2', soulx_flashhead: 'SoulX-FlashHead', sidon: 'Sidon', smart_turn: 'Smart Turn',
     gigaam_asr: 'GigaAM ASR',
     ced: 'CED',
     firered_vad: 'FireRed VAD',
@@ -399,6 +438,8 @@
     canary_asr: 0, cohere_asr: 256, moss_transcribe_diarize: 5120
   };
   const asrLanguages: Record<string, string[]> = {
+    tiny_voca: ['en'],
+    m5_tts: ['zh', 'yue', 'zh-Sichuan', 'en', 'de', 'fr', 'ja', 'ko'],
     canary_asr: ['en', 'de', 'es', 'fr'],
     cohere_asr: ['en', 'fr', 'de', 'es', 'it', 'pt', 'nl', 'pl', 'el', 'ar', 'ja', 'zh', 'vi', 'ko'],
     // Confucius4-R2T2 takes canonical language names (the engine normalizes
@@ -530,8 +571,24 @@
   $: workflowModels = activeCatalog
     .filter((entry) => workflowForEntry(entry) === activeWorkflow)
     .sort((left, right) => compareModelNames(left.display_name, right.display_name));
-  $: isLoaded = loadedModels.some((model) => model.id === selectedId && model.loaded &&
-    modelMatchesSelectedPackage(model, selected));
+  $: selectedResident = selectedId
+    ? loadedModels.find((model) => model.id === selectedId && model.loaded)
+    : undefined;
+  $: selectedSessionDrift = (() => {
+    void advancedValues;
+    void editedPackageOptions;
+    void importedSessionOptions;
+    void paramSpecs;
+    void packageSizes;
+    void selectedPackageIds;
+    void modelPath;
+    void directModelPath;
+    if (!selectedResident || !selected) return false;
+    if (settingsReloadRequired) return true;
+    return !modelMatchesSelectedPackage(selectedResident, selected);
+  })();
+  $: isLoaded = Boolean(selectedResident &&
+    (isConfiguredEntry(selected) || !selectedSessionDrift));
   $: modelStudioPanelConfig = modelStudioPanelFor(selected?.family, selected?.task);
   $: modelStudioPanel = modelStudioPanelConfig?.component;
   $: loraParamSpecs = paramSpecs.filter((spec) => spec.group === 'lora');
@@ -544,18 +601,15 @@
   $: isFireRedAudioEdit = selected?.id === 'firered-audio-semantic-edit' ||
     selected?.id === 'firered-audio-acoustic-edit';
   $: allowsAutoDuration = selected?.family === 'ace_step';
-  $: usesDurationSecOption =
-    selected?.family === 'controlfoley' ||
-    selected?.family === 'midashenglm_gen';
   $: supportsTextOnlyTts = (
-    selected?.family === 'breeze_tts' ||
+    selected?.family === 'm5_tts' || selected?.family === 'voxmel_tts' || selected?.family === 'breeze_tts' ||
     selected?.family === 'chatterbox_turbo' || selected?.family === 'maya1' || selected?.family === 'kugelaudio' || selected?.family === 'voxtral_tts' ||
     (selected?.family === 'lfm2_audio' && !selected?.builtin_voices?.length)
   ) && selected?.task === 'tts';
   $: needsSource = ['asr', 'vc', 'svc', 's2s', 'sep', 'vad', 'diar', 'align', 'midi', 'turn', 'wake', 'cls'].includes(selected?.task) ||
-    isFireRedAudioEdit || selected?.family === 'liveavatar' || selected?.family === 'latentsync' ||
-    (selected?.family === 'auk' && selected?.task === 'gen');
-  $: acceptsSource = needsSource || (selected?.task === 'gen' && !replacesGenericControls.genSource);
+    isFireRedAudioEdit || selected?.family === 'liveavatar' || selected?.family === 'latentsync' || selected?.family === 'soulx_flashhead' ||
+    (['auk', 'mulacover'].includes(selected?.family) && selected?.task === 'gen');
+  $: acceptsSource = needsSource || (selected?.task === 'gen' && selected.family !== 'moss_soundeffect' && !replacesGenericControls.genSource);
   $: acceptsVideo = selected?.request_options?.includes('video') === true;
   $: needsVoice = (['clon', 'vc', 'svc'].includes(selected?.task) && selected?.family !== 'rvc') ||
     (selected?.task === 's2s' && selected?.family === 'personaplex') ||
@@ -570,7 +624,7 @@
   $: lyricsRequired = requiresRequestOption(selected, 'lyrics');
   $: referenceTextRequired = (requiresRequestOption(selected, 'reference_text') &&
     !(allowsQuickStartVoice && quickStartVoice)) ||
-    (Boolean(voiceFile) && isQwenBase);
+    (Boolean(voiceFile) && isQwenBase) || (['m5_tts', 'voxmel_tts'].includes(selected?.family) && selected?.task === 'clon');
   // A model with built-in voices also lists the server's voices (presets), but
   // not the embedded demo wavs, which such a model cannot clone.
   $: quickStartVoices = usesBuiltInVoiceSelector
@@ -593,7 +647,7 @@
   // from another model is not sent.
   $: usesFixedChatPrompt = ['lfm2_audio', 'lfm3_audio'].includes(selected?.family) && selected?.task === 's2s';
   $: showsText = ['tts', 'clon', 'gen', 's2s', 'align', 'vdes'].includes(selected?.task) &&
-    !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected?.family) &&
+    !['apollo', 'universr', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon'].includes(selected?.family) &&
     !usesFixedChatPrompt && !replacesGenericControls.text;
   $: supportsLiveAsr = selected?.task === 'asr' &&
     ['voxtral_realtime', 'nemotron_asr', 'higgs_audio_stt', 'sense_asr', 'vibevoice_asr_streaming', 'confucius4_r2t2'].includes(selected?.family);
@@ -672,19 +726,17 @@
       ...(entry.id === selectedId ? importedSessionOptions : {}), ...sessionParams };
   }
 
-  function packageSessionOptionsMatch(entry: CatalogEntry, choice: InstallPackageChoice, model: LoadedModel) {
-    choice = withPackageLoadTarget(choice, packageSizes[choice.id]);
-    const expected = mergedSessionOptions(entry, choice);
-    const keys = Array.from(new Set((entry.id === selectedId && directModelPath ? [] : entry.install_packages || [])
-      .flatMap((candidate) => Object.keys(packageSizes[candidate.id]?.load_target?.session_options || {}))));
-    if (entry.id === selectedId) {
-      for (const spec of paramSpecs.filter((candidate) => candidate.scope === 'session')) {
-        keys.push(spec.session_option || spec.name);
-      }
-    }
-    if (!keys.length) return true;
-    const actual = model.session_options || {};
-    return keys.every((key) => actual[key] === expected[key]);
+  function packageSessionOptionsMatch(
+    entry: CatalogEntry,
+    choice: InstallPackageChoice | undefined,
+    model: LoadedModel
+  ) {
+    const resolvedChoice = choice ? withPackageLoadTarget(choice, packageSizes[choice.id]) : undefined;
+    const expected = mergedSessionOptions(entry, resolvedChoice);
+    const packageKeys = (entry.id === selectedId && directModelPath ? [] : entry.install_packages || [])
+      .flatMap((candidate) => Object.keys(packageSizes[candidate.id]?.load_target?.session_options || {}));
+    const specs = entry.id === selectedId ? paramSpecs : [];
+    return sessionOptionsMatch(model.session_options, expected, specs, packageKeys);
   }
 
   function modelMatchesPackage(entry: CatalogEntry, model: LoadedModel, choice: InstallPackageChoice) {
@@ -696,7 +748,6 @@
   function modelMatchesSelectedPackage(model: LoadedModel, entry: CatalogEntry | undefined) {
     if (!entry) return catalogPathMatches(modelPath, model.path);
     const choice = selectedPackageChoice(entry);
-    if (!choice) return catalogPathMatches(modelPath, model.path);
     return catalogPathMatches(modelPath, model.path) &&
       packageSessionOptionsMatch(entry, choice, model);
   }
@@ -851,14 +902,23 @@
   }
 
   function installProgressLabel(job: ModelInstallJob) {
+    if (job.state === 'failed') {
+      return job.downloaded_bytes > 0 && job.total_bytes > 0
+        ? `Download failed · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`
+        : 'Download failed';
+    }
+    if (job.state === 'cancelled') {
+      return job.downloaded_bytes > 0 && job.total_bytes > 0
+        ? `Download stopped · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`
+        : 'Download stopped';
+    }
+    if (job.state === 'cleaned') return 'Partial files cleaned';
+    if (job.state === 'complete') return '100% · complete';
     const percent = installPercent(job);
     if (job.total_bytes > 0) {
       return `${percent}% · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}`;
     }
     if (job.downloaded_bytes > 0) return `${formatBytes(job.downloaded_bytes)} downloaded`;
-    if (job.state === 'failed') return 'Download failed';
-    if (job.state === 'cleaned') return 'Partial files cleaned';
-    if (job.state === 'complete') return '100% · complete';
     return job.state === 'queued' ? '0% · queued' : 'Connecting and checking package files…';
   }
 
@@ -950,36 +1010,43 @@
     return value === 'Ready' ? translate('status.ready') : value;
   }
 
-  async function refreshPackageSizes() {
-    if (!server?.ui_management || packageSizeRefreshInFlight) return;
-    packageSizeRefreshInFlight = true;
-    try {
-      const response = await modelPackageSizes();
-      packageSizeState = response.state;
-      if (response.data.length) {
-        packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
-        if (response.state === 'complete') reconcileSelectedPackageChoices(packageSizes);
-        if (selectedId && !directModelPath && !isConfiguredEntry(selected) && selected.install_packages?.length) {
-          modelPath = selectedModelPath(selected);
-          syncPackageSessionControls();
+  async function refreshPackageSizes(): Promise<void> {
+    if (!server?.ui_management) return;
+    if (packageSizeRefreshPromise) return packageSizeRefreshPromise;
+    packageSizeRefreshPromise = (async () => {
+      try {
+        const response = await modelPackageSizes();
+        packageSizeState = response.state;
+        if (response.data.length) {
+          packageSizes = Object.fromEntries(response.data.map((size) => [size.id, size]));
+          if (response.state === 'running' || response.state === 'complete') {
+            reconcileSelectedPackageChoices(packageSizes);
+          }
+          if (selectedId && !directModelPath && !isConfiguredEntry(selected) && selected.install_packages?.length) {
+            modelPath = selectedModelPath(selected);
+            syncPackageSessionControls();
+          }
         }
+        const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
+        if (inventoryPending && packageSizePoll === null) {
+          packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
+        } else if (!inventoryPending && packageSizePoll !== null) {
+          window.clearInterval(packageSizePoll);
+          packageSizePoll = null;
+        }
+      } catch (error) {
+        packageSizeState = 'failed';
+        log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
+      } finally {
+        packageSizeRefreshPromise = null;
       }
-      const inventoryPending = response.state === 'idle' || response.state === 'running' || response.data.length === 0;
-      if (inventoryPending && packageSizePoll === null) {
-        packageSizePoll = window.setInterval(refreshPackageSizes, 1000);
-      } else if (!inventoryPending && packageSizePoll !== null) {
-        window.clearInterval(packageSizePoll);
-        packageSizePoll = null;
-      }
-    } catch (error) {
-      packageSizeState = 'failed';
-      log(`Package sizes unavailable: ${error instanceof Error ? error.message : error}`);
-    } finally {
-      packageSizeRefreshInFlight = false;
-    }
+    })();
+    return packageSizeRefreshPromise;
   }
 
   function openModelsPage() {
+    modelSearch = '';
+    modelTask = '';
     if (tab === 'library' && !library?.canClose()) return;
     if (tab === 'apps' && !appsPage?.canClose()) return;
     if (!server?.ui_management) {
@@ -1000,6 +1067,10 @@
     if (entry.id === selectedId) {
       directModelPath = false;
       modelPath = selectedModelPath(entry);
+      if (entry.family === 'yue2') {
+        importedSessionOptions = { ...(selectedPackageChoice(entry)?.session_options || {}) };
+        editedPackageOptions = new Set();
+      }
       syncPackageSessionControls();
     }
   }
@@ -1134,12 +1205,12 @@
     try {
       const root = await setModelsRoot(useDefault ? '' : modelsFolderInput.trim());
       acceptModelsRoot(root);
-      if (root.is_default) localStorage.removeItem('audiocpp.ui.modelsFolder');
-      else localStorage.setItem('audiocpp.ui.modelsFolder', root.models_root);
       installJobs = {};
       packageSizes = {};
       packageSizeState = 'idle';
       refreshedInstallFinishes = {};
+      reportedInstallFailures = {};
+      dismissedInstallFailures = {};
       if (installPoll !== null) {
         window.clearInterval(installPoll);
         installPoll = null;
@@ -1185,38 +1256,90 @@
     folderBrowserOpen = false;
   }
 
+  function syncYue2DownloadedWeights() {
+    if (selected?.family !== 'yue2') return;
+    const uiManaged = Boolean(server?.ui_management && !isConfiguredEntry(selected) && !directModelPath);
+    if (!uiManaged) return;
+    const resident = loadedModels.find((model) => model.id === selectedId && model.loaded);
+    const installPackages = selected.install_packages || [];
+    const packageOptions = selectedPackageChoice(selected)?.session_options || {};
+    let changed = false;
+    let editedChanged = false;
+    const next = { ...advancedValues };
+    const nextEdited = new Set(editedPackageOptions);
+    for (const spec of paramSpecs) {
+      if (spec.name !== 'main_gguf' && spec.name !== 'vae_gguf') continue;
+      const key = spec.session_option || spec.name;
+      const state = resolveYue2ComponentChoices(spec, installPackages, packageSizes, {
+        uiManaged,
+        residentValue: resident?.session_options?.[key]
+      });
+      if (!state.filtered) continue;
+      const current = String(next[spec.name] ?? '');
+      const valid = pickYue2WeightValue(current, spec, state.choices);
+      if (valid !== current) {
+        next[spec.name] = valid;
+        changed = true;
+      }
+      const packageValue = importedSessionOptions[key] ?? packageOptions[key];
+      if (packageValue !== undefined && !state.choices.includes(packageValue) && !nextEdited.has(key)) {
+        nextEdited.add(key);
+        editedChanged = true;
+      }
+    }
+    if (changed) advancedValues = next;
+    if (editedChanged) editedPackageOptions = nextEdited;
+  }
+
   function syncPackageSessionControls() {
     if (directModelPath) return;
     const options = selectedPackageChoice(selected)?.session_options || {};
-    if (!Object.keys(options).length) return;
-    const next = { ...advancedValues };
-    for (const spec of paramSpecs.filter(spec => spec.scope === 'session')) {
-      const key = spec.session_option || spec.name;
-      if (options[key] === undefined || editedPackageOptions.has(key)) continue;
-      const value = importedSessionOptions[key] ?? options[key];
-      next[spec.name] = spec.type === 'bool' ? value === 'true'
-        : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
+    if (Object.keys(options).length) {
+      const next = { ...advancedValues };
+      for (const spec of paramSpecs.filter(spec => spec.scope === 'session')) {
+        const key = spec.session_option || spec.name;
+        if (options[key] === undefined || editedPackageOptions.has(key)) continue;
+        const value = importedSessionOptions[key] ?? options[key];
+        next[spec.name] = spec.type === 'bool' ? value === 'true'
+          : ['number', 'slider'].includes(spec.type) ? Number(value) : value;
+      }
+      advancedValues = next;
     }
-    advancedValues = next;
+    syncYue2DownloadedWeights();
   }
 
-  function resetParams() {
-    importedSessionOptions = {};
+  function resetParams(packageChoice?: InstallPackageChoice) {
+    const sessionOptions = selected?.family === 'yue2'
+      ? (packageChoice
+          ? withPackageLoadTarget(packageChoice, packageSizes[packageChoice.id]).session_options
+          : loadedModels.find(model => model.loaded && model.id === selectedId &&
+              catalogPathMatches(model.path, modelPath))?.session_options) || {}
+      : loadedModels.find(model => model.id === selectedId)?.session_options || {};
+    importedSessionOptions = selected?.family === 'yue2' ? { ...sessionOptions } : {};
     importedLoadOptions = {};
     editedPackageOptions = new Set();
     settingsReloadRequired = false;
     const byId = parameterCatalog[selected?.id] || parameterCatalog[selected?.family] || [];
-    const hidesDurationSec = selected?.family === 'controlfoley' || selected?.family === 'midashenglm_gen';
+    const replacements = modelStudioPanelFor(selected?.family, selected?.task)?.replacesGenericControls as GenericControlReplacements | undefined;
+    const hidesDurationSec = selected?.task === 'gen' && !replacements?.duration;
     paramSpecs = byId.filter((spec) =>
       !(['vibevoice', 'moss_ttsd'].includes(selected?.family) && spec.name === 'voice_samples') &&
       !(hidesDurationSec && spec.name === 'duration_sec'));
     advancedValues = Object.fromEntries(byId.map((spec) => [spec.name, spec.default ?? '']));
     syncPackageSessionControls();
-    const sessionOptions = loadedModels.find((model) => model.id === selectedId)?.session_options || {};
-    for (const spec of paramSpecs.filter((spec) => spec.group === 'lora')) {
+    for (const spec of paramSpecs.filter((spec) => spec.scope === 'session')) {
       const value = sessionOptions[spec.session_option || spec.name];
-      if (value !== undefined) advancedValues[spec.name] = value;
+      if (value === undefined) continue;
+      if (spec.type === 'bool') {
+        if (value === 'true' || value === 'false') advancedValues[spec.name] = value === 'true';
+      } else if (['number', 'slider'].includes(spec.type)) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) advancedValues[spec.name] = parsed;
+      } else {
+        advancedValues[spec.name] = value;
+      }
     }
+    syncYue2DownloadedWeights();
     if (selected?.family === 'ace_step' && isConfiguredEntry(selected)) {
       const configured = loadedModels.find((model) => model.id === selectedId)?.session_options;
       advancedValues = { ...advancedValues,
@@ -1224,14 +1347,17 @@
         lora_scale: Number(configured?.['ace_step.lora_scale'] ?? 1) };
     }
     if (selected?.family in asrTokenDefaults) asrMaxTokens = asrTokenDefaults[selected.family];
-    if (selected?.family === 'confucius4_r2t2') language = 'Auto';
+    if (['haas_asr', 'phonon2_asr', 'underdog_bark3', 'lfm_d1_omni', 'realtime_reuse'].includes(selected?.family)) language = '';
+    else if (selected?.family === 'nemotron_transcribe') language = 'auto';
+    else if (selected?.family === 'confucius4_r2t2') language = 'Auto';
     else if (['owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'smart_turn', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected?.family)) language = '';
     else if (selected?.family in asrLanguages) language = 'en';
+    else language = '';
     if (selected?.family === 'minimax_h3') {
       duration = 15;
       advancedValues = { ...advancedValues, num_frames: miniMaxFramesForDuration(duration), dit_acceleration: 'none' };
     } else if (selected?.task === 'gen') {
-      duration = 30;
+      duration = ['magenta_realtime_2', 'moss_soundeffect'].includes(selected.family) ? 10 : 30;
     }
     if (selected?.family === 'yue2') {
       if (isConfiguredEntry(selected)) {
@@ -1247,7 +1373,7 @@
       text = '';
       lyrics = '';
       ensureYue2DefaultLyrics();
-    } else if (['liveavatar', 'moss_ttsd', 'sam_audio'].includes(selected?.family)) {
+    } else if (['liveavatar', 'moss_ttsd', 'sam_audio', 'moss_soundeffect', 'mulacover', 'mossformer2'].includes(selected?.family)) {
       text = selected.default_text || '';
     } else if (selected?.family === 'ming3_audio' && selected.task === 's2s') {
       text = '';
@@ -1317,7 +1443,7 @@
     }
   }
 
-  function chooseModel(id: string) {
+  function chooseModel(id: string, packageChoice?: InstallPackageChoice) {
     historyError = '';
     if (!id) {
       clearModelSelection();
@@ -1336,7 +1462,7 @@
     modelPath = selectedModelPath(next);
     chunkBudget = defaultChunkBudget(next.family);
     localStorage.setItem('audiocpp.ui.model', id);
-    resetParams();
+    resetParams(packageChoice);
     status = tr('status.ready');
     inspectPath();
     refreshConfiguredVoices();
@@ -1442,6 +1568,23 @@
     }
   }
 
+  async function reloadForSettings() {
+    if (loadingModel || running || modelPanelUploading || !selectedId || isConfiguredEntry(selected)) return;
+    loadingModel = true;
+    try {
+      if (selectedResident) {
+        await unloadModel(selectedId);
+        await refresh();
+      }
+      await doLoad();
+      settingsReloadRequired = false;
+    } catch {
+      // doLoad already populates status, errorStatus, and logs.
+    } finally {
+      loadingModel = false;
+    }
+  }
+
   async function toggleStudioPackage(choice: InstallPackageChoice) {
     if (loadingModel || !packageIsAvailable(selected, choice)) return;
     if (packageIsResident(selected, choice)) {
@@ -1467,7 +1610,7 @@
 
   async function stagedPath(file: File | null): Promise<string | undefined> {
     if (!file) return undefined;
-    const targetSampleRate = selected.task === 'sep' || selected.family === 'apollo'
+    const targetSampleRate = selected.family === 'rosvot' ? 24000 : selected.task === 'sep' || selected.family === 'apollo'
       ? 44100
       : ['asr', 'vad', 'diar', 'align', 'midi', 'wake', 'cls'].includes(selected.task) ? 16000 : undefined;
     const wav = await browserDecodeToWav(file, targetSampleRate);
@@ -1547,6 +1690,8 @@
     outputSettings = null;
     selectedGenerationId = null;
     outputModelId = '';
+    autoSaveNotice = '';
+    autoSaveWarning = '';
   }
 
   function releaseGeneration(entry: GenerationHistoryEntry) {
@@ -2016,19 +2161,146 @@
       ensureLoaded: (mode) => ensurePanelLoaded(modelId, mode)
     });
     clearOutput();
-    if (outcome.audio) outputAudio = [{ id: 'reply', url: URL.createObjectURL(outcome.audio) }];
+    if (outcome.audio) outputAudio = [{ id: 'reply', url: URL.createObjectURL(outcome.audio), blob: outcome.audio }];
     outputText = outcome.text;
     outputJson = outcome.json;
     outputArtifacts = outcome.artifacts || [];
     outputModelId = modelId;
+    await autoSaveGeneration({
+      modelId,
+      audio: outputAudio,
+      artifacts: outputArtifacts
+    });
     warningStatus = '';
     errorStatus = '';
     status = tr('status.completeIn', { seconds: ((performance.now() - started) / 1000).toFixed(2) });
     log(status);
   }
 
+  function setAutoSaveEnabled(enabled: boolean) {
+    try {
+      updateUiConfiguration({ autoSave: enabled });
+    } catch (error) {
+      uiConfigurationError.set(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function autoSaveGeneration(params: {
+    modelId: string;
+    audio: AudioOutput[];
+    artifacts: Array<{ id: string; url: string; extension: string; mime: string; blob?: Blob }>;
+    settingsJson?: string;
+  }) {
+    autoSaveNotice = '';
+    autoSaveWarning = '';
+    if (!$uiConfiguration.autoSave) return;
+    if (!params.audio.length && !params.artifacts.length) return;
+    try {
+      const stem = `${sanitizeFilenameSegment(params.modelId, 'output')}-${formatAutoSaveTimestamp()}`;
+      const files: AutoSaveFile[] = [];
+      for (const item of params.audio) {
+        const blob = item.blob ?? dataUrlToBlob(item.url, 'audio/wav');
+        if (!blob) throw new Error(`Audio output "${item.id}" is unavailable for auto-save.`);
+        files.push({
+          filename: `${stem}-${sanitizeFilenameSegment(item.id, 'audio')}.wav`,
+          blob
+        });
+      }
+      for (const artifact of params.artifacts) {
+        const blob = artifact.blob ?? dataUrlToBlob(artifact.url, artifact.mime);
+        if (!blob) throw new Error(`Artifact "${artifact.id}" is unavailable for auto-save.`);
+        files.push({
+          filename: `${stem}-${sanitizeFilenameSegment(artifact.id, 'artifact')}.${sanitizeFilenameSegment(artifact.extension, 'bin')}`,
+          blob
+        });
+      }
+      if ($uiConfiguration.autoSaveSettings && params.settingsJson) {
+        files.push({
+          filename: `${stem}.settings.json`,
+          blob: new Blob([params.settingsJson], { type: 'application/json' })
+        });
+      }
+      const saved = await autoSaveFiles(files);
+      if (saved.warning) {
+        autoSaveWarning = saved.warning;
+        log(`Auto-save warning: ${saved.warning}`);
+      }
+      if (saved.savedFiles.length) {
+        const formatCount = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
+        if (saved.method === 'partial' && saved.folderName) {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.directoryFiles.length)} to ${saved.folderName} and ${formatCount(saved.downloadedFiles.length)} to Downloads`;
+        } else if (saved.method === 'directory' && saved.folderName) {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.savedFiles.length)} to ${saved.folderName}`;
+        } else {
+          autoSaveNotice = `Auto-saved ${formatCount(saved.savedFiles.length)} to Downloads`;
+        }
+        log(`${autoSaveNotice}: ${saved.savedFiles.join(', ')}`);
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      autoSaveWarning = `Auto-save failed: ${reason}`;
+      log(autoSaveWarning);
+    }
+  }
+
+  function playLiveAudio() {
+    const generation = playbackGeneration;
+    const pending = pendingLiveAudio;
+    pendingLiveAudio = [];
+    livePlaybackStart = (async () => {
+      try {
+        await playback.begin();
+        for (const audio of pending) {
+          if (generation !== playbackGeneration) return;
+          await playback.push(audio);
+          if (generation !== playbackGeneration) return;
+          streamedAudioPlayed = true;
+        }
+      } catch (error) {
+        if (generation !== playbackGeneration) return;
+        playback.stop();
+        playbackWarning = error instanceof Error ? error.message : String(error);
+      }
+    })();
+  }
+
+  async function streamedResult(body: Record<string, unknown>, signal: AbortSignal,
+    play: boolean): Promise<Record<string, unknown>> {
+    let result: Record<string, unknown> = {};
+    for await (const message of taskStreamEvents(body, signal)) {
+      if (message.type === 'task.stream.done') {
+        result = message.result;
+        continue;
+      }
+      const event = message.event;
+      const snapshot = event.partial_text_snapshot as { text?: string } | undefined;
+      const delta = event.partial_text as { text?: string } | undefined;
+      if (typeof snapshot?.text === 'string') liveText = snapshot.text;
+      else if (typeof delta?.text === 'string') liveText += delta.text;
+      const named = event.named_audio_outputs as Array<{ audio?: string }> | undefined;
+      const audio = typeof event.audio === 'string' ? event.audio : named?.[0]?.audio;
+      if (!playbackWarning && typeof audio === 'string') {
+        if (!play && !livePlaybackStart) {
+          pendingLiveAudio.push(base64Bytes(audio).buffer);
+          liveAudioReady = true;
+          continue;
+        }
+        try {
+          await livePlaybackStart;
+          await playback.push(base64Bytes(audio).buffer);
+          streamedAudioPlayed = true;
+        }
+        catch (error) {
+          playback.stop();
+          playbackWarning = error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+    return result;
+  }
+
   async function run() {
-    if (running || rewritingCaption || modelPanelUploading || restoringHistory) return;
+    if (running || loadingModel || rewritingCaption || modelPanelUploading || restoringHistory) return;
     if (!selectedId) {
       status = 'Choose an installed model before running a request.';
       warningStatus = status;
@@ -2041,6 +2313,26 @@
       errorStatus = '';
       return;
     }
+    const streaming = useStreamOutput;
+    const autoPlayOutput = !usesPanelRequest && selected.task !== 'asr' && autoplay;
+    ++playbackGeneration;
+    pendingLiveAudio = [];
+    liveAudioReady = false;
+    livePlaybackStart = null;
+    streamedAudioPlayed = false;
+    liveText = '';
+    playbackWarning = '';
+    autoSaveNotice = '';
+    autoSaveWarning = '';
+    playback.stop();
+    // Resume synchronously from the Generate gesture, before uploads/loading.
+    if (autoPlayOutput) {
+      try { void playback.begin().catch(error => { playbackWarning = String(error); }); }
+      catch (error) { playbackWarning = String(error); }
+    }
+    if (!usesPanelRequest && $uiConfiguration.autoSave && $autoSaveDirectory.permission === 'prompt') {
+      await ensureAutoSavePermissionOnUserGesture();
+    }
     running = true;
     aborter = new AbortController();
     const started = performance.now();
@@ -2049,6 +2341,7 @@
       generationElapsedSeconds = (performance.now() - started) / 1000;
     }, 250);
     let nextAudio: AudioOutput[] = [];
+    let nextPlaybackAudio: Blob | string | undefined;
     let nextArtifacts: typeof outputArtifacts = [];
     let nextText = '';
     let nextJson = '';
@@ -2081,7 +2374,13 @@
           throw new StatusWarning('LiveAvatar requires a reference image.');
         }
       }
-      await ensureLoaded();
+      if (streaming) {
+        await ensurePanelLoaded(selectedId, 'streaming');
+        if (!isConfiguredEntry(selected)) streamLoadedModels.add(selectedId);
+      } else if (streamLoadedModels.has(selectedId)) {
+        await ensurePanelLoaded(selectedId, selected.mode);
+        streamLoadedModels.delete(selectedId);
+      } else await ensureLoaded();
       const resident = loadedModels.find((model) => model.id === selected.id);
       const submittedSettings = {
         schema_version: 1,
@@ -2126,12 +2425,22 @@
         ? await stagedPath(voiceFile) : undefined;
 
       if (['tts', 'clon', 'vdes'].includes(selected.task)) {
+        let streamingVoiceRef = voiceRef;
+        const voiceName = quickStartVoice || selected.default_voice;
+        // Generic task streaming accepts voice_id/reference audio, rather than
+        // the speech route's named voice-library lookup. Resolve library audio
+        // through the existing preview/upload APIs once for this request.
+        if (streaming && !streamingVoiceRef && voiceName && !selected.builtin_voices?.includes(voiceName)) {
+          const response = await fetch(voicePreviewUrl(demoVoiceSources[voiceName] || voiceName), { signal: aborter.signal });
+          if (!response.ok) throw new Error('This voice cannot be streamed through the task API. Select a built-in voice or supply reference audio.');
+          streamingVoiceRef = await uploadWav(await response.blob(), aborter.signal);
+        }
         if (!text.trim()) throw new StatusWarning('Enter text to generate.');
         const effectiveChunkBudget = Math.max(40, chunkBudget);
         if (selected.family === 'voxcpm2') options.text_chunk_size = effectiveChunkBudget;
-        // Ming anchors subsequent chunks to the first voice inside one request.
-        if (selected.family === 'ming3_tts' && longText) options.text_chunk_size = effectiveChunkBudget;
-        const chunks = longText && selected.task !== 'vdes' && !['moss_ttsd', 'ming3_tts'].includes(selected.family)
+        // Keep model-owned voice conditioning across chunks inside one request.
+        if (['ming3_tts', 'zonos2', 'zonos3', 'm5_tts', 'voxmel_tts', 'tiny_voca'].includes(selected.family) && longText) options.text_chunk_size = effectiveChunkBudget;
+        const chunks = longText && selected.task !== 'vdes' && !['moss_ttsd', 'ming3_tts', 'zonos2', 'zonos3', 'm5_tts', 'voxmel_tts', 'tiny_voca'].includes(selected.family)
           ? splitTtsChunks(text, effectiveChunkBudget)
           : [text];
         const audioChunks: Blob[] = [];
@@ -2158,18 +2467,38 @@
             if (selected.family === 'ming3_tts') body.instruct = instructions;
             else body.instructions = instructions;
           }
-          submittedRequests.push({ endpoint: '/v1/audio/speech', body: JSON.parse(JSON.stringify(body)) });
-          const result = await speech(body, aborter.signal);
-          audioChunks.push(result.blob);
-          timings.push({
-            chunk: index + 1,
-            characters: chunks[index].length,
-            wall_ms: result.wallMs,
-            rtf: result.rtf
-          });
+          if (streaming) {
+            const { model, input, voice, instructions, reference_text, ...request } = body;
+            request.text = input;
+            request.options = { ...options,
+              ...(typeof instructions === 'string' ? { instruction: instructions } : {}),
+              ...(typeof reference_text === 'string' ? { reference_text } : {}) };
+            if (streamingVoiceRef) request.voice_ref = streamingVoiceRef;
+            else if (voice) request.voice_id = voice;
+            const streamBody = { model, request };
+            submittedRequests.push({ endpoint: '/v1/tasks/stream', body: JSON.parse(JSON.stringify(streamBody)) });
+            const result = await streamedResult(streamBody, aborter.signal, autoPlayOutput);
+            const named = result.named_audio_outputs as Array<{ audio?: string }> | undefined;
+            const finalAudio = typeof result.audio === 'string' ? result.audio
+              : named?.length === 1 ? named[0].audio : undefined;
+            if (typeof finalAudio !== 'string') throw new Error('The streaming response contains no final audio.');
+            audioChunks.push(new Blob([base64Bytes(finalAudio)], { type: 'audio/wav' }));
+            timings.push({ chunk: index + 1, characters: chunks[index].length, timing: result.timing });
+          } else {
+            submittedRequests.push({ endpoint: '/v1/audio/speech', body: JSON.parse(JSON.stringify(body)) });
+            const result = await speech(body, aborter.signal);
+            audioChunks.push(result.blob);
+            timings.push({
+              chunk: index + 1,
+              characters: chunks[index].length,
+              wall_ms: result.wallMs,
+              rtf: result.rtf
+            });
+          }
         }
         const merged = await concatenateAudioBlobs(audioChunks);
-        nextAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged) }];
+        nextPlaybackAudio = merged;
+        nextAudio = [{ id: chunks.length > 1 ? 'merged' : 'output', url: URL.createObjectURL(merged), blob: merged }];
         nextJson = JSON.stringify({
           seed: resolvedSeed,
           chunks: chunks.length,
@@ -2188,35 +2517,38 @@
           text: context,
           options
         };
-        const detail = ['owsm', 'crisperwhisper'].includes(selected.family) && options.return_timestamps === true;
+        const detail = ['owsm', 'crisperwhisper', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'nemotron_transcribe'].includes(selected.family) &&
+          (options.return_timestamps === true || options.diarization === true);
+        const streamBody = { model: selected.id, request: { text: context, audio, language, options } };
         submittedRequests.push({
-          endpoint: detail ? '/v1/audio/transcriptions/details' : '/v1/audio/transcriptions',
-          body: JSON.parse(JSON.stringify(body))
+          endpoint: streaming ? '/v1/tasks/stream' : detail ? '/v1/audio/transcriptions/details' : '/v1/audio/transcriptions',
+          body: JSON.parse(JSON.stringify(streaming ? streamBody : body))
         });
-        const result = await transcription(body, aborter.signal, detail);
+        const result = streaming
+          ? await streamedResult(streamBody, aborter.signal, autoPlayOutput)
+          : await transcription(body, aborter.signal, detail);
         nextText = String(result.text || '');
         nextJson = JSON.stringify(result, null, 2);
       } else {
         if (needsSource && !audio) throw new StatusWarning('Choose a source audio file.');
         const request: Record<string, unknown> = { options };
-        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !usesFixedChatPrompt && !['apollo', 'universr', 'reuse', 'sidon'].includes(selected.family)) request.text = text;
-        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'sidon'].includes(selected.family)) request.language = language;
+        if (['gen', 's2s', 'align'].includes(selected.task) && text.trim() && !usesYue2Request && !usesFixedChatPrompt && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon', 'mossformer2'].includes(selected.family)) request.text = text;
+        if (['gen', 's2s', 'align'].includes(selected.task) && language.trim() && !usesYue2Request && !['apollo', 'universr', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon'].includes(selected.family)) request.language = language;
         if (selected.task === 'gen') {
           if (usesYue2Request) {
             request.lyrics = lyrics.trim();
           } else {
             const resolvedText = requestText();
             if (resolvedText) request.text = resolvedText;
-            if (lyrics.trim()) request.lyrics = lyrics;
+            if (lyrics.trim() && selected.family !== 'moss_soundeffect') request.lyrics = lyrics;
             if (!isFireRedAudioEdit && selected.family !== 'auk') {
-              if (usesDurationSecOption) options.duration_sec = duration;
-              else request.duration_seconds = duration;
+              options.duration_sec = duration;
             }
           }
           request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         } else if (selected.task === 's2s') {
-          if (!['apollo', 'reuse', 'sidon'].includes(selected.family)) request.seed = resolvedSeed;
+          if (!['apollo', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon', 'mossformer2'].includes(selected.family)) request.seed = resolvedSeed;
           if (supportsMaxTokens(selected)) request.max_tokens = maxTokens;
         }
         if (audio) request.audio = audio;
@@ -2225,21 +2557,29 @@
           request.reference_text = referenceText;
         }
         const body = { model: selected.id, request };
-        submittedRequests.push({ endpoint: '/v1/tasks/run', body: JSON.parse(JSON.stringify(body)) });
-        const result = await runTask(body, aborter.signal);
+        submittedRequests.push({ endpoint: streaming ? '/v1/tasks/stream' : '/v1/tasks/run', body: JSON.parse(JSON.stringify(body)) });
+        const result = streaming ? await streamedResult(body, aborter.signal, autoPlayOutput) : await runTask(body, aborter.signal);
         nextText = typeof result.text === 'string' ? result.text : '';
         nextJson = JSON.stringify(result, (key, value) =>
           (key === 'audio' || key === 'payload') && typeof value === 'string'
             ? `<base64 data: ${value.length} chars>` : value, 2);
         if (typeof result.audio === 'string') {
-          nextAudio = [{ id: 'output', url: base64AudioUrl(result.audio) }];
+          nextPlaybackAudio = result.audio;
+          const blob = base64AudioBlob(result.audio);
+          nextAudio = [{ id: 'output', url: URL.createObjectURL(blob), blob }];
         }
         if (Array.isArray(result.named_audio_outputs)) {
           for (const output of nextAudio) URL.revokeObjectURL(output.url);
           nextAudio = result.named_audio_outputs
             .filter((entry): entry is { id: string; audio: string } =>
               typeof entry?.id === 'string' && typeof entry?.audio === 'string')
-            .map((entry) => ({ id: entry.id, url: base64AudioUrl(entry.audio) }));
+            .map((entry) => {
+              const blob = base64AudioBlob(entry.audio);
+              return { id: entry.id, url: URL.createObjectURL(blob), blob };
+            });
+          const primary = result.named_audio_outputs.find((entry) =>
+            typeof entry?.id === 'string' && typeof entry?.audio === 'string');
+          nextPlaybackAudio = primary?.audio;
         }
         if (Array.isArray(result.artifacts)) {
           if (selected.family === 'liveavatar') {
@@ -2251,12 +2591,16 @@
             nextArtifacts = result.artifacts
               .filter((entry): entry is { id: string; payload: string; meta?: Record<string, string> } =>
                 typeof entry?.id === 'string' && typeof entry?.payload === 'string')
-              .map((entry) => ({
-              id: entry.id,
-              extension: entry.meta?.extension || (entry.meta?.format === 'midi' ? 'mid' : 'bin'),
-              mime: entry.meta?.mime || 'application/octet-stream',
-              url: `data:${entry.meta?.mime || 'application/octet-stream'};base64,${entry.payload}`
-            }));
+              .map((entry) => {
+                const mime = entry.meta?.mime || 'application/octet-stream';
+                return {
+                  id: entry.id,
+                  extension: entry.meta?.extension || (entry.meta?.format === 'midi' ? 'mid' : 'bin'),
+                  mime,
+                  url: `data:${mime};base64,${entry.payload}`,
+                  blob: new Blob([base64Bytes(entry.payload)], { type: mime })
+                };
+              });
           }
         }
       }
@@ -2292,12 +2636,28 @@
       }
       historyError = '';
       outputCommitted = true;
+      await autoSaveGeneration({
+        modelId: outputModelId,
+        audio: nextAudio,
+        artifacts: nextArtifacts,
+        settingsJson
+      });
+      if (autoPlayOutput && !streamedAudioPlayed && !playbackWarning && nextPlaybackAudio) {
+        try {
+          await playback.push(typeof nextPlaybackAudio === 'string'
+            ? base64Bytes(nextPlaybackAudio).buffer : await nextPlaybackAudio.arrayBuffer());
+        } catch (error) {
+          if ((error as Error)?.name === 'AbortError') throw error;
+          playbackWarning = error instanceof Error ? error.message : String(error);
+        }
+      }
       const elapsed = ((performance.now() - started) / 1000).toFixed(2);
       warningStatus = '';
       errorStatus = '';
       status = tr('status.completeIn', { seconds: elapsed });
       log(status);
     } catch (error) {
+      playback.stop();
       if ((error as Error)?.name === 'AbortError') {
         status = 'Cancelled.';
         warningStatus = '';
@@ -2315,6 +2675,8 @@
         for (const output of nextAudio) URL.revokeObjectURL(output.url);
         for (const artifact of nextArtifacts) URL.revokeObjectURL(artifact.url);
       }
+      pendingLiveAudio = [];
+      liveAudioReady = false;
       running = false;
       aborter = null;
       // A configured entry loads with its first request; show it as resident.
@@ -2323,6 +2685,8 @@
   }
 
   function cancel() {
+    ++playbackGeneration;
+    playback.stop();
     aborter?.abort();
   }
 
@@ -2350,19 +2714,40 @@
     if (!server?.ui_management) return;
     try {
       const jobs = await modelInstallJobs();
-      const incoming = Object.fromEntries(jobs.map((job) => {
+      const incoming: Record<string, ModelInstallJob> = {};
+      for (const job of jobs) {
+        const failureKey = job.finished_at_ms || -1;
+        if (job.state === 'failed' && dismissedInstallFailures[job.id] === failureKey) {
+          continue;
+        }
         const local = installJobs[job.id];
-        return [job.id, {
+        incoming[job.id] = {
           ...job,
           total_bytes: job.total_bytes || local?.total_bytes || 0
-        }];
-      }));
+        };
+      }
       // Preserve a just-created local job if a status request races the server's
       // worker registration. This keeps the progress row visible from the click
       // until the authoritative job appears in a later poll.
       installJobs = { ...installJobs, ...incoming };
+      for (const job of Object.values(incoming)) {
+        if (job.state !== 'failed') continue;
+        const failureKey = job.finished_at_ms || -1;
+        if (reportedInstallFailures[job.id] === failureKey) continue;
+        reportedInstallFailures = { ...reportedInstallFailures, [job.id]: failureKey };
+        const owner = catalog.find((entry) => entry.install_packages?.some((choice) => choice.id === job.id));
+        const choice = owner?.install_packages?.find((candidate) => candidate.id === job.id);
+        const targetLabel = owner
+          ? `${owner.display_name}${choice ? ` ${choice.label}` : ''}`
+          : job.id;
+        const reason = job.message?.trim() || 'Model installation failed';
+        status = `${targetLabel} download failed: ${reason}`;
+        errorStatus = status;
+        log(status);
+      }
       let refreshInventory = false;
       for (const entry of catalog) {
+        let newlyCompleted = false;
         const completedJobs = entryInstallJobs(entry, installJobs).filter((job) => job.state === 'complete');
         for (const job of completedJobs) {
           const known = packageSizes[job.id];
@@ -2375,10 +2760,10 @@
               [job.id]: job.finished_at_ms
             };
             refreshInventory = true;
+            newlyCompleted = true;
           }
         }
-        const complete = completedJobs.length > 0;
-        if (complete && entry.id === selectedId) await inspectPath();
+        if (newlyCompleted && entry.id === selectedId) await inspectPath();
       }
       if (refreshInventory) {
         packageSizeState = 'idle';
@@ -2409,7 +2794,13 @@
     );
     if (!confirmed) return;
     rememberPackageChoice(entry, choice);
+    if (choice.id in dismissedInstallFailures) {
+      const nextDismissed = { ...dismissedInstallFailures };
+      delete nextDismissed[choice.id];
+      dismissedInstallFailures = nextDismissed;
+    }
     status = `Starting ${choice.label} installation for ${entry.display_name}...`;
+    errorStatus = '';
     const expectedBytes = packageSizes[choice.id]?.size_bytes || 0;
     installJobs = {
       ...installJobs,
@@ -2435,26 +2826,42 @@
         [job.id]: { ...job, total_bytes: job.total_bytes || expectedBytes }
       };
       await refreshInstallJobs();
-      status = `${entry.display_name} ${choice.label} installation is running in the background.`;
-      log(status);
+      if (installJobs[choice.id]?.state !== 'failed') {
+        status = `${entry.display_name} ${choice.label} installation is running in the background.`;
+        log(status);
+      }
     } catch (error) {
-      status = error instanceof Error ? error.message : String(error);
+      const reason = error instanceof Error ? error.message : String(error);
+      const finishedAt = Date.now();
+      status = `${entry.display_name} ${choice.label} download failed: ${reason}`;
+      errorStatus = status;
+      reportedInstallFailures = { ...reportedInstallFailures, [choice.id]: finishedAt };
       installJobs = {
         ...installJobs,
         [choice.id]: {
           id: choice.id,
           state: 'failed',
-          message: status,
+          message: reason,
           exit_code: -1,
           downloaded_bytes: 0,
-          total_bytes: 0,
+          total_bytes: expectedBytes,
           progress_percent: -1,
           started_at_ms: 0,
-          finished_at_ms: Date.now()
+          finished_at_ms: finishedAt
         }
       };
-      log(`Installer failed to start: ${status}`);
+      log(status);
     }
+  }
+
+  function dismissInstallFailure(job: ModelInstallJob) {
+    dismissedInstallFailures = {
+      ...dismissedInstallFailures,
+      [job.id]: job.finished_at_ms || -1
+    };
+    const nextJobs = { ...installJobs };
+    delete nextJobs[job.id];
+    installJobs = nextJobs;
   }
 
 
@@ -2576,6 +2983,7 @@
       uiConfigurationError.set(error instanceof Error ? error.message : String(error));
       log(`Configuration could not be loaded: ${error instanceof Error ? error.message : error}`);
     }
+    void loadAutoSaveDirectory();
     await clearLegacyUiCaches();
     themePreferenceQuery = window.matchMedia('(prefers-color-scheme: dark)');
     systemPrefersDark = themePreferenceQuery.matches;
@@ -2618,11 +3026,7 @@
     if (paramSpecs.some((spec) => spec.group === 'lora')) resetParams();
     if (server?.ui_management) {
       try {
-        let root = await getModelsRoot();
-        const storedModelsFolder = localStorage.getItem('audiocpp.ui.modelsFolder');
-        if (storedModelsFolder && storedModelsFolder !== root.models_root) {
-          root = await setModelsRoot(storedModelsFolder);
-        }
+        const root = await getModelsRoot();
         acceptModelsRoot(root);
       } catch (error) {
         status = error instanceof Error ? error.message : String(error);
@@ -2646,6 +3050,7 @@
   });
 
   onDestroy(() => {
+    playback.close();
     if (generationTimer !== null) window.clearInterval(generationTimer);
     clearOutput();
     for (const entry of generationHistory) releaseGeneration(entry);
@@ -2712,7 +3117,7 @@
 </header>
 
 <main>
-  {#if appsOpened}<div hidden={tab !== 'apps'}><Apps bind:this={appsPage} active={tab === 'apps'}/></div>{/if}
+  {#if appsOpened}<div hidden={tab !== 'apps'}><Apps bind:this={appsPage} active={tab === 'apps'} on:models={event => { openModelsPage(); modelSearch = event.detail.search; modelTask = event.detail.task; }}/></div>{/if}
   {#if tab === 'studio'}
     <nav class="workflow-tabs" aria-label={tr('nav.workflows')}>
       {#each workflowTabs as workflow}
@@ -2803,7 +3208,7 @@
         </div>
 
         {#if selectedId && (selected?.input_hint_en || selected?.input_hint)}
-          <div class="hint">{localizedModelHint(tr)}</div>
+          <div class="hint">{localizedModelHint(selected, tr)}</div>
         {/if}
       </aside>
 
@@ -2862,6 +3267,9 @@
               {paramSpecs}
               {advancedValues}
               catalogEntries={activeCatalog}
+              installPackages={selected?.install_packages || []}
+              {packageSizes}
+              uiManaged={Boolean(server?.ui_management && !isConfiguredEntry(selected) && !directModelPath)}
               {loadedModels}
               {server}
               modelId={selected.id}
@@ -2885,7 +3293,7 @@
               setSourceFile={(file: File | null) => sourceFile = file}
               startSourceRecording={() => startRecording('source')}
               stopSourceRecording={stopRecording} />
-        {:else if selected.task === 'gen'}
+        {:else if selected.task === 'gen' && selected.family !== 'moss_soundeffect'}
           <label for="lyrics">{tr('request.lyrics')} <span>{lyricsRequired ? tr('voice.required') : tr('request.optional')}</span></label>
           <textarea id="lyrics" rows="3" bind:value={lyrics} required={lyricsRequired}
             aria-required={lyricsRequired} placeholder="[Verse]…"></textarea>
@@ -2903,7 +3311,7 @@
         {/if}
 
         <div class="field-grid">
-          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'sidon', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
+          {#if ['tts', 'clon', 'asr', 'gen', 's2s', 'align', 'vdes'].includes(selected.task) && !replacesGenericControls.language && !['apollo', 'universr', 'moss_transcribe_diarize', 'builtin_audio_utils', 'sam_audio', 'samsone', 'gigaam_asr', 'maya1', 'owsm', 'owsm_ctc', 'index_echo', 'audio_flamingo', 'kugelaudio', 'reuse', 'realtime_reuse', 'voice_isolator', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'sidon', 'hviske_asr_v6', 'voxtral_tts', 'zonos2', 'zonos3'].includes(selected.family)}
             <div>
               <label for="language">{tr('request.language')} {#if !asrLanguages[selected.family]}<span>{tr('request.autoLanguage')}</span>{/if}</label>
               {#if ['moss_ttsd', 'moss_voicegen'].includes(selected.family)}
@@ -2917,13 +3325,13 @@
               {/if}
             </div>
           {/if}
-          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils', 'reuse', 'sidon'].includes(selected.family)}
+          {#if ['tts', 'clon', 'gen', 's2s', 'vdes'].includes(selected.task) && !replacesGenericControls.seed && !['apollo', 'builtin_audio_utils', 'reuse', 'realtime_reuse', 'voice_isolator', 'sidon', 'mossformer2'].includes(selected.family)}
             <div>
               <label for="seed">{tr('request.seed')} <span>{tr('request.randomSeed')}</span></label>
               <input id="seed" type="number" min="-1" max="4294967295" step="1" bind:value={seed} />
             </div>
           {/if}
-          {#if supportsMaxTokens(selected) && !['kugelaudio', 'crisperwhisper', 'audio_flamingo', 'owsm', 'hviske_asr_v6', 'voxtral_tts'].includes(selected.family)}
+          {#if supportsMaxTokens(selected) && !['kugelaudio', 'crisperwhisper', 'audio_flamingo', 'owsm', 'hviske_asr_v6', 'voxtral_tts', 'haas_asr', 'phonon2_asr', 'underdog_bark3', 'nemotron_transcribe'].includes(selected.family)}
             <div>
               <label for="tokens">{tr('request.maxTokens')}</label>
               {#if selected.family in asrTokenDefaults}
@@ -2938,7 +3346,7 @@
           {#if selected.task === 'gen' && !replacesGenericControls.duration}
             <div>
               <label for="duration">{tr('request.duration')}{#if allowsAutoDuration} <span>{tr('request.autoDuration')}</span>{/if}</label>
-              <input id="duration" type="number" min={allowsAutoDuration ? -1 : 1} step="0.1" value={duration}
+              <input id="duration" type="number" min={selected.family === 'moss_soundeffect' ? 0.1 : allowsAutoDuration ? -1 : 1} max={selected.family === 'moss_soundeffect' ? 30 : undefined} step="0.1" value={duration}
                 on:input={(event) => setDuration(event.currentTarget.valueAsNumber)} />
               {#if selected.family === 'minimax_h3'}
                 <small>{tr('request.minimaxFrames', { frames: Number(advancedValues.num_frames || 0) })}</small>
@@ -3128,6 +3536,11 @@
                         on:input={(event) => setParameterValue(spec, event.currentTarget.valueAsNumber)} />
                       <output>{String(advancedValues[spec.name])}</output>
                     </div>
+                  {:else if spec.type === 'text' && (spec.lines || 1) > 1}
+                    <textarea id={'param-' + spec.name} rows={spec.lines}
+                      value={String(advancedValues[spec.name] ?? '')}
+                      placeholder={localizedParameterText(spec, 'placeholder', tr)}
+                      on:input={(event) => setParameterValue(spec, event.currentTarget.value)}></textarea>
                   {:else}
                     <input id={'param-' + spec.name} type={spec.type === 'number' ? 'number' : 'text'}
                       min={spec.minimum} max={spec.maximum} step={spec.step}
@@ -3150,8 +3563,43 @@
           </details>
         {/if}
 
+        {#if !usesPanelRequest || selected.task !== 'asr'}
+          <div class="studio-request-actions studio-playback-controls">
+            {#if !usesPanelRequest && canStreamOutput}
+              <label class="toggle"><input type="checkbox" bind:checked={streamOutput} disabled={running} /><span></span>{tr('run.streamingMode')}</label>
+            {/if}
+            {#if selected.task !== 'asr'}
+              {#if !usesPanelRequest}
+                <label class="toggle"><input type="checkbox" bind:checked={autoplay} disabled={running} /><span></span>{tr('run.autoPlay')}</label>
+              {/if}
+              <label class="toggle"><input type="checkbox" checked={$uiConfiguration.autoSave} on:change={(event) => setAutoSaveEnabled(event.currentTarget.checked)} disabled={running} /><span></span>{tr('run.autoSave')}</label>
+              {#if $uiConfiguration.autoSave && $autoSaveDirectory.folderName && $autoSaveDirectory.permission !== 'granted'}
+                <button type="button" disabled={running} on:click={() => void requestAutoSaveDirectoryPermission()}>{tr('configuration.grantAccess')}</button>
+              {/if}
+            {/if}
+            {#if !usesPanelRequest && running && liveAudioReady && !livePlaybackStart}<button on:click={playLiveAudio}>{tr('run.playLive')}</button>{/if}
+            {#if !usesPanelRequest && playbackActive}<button on:click={() => playback.stop()}>{tr('run.stopPlayback')}</button>{/if}
+          </div>
+          {#if !usesPanelRequest && running && liveText}<pre aria-live="polite" aria-label={tr('result.streamingText')}>{liveText}</pre>{/if}
+          {#if !usesPanelRequest && playbackWarning}<p role="status">{playbackWarning}</p>{/if}
+        {/if}
+        {#if selectedId && selectedResident && selectedSessionDrift}
+          <div class="reload-prompt" role="status">
+            <div>
+              <strong>{tr('studio.reloadNeededTitle')}</strong>
+              <small>{tr(isConfiguredEntry(selected) ? 'studio.reloadConfiguredHint' : 'studio.reloadNeededHint')}</small>
+            </div>
+            {#if server?.ui_management && !isConfiguredEntry(selected)}
+              <button type="button" class="primary"
+                disabled={loadingModel || running || modelPanelUploading || installed === false || !packageLoadReady}
+                on:click={reloadForSettings}>
+                <RefreshCw size={14} />{loadingModel ? tr('studio.working') : tr('studio.reloadNow')}
+              </button>
+            {/if}
+          </div>
+        {/if}
         <div class="runbar">
-          <button class="run" disabled={!selectedId || running || rewritingCaption || restoringHistory || modelPanelUploading ||
+          <button class="run" disabled={!selectedId || running || loadingModel || rewritingCaption || restoringHistory || modelPanelUploading ||
             (!isLoaded && (installed === false || !packageLoadReady))} on:click={run}
             title={!selectedId ? tr('run.chooseModel') : !isLoaded && installed === false ? tr('run.installModel') : ''}>
             <Play size={15} /><span>{running ? tr('run.working') : tr('run.run')}</span>
@@ -3181,6 +3629,8 @@
           {#if outputSettings}<a class="settings-download" href={outputSettings.url} download={outputSettings.filename}>{tr('settings.save')}</a>{/if}
           {#if outputAudio.length}<span class="task-chip">{outputAudio.length} {outputAudio.length === 1 ? tr('result.track') : tr('result.tracks')}</span>{/if}
         </div>
+        {#if autoSaveWarning}<p class="auto-save-warning" role="status">{autoSaveWarning}</p>{/if}
+        {#if autoSaveNotice}<p class="auto-save-notice" role="status">{autoSaveNotice}</p>{/if}
         {#if outputAudio.length}
           <div class="audio-list">
             {#each outputAudio as output}
@@ -3204,7 +3654,7 @@
             {/each}
           </div>
         {/if}
-        {#if !outputAudio.length && !outputArtifacts.length}
+        {#if !outputAudio.length && !outputArtifacts.length && !outputText && !outputJson}
           <div class="empty-output"><div class="wave">∿</div><p>{tr('result.empty')}</p></div>
         {/if}
         {#if outputText}<textarea class="transcript" readonly rows="7" value={outputText}></textarea>{/if}
@@ -3252,15 +3702,15 @@
       {tr}
     />
   {:else if tab === 'models'}
-    <ModelLibrary groups={modelGroups} {packageSizes} {installJobs} {packageSizeState}
+    <ModelLibrary search={modelSearch} task={modelTask} groups={modelGroups} {packageSizes} {installJobs} {packageSizeState}
       bind:modelsFolderInput {modelsFolder} {modelsFolderHistory} {defaultModelsFolder} {applyingModelsFolder} {modelsFolderIsDefault}
       {openFolderBrowser} {applyModelsFolder} {installPackage} {removePackage} {stopPackageDownload}
-      {cleanPartialDownload} {formatBytes} {installProgressLabel} {workflowForEntry}
+      {cleanPartialDownload} {dismissInstallFailure} {formatBytes} {installProgressLabel} {workflowForEntry}
       taskLabel={(entry) => localizedTaskLabel(entry.task, tr, entry)}
       workflows={workflowTabs.map((w) => ({ id: w.id, label: workflowLabel(w.id, w.filterLabel, tr) }))}
       openModel={(entry, choice) => {
         if (choice) rememberPackageChoice(entry, choice);
-        chooseModel(entry.id);
+        chooseModel(entry.id, choice);
         tab = 'studio';
       }}
     />

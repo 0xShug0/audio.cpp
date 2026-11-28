@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <fstream>
 #include <limits>
@@ -92,13 +93,10 @@ void write_scalar(std::ofstream & out, const T & value) {
     out.write(reinterpret_cast<const char *>(&value), sizeof(T));
 }
 
-void write_pcm24_sample(std::ofstream & out, int32_t value) {
-    const char bytes[3] = {
-        static_cast<char>(static_cast<uint8_t>(value & 0xFF)),
-        static_cast<char>(static_cast<uint8_t>((value >> 8) & 0xFF)),
-        static_cast<char>(static_cast<uint8_t>((value >> 16) & 0xFF)),
-    };
-    out.write(bytes, 3);
+void store_pcm24_sample(char * out, int32_t value) {
+    out[0] = static_cast<char>(static_cast<uint8_t>(value & 0xFF));
+    out[1] = static_cast<char>(static_cast<uint8_t>((value >> 8) & 0xFF));
+    out[2] = static_cast<char>(static_cast<uint8_t>((value >> 16) & 0xFF));
 }
 
 }  // namespace
@@ -279,6 +277,12 @@ void write_wav(
     const bool dither = options.dither == WavDitherMode::TriangularPdf && !is_float;
     DitherGenerator generator(options.dither_seed);
 
+    // Samples are collected into blocks: one stream write per sample dominates
+    // the cost of saving long outputs.
+    constexpr size_t kBlockBytes = 64U * 1024U;
+    std::vector<char> block(kBlockBytes + sizeof(float));
+    size_t used = 0;
+
     for (float sample : source) {
         if (clamp_to_unit) {
             sample = std::max(-1.0F, std::min(1.0F, sample));
@@ -291,7 +295,8 @@ void write_wav(
                 }
                 const long rounded = std::lrint(scaled);
                 const auto pcm = static_cast<int16_t>(std::clamp<long>(rounded, -32768L, 32767L));
-                write_scalar(out, pcm);
+                std::memcpy(block.data() + used, &pcm, sizeof(pcm));
+                used += sizeof(pcm);
                 break;
             }
             case WavSampleFormat::Pcm24: {
@@ -300,15 +305,23 @@ void write_wav(
                     scaled += generator.next_tpdf();
                 }
                 const long rounded = std::lrint(scaled);
-                write_pcm24_sample(out, static_cast<int32_t>(std::clamp<long>(rounded, -8388608L, 8388607L)));
+                store_pcm24_sample(
+                    block.data() + used, static_cast<int32_t>(std::clamp<long>(rounded, -8388608L, 8388607L)));
+                used += 3;
                 break;
             }
             case WavSampleFormat::Float32: {
-                write_scalar(out, sample);
+                std::memcpy(block.data() + used, &sample, sizeof(sample));
+                used += sizeof(sample);
                 break;
             }
         }
+        if (used >= kBlockBytes) {
+            out.write(block.data(), static_cast<std::streamsize>(used));
+            used = 0;
+        }
     }
+    out.write(block.data(), static_cast<std::streamsize>(used));
     if (!out) {
         throw std::runtime_error("failed to write WAV output: " + path.string());
     }

@@ -31,9 +31,9 @@ runtime::ModelCliInterface legacy_cli() {
         {"nemotron_asr.weight_type", "native|f32|f16|bf16|q8_0", "Shared matmul weight storage type.", false, "native"},
         {"nemotron_asr.matmul_weight_type", "native|f32|f16|bf16|q8_0", "Encoder and decoder matmul weight storage type."},
         {"nemotron_asr.conv_weight_type", "native|f32|f16", "Convolution weight storage type.", false, "native"},
-        {"nemotron_asr.weight_context_mb", "mb", "Weight context arena size.", false, "3072", "1"},
-        {"nemotron_asr.encoder_graph_arena_mb", "mb", "Encoder graph arena size.", false, "1024", "1"},
-        {"nemotron_asr.decoder_graph_arena_mb", "mb", "Decoder graph arena size.", false, "256", "1"},
+        {"nemotron_asr.weight_context_mb", "mb", "Weight context arena size.", false, "8", "1"},
+        {"nemotron_asr.encoder_graph_arena_mb", "mb", "Encoder graph arena size.", false, "128", "1"},
+        {"nemotron_asr.decoder_graph_arena_mb", "mb", "Decoder graph arena size.", false, "32", "1"},
         {"nemotron_asr.mem_saver", "true|false", "Release the offline encoder graph after each offline request; default false.", false, "false"},
     };
     return cli;

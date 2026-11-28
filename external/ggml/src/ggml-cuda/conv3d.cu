@@ -2,7 +2,342 @@
 #include "convert.cuh"
 
 #include <algorithm>
+#include <climits>
 #include <cstdio>
+
+#ifdef GGML_CUDA_CUDNN_CONV3D
+// GGML's cpy_scalar_transpose tile pattern: each batch's contiguous [rows, cols]
+// matrix becomes [cols, rows], combining layout conversion and the scalar cast.
+template <typename Src, typename Dst, bool replicate_depth = false, bool scatter_output = false>
+static __global__ void conv3d_transpose_cast(
+        const Src * __restrict__ src, Dst * __restrict__ dst,
+        int64_t rows, int64_t cols, int64_t batches, const float * bias, bool round_bf16,
+        int64_t source_depth = 0, int64_t plane = 0, int depth_left = 0, int64_t source_offset = 0,
+        int64_t output_stride = 0, int64_t output_offset = 0, int64_t valid_rows = 0) {
+    __shared__ Src tile[32][33];
+    const int64_t col_base = int64_t(blockIdx.x) * 32;
+    for (int64_t batch = blockIdx.z; batch < batches; batch += gridDim.z) {
+        for (int64_t row_base = int64_t(blockIdx.y) * 32;
+             row_base < rows; row_base += int64_t(gridDim.y) * 32) {
+            const int64_t col = col_base + threadIdx.x;
+#pragma unroll
+            for (int offset = 0; offset < 32; offset += 8) {
+                const int64_t row = row_base + threadIdx.y + offset;
+                if (row < rows && col < cols) {
+                    if constexpr (replicate_depth) {
+                        const int64_t position = col / plane + source_offset - depth_left;
+                        const int64_t depth = position < 0 ? 0 : (position < source_depth ? position : source_depth - 1);
+                        tile[threadIdx.y + offset][threadIdx.x] =
+                            src[((batch * rows + row) * source_depth + depth) * plane + col % plane];
+                    } else {
+                        tile[threadIdx.y + offset][threadIdx.x] = src[(batch * rows + row) * cols + col];
+                    }
+                }
+            }
+            __syncthreads();
+            const int64_t out_col = row_base + threadIdx.x;
+#pragma unroll
+            for (int offset = 0; offset < 32; offset += 8) {
+                const int64_t out_row = col_base + threadIdx.y + offset;
+                if (out_row < cols && out_col < rows && (!scatter_output || out_col < valid_rows)) {
+                    const int64_t output_index = scatter_output
+                        ? (batch * cols + out_row) * output_stride + output_offset + out_col
+                        : (batch * cols + out_row) * rows + out_col;
+                    const Src value = tile[threadIdx.x][threadIdx.y + offset];
+                    if constexpr (std::is_same_v<Src, float> && std::is_same_v<Dst, half>) {
+                        // Match the former explicit F32 -> F16 cast, including ties.
+                        dst[output_index] = __float2half_rn(value);
+                    } else if constexpr (std::is_same_v<Dst, float>) {
+                        float result = ggml_cuda_cast<float>(value);
+                        if (bias != nullptr) {
+                            result = result + bias[out_row]; // Same F32 addition as the standalone ADD.
+                        }
+                        if (round_bf16) {
+                            // Existing conversion utility uses exactly the intrinsics
+                            // in op_round_bf16: __float2bfloat16 then __bfloat162float.
+                            result = ggml_cuda_cast<float>(ggml_cuda_cast<nv_bfloat16>(result));
+                        }
+                        dst[output_index] = result;
+                    } else if constexpr (std::is_same_v<Src, half> && std::is_same_v<Dst, half>) {
+                        // Input packing passes no bias and remains an exact half copy.
+                        // Output bias uses F32 ADD followed by one round-to-nearest-even F16 cast.
+                        if (bias != nullptr) {
+                            const float result = ggml_cuda_cast<float>(value) + bias[out_row];
+                            dst[output_index] = __float2half_rn(result);
+                        } else {
+                            dst[output_index] = value;
+                        }
+                    } else {
+                        dst[output_index] = ggml_cuda_cast<Dst>(value);
+                    }
+                }
+            }
+            __syncthreads();
+        }
+    }
+}
+#endif
+
+bool ggml_cuda_supports_conv3d(const ggml_tensor * op) {
+#ifdef GGML_CUDA_CUDNN_CONV3D
+    if (op->op != GGML_OP_CONV_3D || op->op_params[12] != 1 ||
+        !op->src[0] || !op->src[1] ||
+        op->src[0]->type != GGML_TYPE_F16 ||
+        (op->src[1]->type != GGML_TYPE_F16 && op->src[1]->type != GGML_TYPE_F32) ||
+        (op->type != GGML_TYPE_F32 && op->type != GGML_TYPE_F16) || !ggml_is_contiguous(op->src[0]) ||
+        !ggml_is_contiguous(op->src[1]) || !ggml_is_contiguous(op)) {
+        return false;
+    }
+    if ((op->op_params[13] != 0 && op->op_params[13] != 1) ||
+        (op->op_params[14] != 0 && op->op_params[14] != 1) ||
+        (op->type == GGML_TYPE_F16 && op->op_params[13] != 0) ||
+        (op->src[2] && (op->src[2]->type != GGML_TYPE_F32 || !ggml_is_contiguous(op->src[2]) ||
+            ggml_nelements(op->src[2]) != op->op_params[11]))) {
+        return false;
+    }
+    for (int i = 3; i < GGML_MAX_SRC; ++i) {
+        if (op->src[i]) {
+            return false;
+        }
+    }
+    const int32_t * p = op->op_params;
+    if (p[15] < 0 || p[15] > 2LL * p[5] + 1) {
+        return false;
+    }
+    if (p[9] <= 0 || p[10] <= 0 || p[11] <= 0 ||
+        op->src[0]->ne[3] != int64_t(p[9]) * p[11] ||
+        op->src[1]->ne[3] != int64_t(p[9]) * p[10] ||
+        op->ne[3] != int64_t(p[11]) * p[10]) {
+        return false;
+    }
+    // cuDNN Nd descriptors use int dimensions/strides and at most 2G elements.
+    const ggml_tensor * tensors[] = {op->src[0], op->src[1], op};
+    for (const ggml_tensor * t : tensors) {
+        int64_t elements = 1;
+        for (int axis = 0; axis < 4; ++axis) {
+            if (t->ne[axis] <= 0 || t->ne[axis] > INT_MAX / elements) {
+                return false;
+            }
+            elements *= t->ne[axis];
+        }
+    }
+    if (p[15] && (op->src[1]->ne[2] + 2LL * p[5] > INT_MAX ||
+        ggml_nelements(op->src[1]) / op->src[1]->ne[2] >
+            INT_MAX / (op->src[1]->ne[2] + 2LL * p[5]))) {
+        return false;
+    }
+    for (int axis = 0; axis < 3; ++axis) {
+        if (p[axis] <= 0 || p[axis + 3] < 0 || p[axis + 6] <= 0) {
+            return false;
+        }
+        const int64_t extent = op->src[1]->ne[axis] + 2LL * p[axis + 3] -
+            int64_t(p[axis + 6]) * (op->src[0]->ne[axis] - 1) - 1;
+        if (extent < 0 || op->ne[axis] != extent / p[axis] + 1) {
+            return false;
+        }
+    }
+    return true;
+#else
+    GGML_UNUSED(op);
+    return false;
+#endif
+}
+
+void ggml_cuda_op_conv3d(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+#ifdef GGML_CUDA_CUDNN_CONV3D
+    GGML_ASSERT(ggml_cuda_supports_conv3d(dst));
+    const auto checked = [](cudnnStatus_t status) {
+        if (status != CUDNN_STATUS_SUCCESS) {
+            GGML_ABORT("cuDNN Conv3D failed: %s", cudnnGetErrorString(status));
+        }
+    };
+    if (ctx.conv3d_cudnn_handle == nullptr) {
+        checked(cudnnCreate(&ctx.conv3d_cudnn_handle));
+    }
+    const cudnnHandle_t handle = ctx.conv3d_cudnn_handle;
+    checked(cudnnSetStream(handle, ctx.stream()));
+
+    // No shape/pointer caches: descriptors and heuristic results are bounded
+    // invocation-local metadata. Only the backend-owned handle persists.
+    const ggml_tensor * w = dst->src[0];
+    const ggml_tensor * x = dst->src[1];
+    const int32_t * p = dst->op_params;
+    const bool replicate_depth = p[15] != 0;
+    int xd[] = {p[10], p[9], int(x->ne[2] + (replicate_depth ? 2LL * p[5] : 0)),
+                     int(x->ne[1]), int(x->ne[0])};
+    int yd[] = {p[10], p[11], int(dst->ne[2]), int(dst->ne[1]), int(dst->ne[0])};
+    const int wd[] = {p[11], p[9], int(w->ne[2]), int(w->ne[1]), int(w->ne[0])};
+    const int padding[] = {replicate_depth ? 0 : p[5], p[4], p[3]};
+    const int stride[] = {p[2], p[1], p[0]};
+    const int dilation[] = {p[8], p[7], p[6]};
+    cudnnTensorDescriptor_t x_ndhwc_desc, y_desc, w_source_desc, w_packed_desc;
+    cudnnFilterDescriptor_t w_desc;
+    cudnnConvolutionDescriptor_t conv_desc;
+    checked(cudnnCreateTensorDescriptor(&x_ndhwc_desc));
+    checked(cudnnCreateTensorDescriptor(&y_desc));
+    checked(cudnnCreateTensorDescriptor(&w_source_desc));
+    checked(cudnnCreateTensorDescriptor(&w_packed_desc));
+    checked(cudnnCreateFilterDescriptor(&w_desc));
+    checked(cudnnCreateConvolutionDescriptor(&conv_desc));
+    // Descriptor dimensions stay N,C,D,H,W (O,I,KD,KH,KW for weights).
+    // NHWC on a five-dimensional descriptor selects physical NDHWC/ODHWI.
+    checked(cudnnSetTensorNdDescriptorEx(x_ndhwc_desc, CUDNN_TENSOR_NHWC, CUDNN_DATA_HALF, 5, xd));
+    checked(cudnnSetTensorNdDescriptorEx(y_desc, CUDNN_TENSOR_NHWC, CUDNN_DATA_HALF, 5, yd));
+    // Treat the filter as a tensor solely for the existing cuDNN layout transform.
+    checked(cudnnSetTensorNdDescriptorEx(w_source_desc, CUDNN_TENSOR_NCHW, CUDNN_DATA_HALF, 5, wd));
+    checked(cudnnSetTensorNdDescriptorEx(w_packed_desc, CUDNN_TENSOR_NHWC, CUDNN_DATA_HALF, 5, wd));
+    checked(cudnnSetFilterNdDescriptor(w_desc, CUDNN_DATA_HALF, CUDNN_TENSOR_NHWC, 5, wd));
+    checked(cudnnSetConvolutionNdDescriptor(conv_desc, 3, padding, stride, dilation,
+        CUDNN_CROSS_CORRELATION, CUDNN_DATA_FLOAT));
+    checked(cudnnSetConvolutionMathType(conv_desc, CUDNN_TENSOR_OP_MATH));
+
+    constexpr size_t max_workspace_bytes = 256ull * 1024 * 1024;
+    // Each legacy algorithm can have default-math and tensor-op variants.
+    constexpr int max_candidates = 2 * CUDNN_CONVOLUTION_FWD_ALGO_COUNT;
+    cudnnConvolutionFwdAlgoPerf_t candidates[max_candidates];
+    const int full_input_depth = xd[2], full_output_depth = yd[2];
+    int tile_depth = full_output_depth;
+    cudnnConvolutionFwdAlgoPerf_t chosen{}, untiled{};
+    size_t workspace_bytes = 0, untiled_workspace = 0;
+    for (;;) {
+        checked(cudnnSetTensorNdDescriptorEx(x_ndhwc_desc, CUDNN_TENSOR_NHWC, CUDNN_DATA_HALF, 5, xd));
+        checked(cudnnSetTensorNdDescriptorEx(y_desc, CUDNN_TENSOR_NHWC, CUDNN_DATA_HALF, 5, yd));
+        checked(cudnnSetConvolutionMathType(conv_desc, CUDNN_TENSOR_OP_MATH));
+        int candidate_count = 0, selected = -1;
+        bool tensor_core_exceeds_budget = false;
+        checked(cudnnGetConvolutionForwardAlgorithm_v7(handle, x_ndhwc_desc, w_desc, conv_desc, y_desc,
+            max_candidates, &candidate_count, candidates));
+        for (int i = 0; i < candidate_count; ++i) {
+            if (candidates[i].status != CUDNN_STATUS_SUCCESS) continue;
+            checked(cudnnSetConvolutionMathType(conv_desc, candidates[i].mathType));
+            size_t required_bytes = 0;
+            checked(cudnnGetConvolutionForwardWorkspaceSize(handle, x_ndhwc_desc, w_desc, conv_desc, y_desc,
+                candidates[i].algo, &required_bytes));
+            if (candidates[i].mathType == CUDNN_TENSOR_OP_MATH && required_bytes > max_workspace_bytes)
+                tensor_core_exceeds_budget = true;
+            if (required_bytes <= max_workspace_bytes) {
+                selected = i;
+                workspace_bytes = required_bytes;
+                break;
+            }
+        }
+        if (selected < 0) GGML_ABORT("cuDNN has no Conv3D algorithm within the 256 MiB workspace limit");
+        chosen = candidates[selected];
+        if (tile_depth == full_output_depth) {
+            untiled = chosen;
+            untiled_workspace = workspace_bytes;
+        }
+        if (chosen.mathType == CUDNN_TENSOR_OP_MATH || !replicate_depth ||
+            (!tensor_core_exceeds_budget && tile_depth == full_output_depth)) break;
+        if (!tensor_core_exceeds_budget || tile_depth == 1) {
+            // No tensor-core tile fits: preserve the original untiled algorithm.
+            tile_depth = full_output_depth;
+            xd[2] = full_input_depth;
+            yd[2] = full_output_depth;
+            chosen = untiled;
+            workspace_bytes = untiled_workspace;
+            checked(cudnnSetTensorNdDescriptorEx(x_ndhwc_desc, CUDNN_TENSOR_NHWC, CUDNN_DATA_HALF, 5, xd));
+            checked(cudnnSetTensorNdDescriptorEx(y_desc, CUDNN_TENSOR_NHWC, CUDNN_DATA_HALF, 5, yd));
+            break;
+        }
+        tile_depth = std::max(1, tile_depth / 2);
+        yd[2] = tile_depth;
+        xd[2] = (tile_depth - 1) * stride[0] + dilation[0] * (wd[2] - 1) + 1;
+    }
+    checked(cudnnSetConvolutionMathType(conv_desc, chosen.mathType));
+    // Pool-owned scratch is released at return (the pool may retain capacity).
+    // No im2col or padding expansion: peak requested scratch is exactly the
+    // F16 input + optional filter packing + F16 output + <=256 MiB workspace.
+    const size_t input_elements = size_t(xd[0]) * xd[1] * xd[2] * xd[3] * xd[4];
+    const size_t input_bytes = input_elements * sizeof(half);
+    const size_t weight_bytes = p[14] ? 0 : ggml_nbytes(w);
+    const size_t output_elements = size_t(yd[0]) * yd[1] * yd[2] * yd[3] * yd[4];
+    const size_t output_bytes = output_elements * sizeof(half);
+    ggml_cuda_pool_alloc<half> input(ctx.pool(), input_elements);
+    ggml_cuda_pool_alloc<half> weight(ctx.pool());
+    if (!p[14]) weight.alloc(size_t(ggml_nelements(w)));
+    ggml_cuda_pool_alloc<half> output(ctx.pool(), output_elements);
+    ggml_cuda_pool_alloc<uint8_t> workspace(ctx.pool());
+    if (workspace_bytes != 0) {
+        workspace.alloc(workspace_bytes);
+    }
+    GGML_LOG_DEBUG("cuDNN Conv3D NDHWC: input %s, output %s, bias %s, bf16_round %d, algorithm %d, math %d, workspace %zu bytes (pool %zu), "
+        "input scratch %zu bytes (pool %zu), filter scratch %zu bytes (pool %zu), "
+        "output scratch %zu bytes (pool %zu), total scratch %zu bytes (pool %zu)\n",
+        ggml_type_name(x->type), ggml_type_name(dst->type), dst->src[2] ? "F32" : "none", p[13],
+        int(chosen.algo), int(chosen.mathType), workspace_bytes, workspace.actual_size,
+        input_bytes, input.actual_size, weight_bytes, weight.actual_size, output_bytes, output.actual_size,
+        input_bytes + weight_bytes + output_bytes + workspace_bytes,
+        input.actual_size + weight.actual_size + output.actual_size + workspace.actual_size);
+    const float alpha = 1.0f, beta = 0.0f;
+    const void * filter = w->data;
+    if (!p[14]) {
+        checked(cudnnTransformTensor(handle, &alpha, w_source_desc, w->data, &beta, w_packed_desc, weight.get()));
+        filter = weight.get();
+    }
+    const int64_t input_spatial = int64_t(xd[2]) * xd[3] * xd[4];
+    const int64_t spatial = int64_t(yd[2]) * yd[3] * yd[4];
+    const int64_t output_plane = dst->ne[0] * dst->ne[1];
+    const int64_t output_stride = output_plane * full_output_depth;
+    const dim3 input_blocks(unsigned((input_spatial + 31) / 32),
+        unsigned(std::min<int64_t>((p[9] + 31LL) / 32, 65535)), unsigned(std::min(p[10], 65535)));
+    const dim3 output_blocks(unsigned((p[11] + 31LL) / 32),
+        unsigned(std::min<int64_t>((spatial + 31) / 32, 65535)), unsigned(std::min(p[10], 65535)));
+    GGML_LOG_DEBUG("cuDNN Conv3D depth tile %d/%d, input depth %d, workspace %zu\n",
+        tile_depth, full_output_depth, xd[2], workspace_bytes);
+    for (int64_t start = 0; start < full_output_depth; start += tile_depth) {
+        if (replicate_depth && x->type == GGML_TYPE_F32) {
+            conv3d_transpose_cast<float, half, true><<<input_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                static_cast<const float *>(x->data), input.get(), p[9], input_spatial, p[10], nullptr, false,
+                x->ne[2], x->ne[0] * x->ne[1], p[15] - 1, int64_t(start) * stride[0]);
+        } else if (replicate_depth) {
+            conv3d_transpose_cast<half, half, true><<<input_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                static_cast<const half *>(x->data), input.get(), p[9], input_spatial, p[10], nullptr, false,
+                x->ne[2], x->ne[0] * x->ne[1], p[15] - 1, int64_t(start) * stride[0]);
+        } else if (x->type == GGML_TYPE_F32) {
+            conv3d_transpose_cast<float, half><<<input_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                static_cast<const float *>(x->data), input.get(), p[9], input_spatial, p[10], nullptr, false);
+        } else {
+            conv3d_transpose_cast<half, half><<<input_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                static_cast<const half *>(x->data), input.get(), p[9], input_spatial, p[10], nullptr, false);
+        }
+        CUDA_CHECK(cudaGetLastError());
+        checked(cudnnConvolutionForward(handle, &alpha, x_ndhwc_desc, input.get(), w_desc, filter,
+            conv_desc, chosen.algo, workspace.get(), workspace_bytes, &beta, y_desc, output.get()));
+        const float * bias = dst->src[2] ? static_cast<const float *>(dst->src[2]->data) : nullptr;
+        if (tile_depth != full_output_depth) {
+            const int64_t offset = int64_t(start) * output_plane;
+            const int64_t valid = std::min<int64_t>(tile_depth, full_output_depth - start) * output_plane;
+            if (dst->type == GGML_TYPE_F16) {
+                conv3d_transpose_cast<half, half, false, true><<<output_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                    output.get(), static_cast<half *>(dst->data), spatial, p[11], p[10], bias, false,
+                    0, 0, 0, 0, output_stride, offset, valid);
+            } else {
+                conv3d_transpose_cast<half, float, false, true><<<output_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                    output.get(), static_cast<float *>(dst->data), spatial, p[11], p[10], bias, p[13] != 0,
+                    0, 0, 0, 0, output_stride, offset, valid);
+            }
+        } else if (dst->type == GGML_TYPE_F16) {
+            conv3d_transpose_cast<half, half><<<output_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                output.get(), static_cast<half *>(dst->data), spatial, p[11], p[10], bias, false);
+        } else {
+            conv3d_transpose_cast<half, float><<<output_blocks, dim3(32, 8), 0, ctx.stream()>>>(
+                output.get(), static_cast<float *>(dst->data), spatial, p[11], p[10], bias, p[13] != 0);
+        }
+        CUDA_CHECK(cudaGetLastError());
+    }
+    checked(cudnnDestroyConvolutionDescriptor(conv_desc));
+    checked(cudnnDestroyFilterDescriptor(w_desc));
+    checked(cudnnDestroyTensorDescriptor(w_packed_desc));
+    checked(cudnnDestroyTensorDescriptor(w_source_desc));
+    checked(cudnnDestroyTensorDescriptor(y_desc));
+    checked(cudnnDestroyTensorDescriptor(x_ndhwc_desc));
+#else
+    GGML_UNUSED(ctx);
+    GGML_UNUSED(dst);
+    GGML_ABORT("cuDNN Conv3D requires GGML_CUDA_CUDNN_CONV3D");
+#endif
+}
 
 #define CUDA_CONV3D_BLOCK_SIZE 256
 #define CUDA_CONV3D_SPATIAL_IM2COL_BLOCK_SIZE 256

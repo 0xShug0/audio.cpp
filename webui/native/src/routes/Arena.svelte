@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { randomUUID } from '$lib/uuid.js';
   import { onDestroy, onMount } from 'svelte';
   import { AudioLines, Code, FileText, FolderOpen, MessageSquare, Play, Plus, Square, Trash2, User } from '@lucide/svelte';
   import { browserDecodeToWav } from '$lib/audio';
@@ -377,7 +378,7 @@
       return;
     }
     arenaItems = [...arenaItems, {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       entryId: arenaEntry.id,
       packageId: choice?.id,
       label: arenaEntry.display_name,

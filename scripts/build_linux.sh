@@ -8,13 +8,13 @@ BUILD_TYPE="RelWithDebInfo"
 CUDA_MODE="auto"
 CUDA_ARCH=""
 VULKAN_MODE="off"
+WEBGPU_MODE="off"
 HIP_MODE="off"
 HIP_VMM=""
 GPU_TARGETS=""
 USE_CCACHE="OFF"
 WITH_TESTS="OFF"
 WITH_EXAMPLES="OFF"
-WITH_WARMBENCH="OFF"
 AUDIOCPP_DEPLOYMENT_BUILD="OFF"
 DEPLOYMENT_BUILD_SET="OFF"
 AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="OFF"
@@ -42,6 +42,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --backend)
+            WEBGPU_MODE="off"
             if [[ "$2" == "cuda" ]]; then
                 CUDA_MODE="on"
                 VULKAN_MODE="off"
@@ -54,6 +55,11 @@ while [[ $# -gt 0 ]]; do
                 CUDA_MODE="off"
                 VULKAN_MODE="on"
                 HIP_MODE="off"
+            elif [[ "$2" == "webgpu" ]]; then
+                CUDA_MODE="off"
+                VULKAN_MODE="off"
+                HIP_MODE="off"
+                WEBGPU_MODE="on"
             elif [[ "$2" == "hip" || "$2" == "rocm" ]]; then
                 CUDA_MODE="off"
                 VULKAN_MODE="off"
@@ -70,6 +76,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --vulkan)
             VULKAN_MODE="$2"
+            shift 2
+            ;;
+        --webgpu)
+            WEBGPU_MODE="$2"
             shift 2
             ;;
         --hip)
@@ -106,10 +116,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --with-examples)
             WITH_EXAMPLES="ON"
-            shift
-            ;;
-        --with-warmbench)
-            WITH_WARMBENCH="ON"
             shift
             ;;
         --deployment-build)
@@ -244,6 +250,15 @@ case "$VULKAN_MODE" in
         ;;
 esac
 
+case "$WEBGPU_MODE" in
+    on) ENGINE_ENABLE_WEBGPU="ON" ;;
+    off) ENGINE_ENABLE_WEBGPU="OFF" ;;
+    *)
+        echo "Unknown --webgpu mode: $WEBGPU_MODE (expected on or off)" >&2
+        exit 1
+        ;;
+esac
+
 ENGINE_ENABLE_HIP="OFF"
 HIP_CLANG_C=""
 HIP_CLANG_CXX=""
@@ -326,8 +341,9 @@ ENABLED_GPU_BACKENDS=0
 [[ "$ENGINE_ENABLE_CUDA" == "ON" ]] && ENABLED_GPU_BACKENDS=$((ENABLED_GPU_BACKENDS + 1))
 [[ "$ENGINE_ENABLE_VULKAN" == "ON" ]] && ENABLED_GPU_BACKENDS=$((ENABLED_GPU_BACKENDS + 1))
 [[ "$ENGINE_ENABLE_HIP" == "ON" ]] && ENABLED_GPU_BACKENDS=$((ENABLED_GPU_BACKENDS + 1))
+[[ "$ENGINE_ENABLE_WEBGPU" == "ON" ]] && ENABLED_GPU_BACKENDS=$((ENABLED_GPU_BACKENDS + 1))
 if [[ "$ENABLED_GPU_BACKENDS" -gt 1 ]]; then
-    echo "CUDA, Vulkan, and HIP backends are mutually exclusive in this script" >&2
+    echo "CUDA, Vulkan, HIP, and WebGPU backends are mutually exclusive in this script" >&2
     exit 1
 fi
 
@@ -338,6 +354,8 @@ elif [[ "$ENGINE_ENABLE_VULKAN" == "ON" ]]; then
     BACKEND_NAME="vulkan"
 elif [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
     BACKEND_NAME="hip"
+elif [[ "$ENGINE_ENABLE_WEBGPU" == "ON" ]]; then
+    BACKEND_NAME="webgpu"
 fi
 
 BUILD_TYPE_NAME="$(printf '%s' "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')"
@@ -377,6 +395,7 @@ if [[ "$ENGINE_ENABLE_CUDA" == "ON" ]]; then
 fi
 echo "Including Vulkan backend: $ENGINE_ENABLE_VULKAN"
 echo "Including HIP backend: $ENGINE_ENABLE_HIP"
+echo "Including WebGPU backend: $ENGINE_ENABLE_WEBGPU"
 if [[ "$ENGINE_ENABLE_HIP" == "ON" ]]; then
     echo "ROCm clang: $HIP_CLANG_CXX"
     echo "GPU targets: $GPU_TARGETS"
@@ -385,7 +404,6 @@ echo "Native CPU optimization: $NATIVE_CPU"
 echo "llamafile SGEMM: $LLAMAFILE"
 echo "Building examples: $WITH_EXAMPLES"
 echo "Building tests: $WITH_TESTS"
-echo "Building warmbench: $WITH_WARMBENCH"
 echo "Deployment build: $AUDIOCPP_DEPLOYMENT_BUILD"
 echo "Native model manager: $AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
 if [[ "$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER" == "ON" ]]; then
@@ -405,11 +423,11 @@ CMAKE_ARGS=(
     -DENGINE_ENABLE_CUDA="$ENGINE_ENABLE_CUDA"
     -DENGINE_ENABLE_VULKAN="$ENGINE_ENABLE_VULKAN"
     -DENGINE_ENABLE_HIP="$ENGINE_ENABLE_HIP"
+    -DENGINE_ENABLE_WEBGPU="$ENGINE_ENABLE_WEBGPU"
     -DENGINE_ENABLE_NATIVE_CPU="$NATIVE_CPU"
     -DENGINE_ENABLE_LLAMAFILE="$LLAMAFILE"
     -DENGINE_BUILD_EXAMPLES="$WITH_EXAMPLES"
     -DENGINE_BUILD_TESTS="$WITH_TESTS"
-    -DENGINE_BUILD_WARMBENCH="$WITH_WARMBENCH"
     -DAUDIOCPP_DEPLOYMENT_BUILD="$AUDIOCPP_DEPLOYMENT_BUILD"
     -DAUDIOCPP_BUILD_NATIVE_MODEL_MANAGER="$AUDIOCPP_BUILD_NATIVE_MODEL_MANAGER"
     -DAUDIOCPP_USE_SYSTEM_OPENSSL="$AUDIOCPP_USE_SYSTEM_OPENSSL"

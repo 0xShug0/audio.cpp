@@ -186,19 +186,8 @@ MeanVC2PreparedAudio prepare_meanvc2_source_audio_16k(const runtime::AudioBuffer
         engine::audio::SoxrResampleOptions options;
         options.output_length_policy = engine::audio::SoxrOutputLengthPolicy::ExactExpected;
         options.warning_context = "MeanVC2 source";
-        options.fallback_description = "torchaudio sinc-Hann resampling";
-        if (auto resampled = engine::audio::try_resample_mono_soxr(
-                prepared.mono_16k,
-                audio.sample_rate,
-                kSampleRate,
-                options)) {
-            prepared.mono_16k = std::move(*resampled);
-        } else {
-            prepared.mono_16k = engine::audio::resample_mono_torchaudio_sinc_hann(
-                prepared.mono_16k,
-                audio.sample_rate,
-                kSampleRate);
-        }
+        prepared.mono_16k = engine::audio::resample_mono_soxr_or_sinc(
+            prepared.mono_16k, audio.sample_rate, kSampleRate, options);
     }
     return prepared;
 }

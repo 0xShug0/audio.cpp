@@ -16,6 +16,8 @@
 
 namespace engine::models::ace_step {
 
+runtime::AudioBuffer ace_step_prepare_reference_audio(const runtime::AudioBuffer & audio, uint32_t seed);
+
 class AceStepPreDitRuntime {
 public:
     AceStepPreDitRuntime(

@@ -35,6 +35,8 @@ struct RelativeAttentionConfig {
     int64_t right_context = -1;
     int64_t cache_drop_size = 0;
     bool use_flash_attention = false;
+    // Original ESPnet layout: T positional rows rather than 2*T-1.
+    bool legacy_position_layout = false;
 };
 
 struct AttentionWeights {

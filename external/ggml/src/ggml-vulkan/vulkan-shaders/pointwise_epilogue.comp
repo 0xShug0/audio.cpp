@@ -1,0 +1,105 @@
+#version 450
+#include "types.glsl"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+layout(binding = 0) readonly buffer X { float x[]; };
+layout(binding = 1) readonly buffer B { float b[]; };
+layout(binding = 2) readonly buffer G { float g[]; };
+layout(binding = 3) readonly buffer R { float r[]; };
+layout(binding = 4) writeonly buffer Y { D_TYPE y[]; };
+layout(push_constant) uniform Params {
+    uvec4 shape;
+    uvec4 bne;
+    uvec4 bnb;
+    uvec4 gne;
+    uvec4 gnb;
+    uint xo; uint bo; uint go; uint ro; uint yo;
+    uint n; uint flags; uint mode;
+    float eps; float factor; float offset;
+} p;
+
+uint broadcast_index(uint i, uint col, uvec4 ne, uvec4 nb) {
+    // Feature vectors and scalars do not need multidimensional indexing.
+    if (all(equal(ne.yzw, uvec3(1)))) {
+        return (ne.x == p.shape.x ? col : col % ne.x) * nb.x;
+    }
+    uvec4 idx;
+    idx.x = col; i /= p.shape.x;
+    idx.y = i % p.shape.y; i /= p.shape.y;
+    idx.z = i % p.shape.z; idx.w = i / p.shape.z;
+    idx %= ne;
+    return idx.x * nb.x + idx.y * nb.y + idx.z * nb.z + idx.w * nb.w;
+}
+float finish(float v) {
+    return (p.flags & 1) != 0 ? bf16_to_fp32(fp32_to_bf16(v)) : v;
+}
+
+#if AFFINE_NORM
+// Match SCALE's expression before the separate affine multiply/add boundaries.
+float transform_scale(float value) { return p.factor * value + p.offset; }
+shared vec2 sums[512];
+void main() {
+    uint row = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+    vec2 sum = vec2(0.0);
+    for (uint col = tid; col < p.shape.x; col += 512) {
+        float v = x[p.xo + row * p.shape.x + col];
+        if (p.mode == 0) { sum.x += v; sum.y += v * v; }
+        else sum.x += v * v;
+    }
+    sums[tid] = sum;
+    barrier();
+    for (uint step = 256; step > 0; step >>= 1) {
+        if (tid < step) sums[tid] += sums[tid + step];
+        barrier();
+    }
+    float mean = p.mode == 0 ? sums[0].x / p.shape.x : 0.0;
+    float var = p.mode == 0 ? sums[0].y / p.shape.x - mean * mean : sums[0].x / p.shape.x;
+    float inv = inversesqrt(var + p.eps);
+    for (uint col = tid; col < p.shape.x; col += 512) {
+        uint i = row * p.shape.x + col;
+        float normal = (x[p.xo + i] - mean) * inv;
+        float scale = g[p.go + broadcast_index(i, col, p.gne, p.gnb)];
+        if ((p.flags & 8) != 0) scale = transform_scale(scale);
+        precise float scaled = normal * scale;
+        precise float result = scaled + b[p.bo + broadcast_index(i, col, p.bne, p.bnb)];
+#if defined(DATA_D_BF16)
+        y[p.yo + i] = D_TYPE(fp32_to_bf16(finish(result)));
+#else
+        y[p.yo + i] = finish(result);
+#endif
+    }
+}
+#else
+float activation(float a) {
+    if (p.mode == 0) {
+        float v = 0.79788456080286535587989211986876 * a * (1.0 + 0.044715 * a * a);
+        return 0.5 * a * (2.0 - 2.0 / (exp(2 * v) + 1));
+    }
+    if (p.mode == 1) return a / (1.0 + exp(-a));
+    if (p.mode == 2) return a / (1.0 + exp(-1.702 * a));
+    // Same erf approximation as gelu_erf.comp.
+    float ax = a * 0.70710678118654752440;
+    float z = abs(ax);
+    float t = 1.0 / (1.0 + 0.3275911 * z);
+    float approx = 1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t
+        - 0.284496736) * t + 0.254829592) * t * exp(-z * z);
+    return 0.5 * a * (1.0 + sign(ax) * approx);
+}
+void main() {
+    uint i = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+    if (i >= p.n) return;
+    const uint col = i % p.shape.x;
+    precise float value = x[p.xo + i];
+    if ((p.flags & 2) != 0) value = value + b[p.bo + broadcast_index(i, col, p.bne, p.bnb)];
+    if ((p.flags & 4) != 0) {
+        precise float gated = value * g[p.go + broadcast_index(i, col, p.gne, p.gnb)];
+        value = gated + r[p.ro + i];
+    } else value = activation(value);
+#if defined(DATA_D_BF16)
+    y[p.yo + i] = D_TYPE(fp32_to_bf16(finish(value)));
+#else
+    y[p.yo + i] = finish(value);
+#endif
+}
+#endif

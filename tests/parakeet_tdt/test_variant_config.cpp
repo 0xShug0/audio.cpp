@@ -1,4 +1,6 @@
 #include "engine/community_models/parakeet_tdt/assets.h"
+#include "engine/community_models/parakeet_tdt/routing.h"
+#include "engine/community_models/parakeet_tdt/session.h"
 #include "engine/community_models/parakeet_tdt/word_timestamps.h"
 #include "engine/framework/io/safetensors.h"
 #include "engine/framework/model_spec/package.h"
@@ -49,9 +51,20 @@ void test_config(const std::filesystem::path & root) {
     write(root / "config.json", config("", ",\"variant\":\"phonon2\""));
     auto phonon = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
     engine::test::require_eq(phonon->config.variant, std::string("phonon2"), "explicit Phonon variant");
+    using namespace engine::community_models::parakeet_tdt;
+    engine::test::require(phonon->impl == &kParakeetImplementation,
+                         "variant metadata does not select an implementation");
+    auto explicit_phonon = load_parakeet_assets(root, "phonon2_asr");
+    engine::test::require(explicit_phonon->impl == &kPhononImplementation,
+                         "Phonon family selects its registered implementation");
     engine::test::require_eq(phonon->config.word_timestamp_mode, std::string("default"), "variant does not override timestamp policy");
     write(root / "config.json", config("", ",\"variant\":\"underdog_bark3_pro\""));
     auto bark = engine::community_models::parakeet_tdt::load_parakeet_assets(root);
+    engine::test::require(bark->impl == &kParakeetImplementation,
+                         "Bark variant metadata does not override the family");
+    auto explicit_bark = load_parakeet_assets(root, "underdog_bark3");
+    engine::test::require(explicit_bark->impl == &kBarkImplementation,
+                         "Bark family selects its registered implementation");
     engine::test::require_eq(bark->config.variant, std::string("underdog_bark3_pro"), "explicit Bark variant");
     engine::test::require_eq(bark->config.word_timestamp_mode, std::string("default"), "Bark retains standard TDT timing policy");
     write(root / "config.json", config("", ",\"variant\":\"underdog_bark3_plus\""));
@@ -99,6 +112,25 @@ int main() {
     try {
         test_config(root);
         test_token_duration_timestamps();
+        engine::test::require(
+            &engine::community_models::parakeet_tdt::implementation_for_family("haas_asr") ==
+                &engine::community_models::parakeet_tdt::kHaasImplementation, "Haas selects its registered KDA implementation");
+        engine::test::require_eq(engine::community_models::parakeet_tdt::make_haas_asr_loader()->family(),
+                                std::string("haas_asr"), "Haas public family");
+        engine::test::require(engine::model_spec::model_contract("haas_asr").has_value(), "Haas family contract");
+        const auto phonon_contract = engine::model_spec::model_contract("phonon2_asr");
+        const auto bark_contract = engine::model_spec::model_contract("underdog_bark3");
+        engine::test::require(phonon_contract.has_value() && bark_contract.has_value(), "dedicated family contracts");
+        engine::test::require(phonon_contract->session_option_keys.count("phonon2_asr.matmul_weight_type") == 1,
+                             "Phonon session options use its public family namespace");
+        engine::test::require(bark_contract->session_option_keys.count("underdog_bark3.matmul_weight_type") == 1,
+                             "Bark session options use its public family namespace");
+        engine::test::require(phonon_contract->request_option_keys.count("hotwords") == 1 &&
+                             bark_contract->request_option_keys.count("hotwords") == 1, "registered hotword contracts");
+        engine::test::require_eq(engine::community_models::parakeet_tdt::make_phonon2_asr_loader()->family(),
+                                std::string("phonon2_asr"), "Phonon public family");
+        engine::test::require_eq(engine::community_models::parakeet_tdt::make_underdog_bark3_loader()->family(),
+                                std::string("underdog_bark3"), "Bark public family");
         std::filesystem::remove_all(root);
         std::cout << "PASS: legacy defaults, Phonon and Bark variant policies\n";
         return 0;
