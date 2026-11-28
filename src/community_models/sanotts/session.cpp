@@ -353,8 +353,20 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
                 audio = piper_runtime_->synthesize(encoded.token_ids, chunk_options);
             }
             ++rendered_chunks;
+            // Limit each clip while it is still in cache.
+            for (float & sample : audio.samples) {
+                sample = std::clamp(sample, -1.0F, 1.0F);
+            }
             runtime::append_audio_buffer(merged, audio);
         };
+    // Growing the output clip by clip copies long outputs repeatedly, so once
+    // enough chunks show the speaking rate, reserve room for the rest.
+    constexpr size_t kEstimateChunks = 16;
+    size_t text_bytes = 0;
+    for (const auto & chunk : chunks) {
+        text_bytes += chunk.size();
+    }
+    size_t rendered_bytes = 0;
     for (size_t index = 0; index < chunks.size(); ++index) {
         if (index != 0) {
             append_pause(
@@ -362,9 +374,12 @@ runtime::TaskResult SanoTtsSession::run(const runtime::TaskRequest & request) {
                 SanoTtsFrontend::boundary_pause_seconds(chunks[index - 1]));
         }
         render_chunk(chunks[index], 0);
-    }
-    for (float & sample : merged.samples) {
-        sample = std::clamp(sample, -1.0F, 1.0F);
+        rendered_bytes += chunks[index].size();
+        if (index + 1 == kEstimateChunks && chunks.size() > kEstimateChunks && rendered_bytes > 0) {
+            const double per_byte =
+                static_cast<double>(merged.samples.size()) / static_cast<double>(rendered_bytes);
+            merged.samples.reserve(static_cast<size_t>(per_byte * static_cast<double>(text_bytes) * 1.15));
+        }
     }
     engine::debug::trace_log_scalar("sanotts.text_chunk_size", chunk_size);
     engine::debug::trace_log_scalar(

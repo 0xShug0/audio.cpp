@@ -241,6 +241,7 @@ Core and community models are grouped by task and listed alphabetically within e
 | **latentsync** (C) | Video lip sync | lang agnostic | [LatentSync 1.6](docs/models/latentsync.md) | GGUF F32/F16/Q8, experimental |
 | **liveavatar** (C) | Audio-to-video | auto | [LiveAvatar](docs/models/liveavatar.md) | GGUF NVFP4 |
 | **magenta_realtime_2** | Music | music | [Magenta RealTime 2 Small / Base](docs/models/magenta_realtime_2.md) | GGUF F16/Q8_0, Stream |
+| **foundation_1** | Music, instrument samples | en | [Foundation-1](docs/models/foundation_1.md) | GGUF F16/Q8, Experimental |
 | **midashenglm_gen** | Music, SFX | auto | [MiDashengLM-Gen](docs/models/midashenglm_gen.md) | GGUF F32/Q8 |
 | **minimax_h3** (C) | Video, Music, TTS/Dialogue | auto | [MiniMax-H3](docs/models/minimax_h3.md) | GGUF Q4/INT8 |
 | **minimax_music3** (C)<br>[@0xShug0](https://github.com/0xShug0)<br>[@JoeMattie](https://github.com/JoeMattie) | Music | auto | [MiniMax Music 3](docs/models/minimax_music3.md) | GGUF Q4/Q8 |

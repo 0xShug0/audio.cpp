@@ -1,4 +1,8 @@
 #include "engine/framework/sampling/torch_random.h"
+#include "engine/framework/core/prepared_graph.h"
+#include "engine/framework/debug/profiler.h"
+
+#include <cstring>
 
 #include <cmath>
 #include <iostream>
@@ -202,10 +206,58 @@ void test_empty_null_output_is_allowed() {
     engine::sampling::fill_torch_cuda_uniform(nullptr, 0, 0);
 }
 
+void test_backend_tensor_fill(engine::core::BackendType backend) {
+    using namespace engine;
+    core::BackendConfig config;
+    config.type = backend;
+    config.threads = 8;
+    core::ExecutionContext execution(config);
+    const auto policy = sampling::resolve_torch_cuda_sampling_policy(backend, config.device,
+        "test.rng", "Tensor RNG test");
+    for (int64_t count : {1,17,1025,131073}) {
+        core::PreparedGraph bank(execution, {"test.rng", 64 * 1024, 8, 64 * 1024});
+        auto root = core::make_tensor(bank.persistent_build_context(), GGML_TYPE_F32,
+            core::TensorShape::from_dims({count + 4}));
+        auto view = core::wrap_tensor(ggml_view_1d(bank.persistent_build_context().ggml,
+            root.tensor, count, 4 * sizeof(float)), core::TensorShape::from_dims({count}), GGML_TYPE_F32);
+        bank.allocate_persistent();
+        for (const auto & target : {root, view}) {
+            for (auto precision : {sampling::TorchRandnPrecision::Float32, sampling::TorchRandnPrecision::BFloat16}) {
+                for (uint64_t offset : {uint64_t(0),uint64_t(4),uint64_t(8)}) {
+                    const auto expected = sampling::generate_torch_cuda_tensor_iterator_randn(
+                        static_cast<size_t>(ggml_nelements(target.tensor)), 42, offset, policy, precision);
+                    sampling::fill_torch_cuda_tensor_iterator_randn(execution.backend(), target,
+                        43, offset, policy, precision);
+                    sampling::fill_torch_cuda_tensor_iterator_randn(execution.backend(), target,
+                        42, offset, policy, precision);
+                    ggml_backend_synchronize(execution.backend());
+                    const auto actual = core::read_tensor_f32(target.tensor);
+                    if (actual.size() != expected.size() ||
+                        std::memcmp(actual.data(), expected.data(), expected.size() * sizeof(float)) != 0)
+                        throw std::runtime_error("Backend tensor RNG differs from the existing host API");
+                }
+            }
+        }
+    }
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char ** argv) {
     try {
+        auto backend = engine::core::BackendType::Cpu;
+        for (int i = 1; i < argc; ++i) {
+            const std::string flag = argv[i];
+            if (++i >= argc) throw std::runtime_error("Missing test argument");
+            const std::string value = argv[i];
+            if (flag == "--log") engine::debug::configure_logging({true, value});
+            else if (flag == "--backend") {
+                if (value == "cuda") backend = engine::core::BackendType::Cuda;
+                else if (value == "vulkan") backend = engine::core::BackendType::Vulkan;
+                else if (value != "cpu") throw std::runtime_error("Unknown backend");
+            } else throw std::runtime_error("Unknown test argument");
+        }
+        const auto started = std::chrono::steady_clock::now();
         test_float32_matches_torch_cuda();
         test_bfloat16_matches_torch_cuda();
         test_fill_matches_vector_api();
@@ -213,6 +265,8 @@ int main() {
         test_uniform_matches_torch_cuda();
         test_tensor_iterator_exponential_matches_torch_cuda();
         test_empty_null_output_is_allowed();
+        test_backend_tensor_fill(backend);
+        engine::debug::timing_log_scalar("session.wall_ms", engine::debug::elapsed_ms(started));
     } catch (const std::exception & error) {
         std::cerr << error.what() << '\n';
         return 1;

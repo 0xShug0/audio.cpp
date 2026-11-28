@@ -50,6 +50,11 @@ void depth_frame_end_cuda(
     int64_t hidden_size,
     void * stream);
 
+void fill_torch_cuda_tensor_iterator_randn_device(
+    float * output, size_t count, uint64_t seed, uint64_t offset_blocks,
+    const TorchCudaSamplingPolicy & policy, TorchRandnPrecision precision,
+    void * stream);
+
 void fill_torch_cuda_tensor_iterator_randn_cuda(
     float * output,
     size_t count,

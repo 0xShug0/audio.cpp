@@ -56,6 +56,7 @@ IrodoriModelConfig parse_model_config(const assets::ResourceBundle & resources) 
     config.dropout = json::optional_f32(root, "dropout", config.dropout);
     config.text_vocab_size = json::optional_i64(root, "text_vocab_size", config.text_vocab_size);
     config.text_encoder_type = json::optional_string(root, "text_encoder_type", config.text_encoder_type);
+    config.text_tokenizer_repo = json::optional_string(root, "text_tokenizer_repo", config.text_tokenizer_repo);
     config.pretrained_projector_type =
         json::optional_string(root, "pretrained_projector_type", config.pretrained_projector_type);
     config.pretrained_projector_hidden_ratio =

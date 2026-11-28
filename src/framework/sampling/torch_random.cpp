@@ -266,6 +266,35 @@ void fill_torch_cuda_tensor_iterator_randn(
     }
 }
 
+void fill_torch_cuda_tensor_iterator_randn(
+    ggml_backend_t backend, const core::TensorValue & output,
+    uint64_t seed, uint64_t offset_blocks, const TorchCudaSamplingPolicy & policy,
+    TorchRandnPrecision precision) {
+    if (!backend || !output.tensor || !output.tensor->data || output.tensor->type != GGML_TYPE_F32 ||
+        !ggml_is_contiguous(output.tensor))
+        throw std::invalid_argument("TensorIterator randn requires an allocated contiguous F32 target");
+    auto * storage = output.tensor;
+    while (storage->view_src) storage = storage->view_src;
+    if (!storage->buffer)
+        throw std::invalid_argument("TensorIterator randn target has no backend storage");
+    const auto count = static_cast<size_t>(ggml_nelements(output.tensor));
+#ifdef ENGINE_HAS_CUDA_TORCH_RANDOM
+    if (policy.cuda_fast_path && core::backend_type(backend) == core::BackendType::Cuda &&
+        !ggml_backend_buffer_is_host(storage->buffer)) {
+        detail::fill_torch_cuda_tensor_iterator_randn_device(static_cast<float *>(output.tensor->data),
+            count, seed, offset_blocks, policy, precision, core::backend_cuda_stream(backend));
+        return;
+    }
+#endif
+    if (ggml_backend_buffer_is_host(storage->buffer)) {
+        fill_torch_cuda_tensor_iterator_randn(static_cast<float *>(output.tensor->data), count,
+            seed, offset_blocks, policy, precision);
+    } else {
+        const auto values = generate_torch_cuda_tensor_iterator_randn(count, seed, offset_blocks, policy, precision);
+        core::write_tensor_f32(output, values);
+    }
+}
+
 std::vector<float> generate_torch_cuda_tensor_iterator_randn(
     size_t count,
     uint64_t seed,

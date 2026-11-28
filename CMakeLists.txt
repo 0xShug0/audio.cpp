@@ -674,7 +674,9 @@ add_library(engine_core OBJECT
     src/framework/modules/predictor_modules.cpp
     src/framework/modules/positional_modules.cpp
     src/framework/modules/text_encoders/t5_base_encoder.cpp
+    src/framework/modules/text_encoders/t5_encoder_runtime.cpp
     src/framework/modules/text_encoders/t5_gemma_encoder.cpp
+    src/framework/modules/text_encoders/t5_encoder_runtime.cpp
     src/framework/modules/transformers/gemma_decoder.cpp
     src/framework/modules/optimizations/fast_kv_modules.cpp
     src/framework/tokenizers/hf_tokenizer_json.cpp
@@ -1748,6 +1750,12 @@ audiocpp_add_model(dettato
     LOADERS engine::community_models::dettato::make_dettato_loader
 )
 
+audiocpp_add_model(foundation_1
+    SOURCES src/models/foundation_1/assets.cpp src/models/foundation_1/pipeline.cpp src/models/foundation_1/session.cpp
+    INCLUDES engine/models/foundation_1/pipeline.h
+    LOADERS engine::models::foundation_1::make_foundation_1_loader
+)
+
 audiocpp_add_model(rosvot
     SOURCES src/models/rosvot/runtime.cpp src/models/rosvot/session.cpp
     INCLUDES engine/models/rosvot/session.h
@@ -2491,10 +2499,6 @@ audiocpp_add_model(stable_audio
         src/models/stable_audio/assets.cpp
         src/models/stable_audio/conditioner.cpp
         src/models/stable_audio/conditioner_runtime.cpp
-        src/models/stable_audio/foundation/conditioner.cpp
-        src/models/stable_audio/foundation/oobleck_autoencoder.cpp
-        src/models/stable_audio/foundation/rf_dit.cpp
-        src/models/stable_audio/foundation/session.cpp
         src/models/stable_audio/loader.cpp
         src/models/stable_audio/request.cpp
         src/models/stable_audio/rf_dit.cpp

@@ -6,6 +6,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/debug/profiler.h"
 #include "engine/framework/modules/activation_modules.h"
+#include "engine/framework/modules/attention/scaled_dot_product_attention.h"
 #include "engine/framework/modules/positional_modules.h"
 #include "engine/framework/modules/primitive_modules.h"
 #include "engine/framework/modules/structural_modules.h"
@@ -29,13 +30,17 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kSameWeightContextBytesSmall = 900ull * 1024ull * 1024ull;
-constexpr size_t kSameWeightContextBytesMedium = 2200ull * 1024ull * 1024ull;
+constexpr size_t kSameWeightContextBytes = 8ull * 1024ull * 1024ull;
 constexpr int64_t kSameChunkLatents = 128;
 constexpr int64_t kSameChunkOverlap = 32;
 constexpr float kSameBottleneckEvalNoiseScale = 1.0e-3F;
 constexpr float kSameNormEps = 1.0e-3F;
 constexpr float kPi = 3.14159265358979323846F;
+
+struct SameDecodeTimings {
+    double chunk_latent = 0, bottleneck_noise = 0, token_noise = 0;
+    double input_upload = 0, graph_compute = 0, output_read = 0, output_pack = 0;
+};
 
 int64_t round_up_to_multiple(int64_t value, int64_t multiple) {
     if (multiple <= 0) {
@@ -160,8 +165,8 @@ core::TensorValue broadcast_last_dim(
         shape.dims[i] = 1;
     }
     shape.dims[shape.rank - 1] = dim;
-    auto reshaped = core::reshape_tensor(ctx, value, shape);
-    return modules::RepeatModule({like.shape}).build(ctx, reshaped);
+    // Elementwise modules broadcast this view; no activation-sized copy.
+    return core::reshape_tensor(ctx, value, shape);
 }
 
 core::TensorValue broadcast_scalar(
@@ -174,8 +179,7 @@ core::TensorValue broadcast_scalar(
     for (size_t i = 0; i < shape.rank; ++i) {
         shape.dims[i] = 1;
     }
-    auto reshaped = core::reshape_tensor(ctx, value, shape);
-    return modules::RepeatModule({like.shape}).build(ctx, reshaped);
+    return core::reshape_tensor(ctx, value, shape);
 }
 
 core::TensorValue dynamic_tanh_norm(
@@ -184,12 +188,12 @@ core::TensorValue dynamic_tanh_norm(
     const StableAudioSameNormWeights & weights) {
     const int64_t dim = input.shape.last_dim();
     auto alpha = broadcast_scalar(ctx, weights.alpha, input);
-    auto hidden = modules::MulModule{}.build(ctx, input, alpha);
+    auto hidden = modules::MulModule(true).build(ctx, input, alpha);
     hidden = modules::TanhModule{}.build(ctx, hidden);
     auto gamma = broadcast_last_dim(ctx, weights.gamma, hidden, dim);
     auto beta = broadcast_last_dim(ctx, weights.beta, hidden, dim);
-    hidden = modules::MulModule{}.build(ctx, hidden, gamma);
-    return modules::AddModule{}.build(ctx, hidden, beta);
+    hidden = modules::MulModule(true).build(ctx, hidden, gamma);
+    return modules::AddModule(false, true).build(ctx, hidden, beta);
 }
 
 core::TensorValue reshape_heads(
@@ -201,32 +205,6 @@ core::TensorValue reshape_heads(
         ctx,
         ensure_contiguous(ctx, input),
         core::TensorShape::from_dims({input.shape.dims[0], input.shape.dims[1], heads, dim}));
-}
-
-core::TensorValue same_attention(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & q_heads,
-    const core::TensorValue & k_heads,
-    const core::TensorValue & v_heads,
-    const core::TensorValue * attention_mask,
-    int64_t dim) {
-    const auto q = ensure_contiguous(ctx, q_heads);
-    const auto k = ensure_contiguous(ctx, k_heads);
-    const auto v = ensure_contiguous(ctx, v_heads);
-    auto * flash = ggml_flash_attn_ext(
-        ctx.ggml,
-        q.tensor,
-        k.tensor,
-        v.tensor,
-        attention_mask != nullptr ? attention_mask->tensor : nullptr,
-        1.0F / std::sqrt(static_cast<float>(dim)),
-        0.0F,
-        0.0F);
-    ggml_flash_attn_ext_set_prec(flash, GGML_PREC_F32);
-    return core::wrap_tensor(
-        flash,
-        core::TensorShape::from_dims({q.shape.dims[0], q.shape.dims[2], q.shape.dims[1], dim}),
-        GGML_TYPE_F32);
 }
 
 core::TensorValue same_self_attention(
@@ -257,7 +235,13 @@ core::TensorValue same_self_attention(
     auto q_heads = modules::TransposeModule({{0, 2, 1, 3}, q.shape.rank}).build(ctx, q);
     auto k_heads = modules::TransposeModule({{0, 2, 1, 3}, k.shape.rank}).build(ctx, k);
     auto v_heads = modules::TransposeModule({{0, 2, 1, 3}, v.shape.rank}).build(ctx, v);
-    auto context = same_attention(ctx, q_heads, k_heads, v_heads, attention_mask, config.same_dim_heads);
+    const modules::ScaledDotProductAttentionModule attention({config.same_dim_heads,
+        ctx.backend_type == core::BackendType::Metal
+            ? modules::ScaledDotProductAttentionLowering::Flash
+            : modules::ScaledDotProductAttentionLowering::FlashPreserveViews,
+        GGML_PREC_F32});
+    const auto mask = attention_mask ? std::optional<core::TensorValue>(*attention_mask) : std::nullopt;
+    auto context = attention.build(ctx, q_heads, k_heads, v_heads, mask);
     if (config.same_differential) {
         q_diff = dynamic_tanh_norm(ctx, reshape_heads(ctx, q_diff, heads, config.same_dim_heads), weights.q_norm);
         k_diff = dynamic_tanh_norm(ctx, reshape_heads(ctx, k_diff, heads, config.same_dim_heads), weights.k_norm);
@@ -265,7 +249,7 @@ core::TensorValue same_self_attention(
         k_diff = modules::RoPEModule({config.same_dim_heads / 2, GGML_ROPE_TYPE_NEOX, 10000.0F}).build(ctx, k_diff, positions);
         auto qd_heads = modules::TransposeModule({{0, 2, 1, 3}, q_diff.shape.rank}).build(ctx, q_diff);
         auto kd_heads = modules::TransposeModule({{0, 2, 1, 3}, k_diff.shape.rank}).build(ctx, k_diff);
-        auto diff_context = same_attention(ctx, qd_heads, kd_heads, v_heads, attention_mask, config.same_dim_heads);
+        auto diff_context = attention.build(ctx, qd_heads, kd_heads, v_heads, mask);
         context = modules::AddModule{}.build(ctx, context, scale_tensor(ctx, diff_context, -1.0F));
     }
     context = core::reshape_tensor(
@@ -526,7 +510,7 @@ StableAudioSameWeights load_stable_audio_same_weights(
         backend_type,
         "stable_audio.same.weights",
         weight_context_bytes != 0 ? weight_context_bytes :
-            (config.medium_architecture ? kSameWeightContextBytesMedium : kSameWeightContextBytesSmall));
+            kSameWeightContextBytes);
     weights.bottleneck_bias = weights.store->load_f32_tensor(source, "pretransform.model.bottleneck.bias", {1, config.latent_dim, 1});
     weights.bottleneck_scaling_factor = weights.store->load_f32_tensor(source, "pretransform.model.bottleneck.scaling_factor", {1, config.latent_dim, 1});
     weights.bottleneck_running_std = weights.store->load_f32_tensor(source, "pretransform.model.bottleneck.running_std", {1});
@@ -585,7 +569,7 @@ public:
 
     ~Graph() {
         if (backend_ != nullptr && graph_ != nullptr) {
-            engine::core::release_backend_graph_resources(backend_type_, backend_, graph_);
+            engine::core::release_backend_graph_resources(backend_type_, backend_, graph_, true);
         }
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -597,29 +581,37 @@ public:
     }
 
     std::vector<float> decode_chunk(
-        const std::vector<float> & latents,
-        const std::vector<float> & bottleneck_noise,
-        const std::vector<float> & token_noise,
-        double & input_upload_ms,
-        double & graph_compute_ms,
-        double & output_read_ms) const {
+        const std::vector<float> & latents, int64_t source_latents, uint64_t seed,
+        uint64_t & offset, const sampling::TorchCudaSamplingPolicy & policy,
+        SameDecodeTimings & timings) const {
         const auto & config = assets_->config;
         const size_t latent_values = static_cast<size_t>(batch_ * config.latent_dim * latent_tokens_);
-        const size_t token_noise_values = static_cast<size_t>(batch_ * latent_tokens_ * config.same_strides.back() * dim_);
-        if (latents.size() != latent_values ||
-            bottleneck_noise.size() != latent_values ||
-            token_noise.size() != token_noise_values) {
+        if (latents.size() != latent_values || source_latents <= 0 || source_latents > latent_tokens_)
             throw std::runtime_error("Stable Audio SAME decode chunk input shape mismatch");
-        }
         const auto input_start = Clock::now();
         core::write_tensor_f32(input_, latents);
-        core::write_tensor_f32(bottleneck_noise_, bottleneck_noise);
-        core::write_tensor_f32(new_token_noise_, token_noise);
-        core::write_tensor_i32(positions_, positions_values_);
-        if (config.medium_architecture) {
-            core::write_tensor_f16(attention_mask_, attention_mask_values_);
+        timings.input_upload += engine::debug::elapsed_ms(input_start);
+        const auto bottleneck_start = Clock::now();
+        const auto source_values = static_cast<size_t>(batch_ * config.latent_dim * source_latents);
+        if (source_latents == latent_tokens_) {
+            sampling::fill_torch_cuda_tensor_iterator_randn(backend_, bottleneck_noise_, seed, offset, policy);
+        } else {
+            bottleneck_source_.resize(source_values);
+            sampling::fill_torch_cuda_tensor_iterator_randn(bottleneck_source_.data(), source_values,
+                seed, offset, policy);
+            bottleneck_padded_.assign(latent_values, 0.0F);
+            for (int64_t row = 0; row < batch_ * config.latent_dim; ++row)
+                std::copy_n(bottleneck_source_.begin() + row * source_latents, source_latents,
+                    bottleneck_padded_.begin() + row * latent_tokens_);
+            core::write_tensor_f32(bottleneck_noise_, bottleneck_padded_);
         }
-        input_upload_ms += engine::debug::elapsed_ms(input_start, Clock::now());
+        offset += sampling::torch_cuda_tensor_iterator_offset_blocks(source_values, policy);
+        timings.bottleneck_noise += engine::debug::elapsed_ms(bottleneck_start);
+        const auto token_start = Clock::now();
+        sampling::fill_torch_cuda_tensor_iterator_randn(backend_, new_token_noise_, seed, offset, policy);
+        offset += sampling::torch_cuda_tensor_iterator_offset_blocks(
+            static_cast<uint64_t>(ggml_nelements(new_token_noise_.tensor)), policy);
+        timings.token_noise += engine::debug::elapsed_ms(token_start);
         core::set_backend_threads(backend_, threads_);
         const auto compute_start = Clock::now();
         const ggml_status status = engine::core::compute_backend_graph(backend_, graph_, nullptr, "stable_audio.same_decode");
@@ -627,13 +619,13 @@ public:
             throw std::runtime_error("Stable Audio SAME decode graph compute failed");
         }
         const double compute_ms = engine::debug::elapsed_ms(compute_start, Clock::now());
-        graph_compute_ms += compute_ms;
+        timings.graph_compute += compute_ms;
         const auto output_start = Clock::now();
         const size_t output_values = static_cast<size_t>(
             batch_ * config.audio_channels * latent_tokens_ * config.downsampling_ratio);
         std::vector<float> output(output_values, 0.0F);
         ggml_backend_tensor_get(output_, output.data(), 0, output.size() * sizeof(float));
-        output_read_ms += engine::debug::elapsed_ms(output_start, Clock::now());
+        timings.output_read += engine::debug::elapsed_ms(output_start, Clock::now());
         for (const float value : output) {
             if (!std::isfinite(value)) {
                 throw std::runtime_error("Stable Audio SAME decode produced non-finite output");
@@ -645,7 +637,7 @@ public:
 private:
     void build() {
         const auto & config = assets_->config;
-        ggml_init_params params{config.medium_architecture ? 1024ull * 1024ull * 1024ull : 512ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{64ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("Stable Audio SAME ggml context initialization failed");
@@ -668,18 +660,20 @@ private:
         ggml_set_input(bottleneck_noise_.tensor);
         ggml_set_input(new_token_noise_.tensor);
         ggml_set_input(positions_.tensor);
+        ggml_set_output(positions_.tensor);
         if (config.medium_architecture) {
             attention_mask_ = core::make_tensor(
                 input_ctx,
                 GGML_TYPE_F16,
                 core::TensorShape::from_dims({batch_, 1, block_tokens_, block_tokens_}));
             ggml_set_input(attention_mask_.tensor);
+            ggml_set_output(attention_mask_.tensor);
         }
         core::ModuleBuildContext build_ctx{ctx_.get(), "stable_audio.same_decode", backend_type_};
         auto output = build_graph_output(build_ctx);
         output_ = output.tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr ||
@@ -687,6 +681,9 @@ private:
             !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("Stable Audio SAME decode backend buffer allocation failed");
         }
+        engine::debug::timing_log_context_reservation("stable_audio.same_decode.graph", ctx_.get());
+        engine::debug::timing_log_scalar("stable_audio.same_decode.buffer_mb",
+            ggml_gallocr_get_buffer_size(gallocr_, 0) / (1024.0 * 1024.0));
         positions_values_.assign(static_cast<size_t>(block_tokens_), 0);
         for (int64_t i = 0; i < block_tokens_; ++i) {
             positions_values_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
@@ -729,9 +726,8 @@ private:
     core::TensorValue build_graph_output(core::ModuleBuildContext & ctx) {
         const auto & config = assets_->config;
         auto running_std = core::reshape_tensor(ctx, weights_.bottleneck_running_std, core::TensorShape::from_dims({1, 1, 1}));
-        running_std = modules::RepeatModule({input_.shape}).build(ctx, running_std);
-        auto hidden = modules::MulModule{}.build(ctx, input_, running_std);
-        auto noise = modules::MulModule{}.build(ctx, bottleneck_noise_, running_std);
+        auto hidden = modules::MulModule(true).build(ctx, input_, running_std);
+        auto noise = modules::MulModule(true).build(ctx, bottleneck_noise_, running_std);
         noise = scale_tensor(ctx, noise, kSameBottleneckEvalNoiseScale);
         hidden = modules::AddModule{}.build(ctx, hidden, noise);
 
@@ -889,6 +885,7 @@ private:
     int64_t block_tokens_ = 0;
     const StableAudioSameWeights & weights_;
     std::unique_ptr<ggml_context, GgmlContextDeleter> ctx_;
+    mutable std::vector<float> bottleneck_source_, bottleneck_padded_;
     core::TensorValue input_;
     core::TensorValue bottleneck_noise_;
     core::TensorValue new_token_noise_;
@@ -927,7 +924,7 @@ public:
 
     ~EncoderGraph() {
         if (backend_ != nullptr && graph_ != nullptr) {
-            engine::core::release_backend_graph_resources(backend_type_, backend_, graph_);
+            engine::core::release_backend_graph_resources(backend_type_, backend_, graph_, true);
         }
         if (gallocr_ != nullptr) {
             ggml_gallocr_free(gallocr_);
@@ -935,23 +932,19 @@ public:
     }
 
     std::vector<float> encode_chunk(
-        const std::vector<float> & patched_audio,
-        const std::vector<float> & token_noise) const {
+        const std::vector<float> & patched_audio, uint64_t seed, uint64_t & offset,
+        const sampling::TorchCudaSamplingPolicy & policy) const {
         const auto & config = assets_->config;
         const size_t input_values = static_cast<size_t>(
             config.same_encoder_in_channels * kSameChunkLatents * config.same_strides.front());
-        const size_t token_values = static_cast<size_t>(kSameChunkLatents * dim_);
-        if (patched_audio.size() != input_values ||
-            (config.same_encoder_mask_noise > 0.0F && token_noise.size() != token_values)) {
+        if (patched_audio.size() != input_values) {
             throw std::runtime_error("Stable Audio SAME encoder chunk input shape mismatch");
         }
         core::write_tensor_f32(input_, patched_audio);
         if (config.same_encoder_mask_noise > 0.0F) {
-            core::write_tensor_f32(new_token_noise_, token_noise);
-        }
-        core::write_tensor_i32(positions_, positions_values_);
-        if (config.medium_architecture) {
-            core::write_tensor_f16(attention_mask_, attention_mask_values_);
+            sampling::fill_torch_cuda_tensor_iterator_randn(backend_, new_token_noise_, seed, offset, policy);
+            offset += sampling::torch_cuda_tensor_iterator_offset_blocks(
+                static_cast<uint64_t>(ggml_nelements(new_token_noise_.tensor)), policy);
         }
         core::set_backend_threads(backend_, threads_);
         const auto compute_start = Clock::now();
@@ -974,7 +967,7 @@ public:
 private:
     void build() {
         const auto & config = assets_->config;
-        ggml_init_params params{config.medium_architecture ? 1024ull * 1024ull * 1024ull : 512ull * 1024ull * 1024ull, nullptr, true};
+        ggml_init_params params{64ull * 1024ull * 1024ull, nullptr, true};
         ctx_.reset(ggml_init(params));
         if (ctx_ == nullptr) {
             throw std::runtime_error("Stable Audio SAME encoder ggml context initialization failed");
@@ -987,6 +980,7 @@ private:
         positions_ = core::make_tensor(input_ctx, GGML_TYPE_I32, core::TensorShape::from_dims({block_tokens_}));
         ggml_set_input(input_.tensor);
         ggml_set_input(positions_.tensor);
+        ggml_set_output(positions_.tensor);
         if (config.same_encoder_mask_noise > 0.0F) {
             new_token_noise_ = core::make_tensor(
                 input_ctx,
@@ -1000,12 +994,13 @@ private:
                 GGML_TYPE_F16,
                 core::TensorShape::from_dims({1, 1, block_tokens_, block_tokens_}));
             ggml_set_input(attention_mask_.tensor);
+            ggml_set_output(attention_mask_.tensor);
         }
         core::ModuleBuildContext build_ctx{ctx_.get(), "stable_audio.same_encode", backend_type_};
         auto output = build_graph_output(build_ctx);
         output_ = output.tensor;
         ggml_set_output(output_);
-        graph_ = ggml_new_graph_custom(ctx_.get(), 1048576, false);
+        graph_ = ggml_new_graph_custom(ctx_.get(), 65536, false);
         ggml_build_forward_expand(graph_, output_);
         gallocr_ = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend_));
         if (gallocr_ == nullptr ||
@@ -1013,6 +1008,9 @@ private:
             !ggml_gallocr_alloc_graph(gallocr_, graph_)) {
             throw std::runtime_error("Stable Audio SAME encoder backend buffer allocation failed");
         }
+        engine::debug::timing_log_context_reservation("stable_audio.same_encode.graph", ctx_.get());
+        engine::debug::timing_log_scalar("stable_audio.same_encode.buffer_mb",
+            ggml_gallocr_get_buffer_size(gallocr_, 0) / (1024.0 * 1024.0));
         positions_values_.assign(static_cast<size_t>(block_tokens_), 0);
         for (int64_t i = 0; i < block_tokens_; ++i) {
             positions_values_[static_cast<size_t>(i)] = static_cast<int32_t>(i);
@@ -1096,11 +1094,9 @@ private:
         hidden = core::reshape_tensor(ctx, ensure_contiguous(ctx, hidden), core::TensorShape::from_dims({1, kSameChunkLatents, dim_}));
         hidden = modules::LinearModule({dim_, config.latent_dim, true, GGML_PREC_F32}).build(ctx, hidden, weights_.encoder_out);
         hidden = modules::TransposeModule({{0, 2, 1}, 3}).build(ctx, hidden);
-        auto scale = modules::RepeatModule({hidden.shape}).build(ctx, weights_.bottleneck_scaling_factor);
-        auto bias = modules::RepeatModule({hidden.shape}).build(ctx, weights_.bottleneck_bias);
-        hidden = modules::AddModule{}.build(ctx, modules::MulModule{}.build(ctx, hidden, scale), bias);
+        hidden = modules::MulModule(true).build(ctx, hidden, weights_.bottleneck_scaling_factor);
+        hidden = modules::AddModule(false, true).build(ctx, hidden, weights_.bottleneck_bias);
         auto running_std = core::reshape_tensor(ctx, weights_.bottleneck_running_std, core::TensorShape::from_dims({1, 1, 1}));
-        running_std = modules::RepeatModule({hidden.shape}).build(ctx, running_std);
         return core::wrap_tensor(ggml_div(ctx.ggml, ensure_contiguous(ctx, hidden).tensor, ensure_contiguous(ctx, running_std).tensor), hidden.shape, GGML_TYPE_F32);
     }
 
@@ -1223,81 +1219,25 @@ std::vector<runtime::AudioBuffer> StableAudioSameRuntime::decode(
     }
     const int64_t frames_per_chunk = graph_latents * config.downsampling_ratio;
     const int64_t total_frames = latent_tokens * config.downsampling_ratio;
-    std::vector<float> channel_major(static_cast<size_t>(batch * config.audio_channels * total_frames), 0.0F);
-    std::vector<float> chunk_latent(static_cast<size_t>(batch * config.latent_dim * graph_latents), 0.0F);
-    std::vector<float> bottleneck_noise(static_cast<size_t>(batch * config.latent_dim * graph_latents), 0.0F);
-    std::vector<float> bottleneck_noise_source;
-    std::vector<float> token_noise;
-    double chunk_latent_ms = 0.0;
-    double bottleneck_noise_ms = 0.0;
-    double token_noise_ms = 0.0;
-    double input_upload_ms = 0.0;
-    double graph_compute_ms = 0.0;
-    double output_read_ms = 0.0;
-    double output_pack_ms = 0.0;
+    std::vector<runtime::AudioBuffer> out;
+    out.reserve(static_cast<size_t>(batch));
+    for (int64_t b = 0; b < batch; ++b)
+        out.push_back(runtime::AudioBuffer{config.sample_rate, static_cast<int>(config.audio_channels),
+            std::vector<float>(static_cast<size_t>(config.audio_channels * total_frames), 0.0F)});
+    std::vector<float> chunk_latent(static_cast<size_t>(batch * config.latent_dim * graph_latents));
+    SameDecodeTimings timings;
     for (size_t chunk_index = 0; chunk_index < starts.size(); ++chunk_index) {
         const int64_t start = starts[chunk_index];
         const auto latent_start = Clock::now();
-        std::fill(chunk_latent.begin(), chunk_latent.end(), 0.0F);
-        for (int64_t b = 0; b < batch; ++b) {
-            for (int64_t c = 0; c < config.latent_dim; ++c) {
-                for (int64_t t = 0; t < graph_latents; ++t) {
-                    const int64_t src_t = start + t;
-                    if (src_t < latent_tokens) {
-                        chunk_latent[static_cast<size_t>((b * config.latent_dim + c) * graph_latents + t)] =
-                            latents[static_cast<size_t>((b * config.latent_dim + c) * latent_tokens + src_t)];
-                    }
-                }
-            }
-        }
-        chunk_latent_ms += engine::debug::elapsed_ms(latent_start, Clock::now());
         const int64_t source_latents = std::min<int64_t>(graph_latents, latent_tokens - start);
-        const size_t bottleneck_source_values = static_cast<size_t>(batch * config.latent_dim * source_latents);
-        const auto bottleneck_start = Clock::now();
-        bottleneck_noise_source.resize(bottleneck_source_values);
-        engine::sampling::fill_torch_cuda_tensor_iterator_randn(
-            bottleneck_noise_source.data(),
-            bottleneck_source_values,
-            seed,
-            rng_offset_blocks,
-            rng_policy_,
-            engine::sampling::TorchRandnPrecision::Float32);
-        rng_offset_blocks += engine::sampling::torch_cuda_tensor_iterator_offset_blocks(
-            static_cast<uint64_t>(bottleneck_source_values),
-            rng_policy_);
-        std::fill(bottleneck_noise.begin(), bottleneck_noise.end(), 0.0F);
-        for (int64_t b = 0; b < batch; ++b) {
-            for (int64_t c = 0; c < config.latent_dim; ++c) {
-                for (int64_t t = 0; t < source_latents; ++t) {
-                    bottleneck_noise[static_cast<size_t>((b * config.latent_dim + c) * graph_latents + t)] =
-                        bottleneck_noise_source[static_cast<size_t>((b * config.latent_dim + c) * source_latents + t)];
-                }
-            }
+        for (int64_t row = 0; row < batch * config.latent_dim; ++row) {
+            const auto destination = chunk_latent.begin() + row * graph_latents;
+            std::copy_n(latents.begin() + row * latent_tokens + start, source_latents, destination);
+            std::fill(destination + source_latents, destination + graph_latents, 0.0F);
         }
-        bottleneck_noise_ms += engine::debug::elapsed_ms(bottleneck_start, Clock::now());
-        const size_t token_noise_values = static_cast<size_t>(
-            batch * graph_latents * config.same_strides.back() *
-            (config.same_channels * config.same_c_mults.back()));
-        const auto token_noise_start = Clock::now();
-        token_noise.resize(token_noise_values);
-        engine::sampling::fill_torch_cuda_tensor_iterator_randn(
-            token_noise.data(),
-            token_noise_values,
-            seed,
-            rng_offset_blocks,
-            rng_policy_,
-            engine::sampling::TorchRandnPrecision::Float32);
-        rng_offset_blocks += engine::sampling::torch_cuda_tensor_iterator_offset_blocks(
-            static_cast<uint64_t>(token_noise_values),
-            rng_policy_);
-        token_noise_ms += engine::debug::elapsed_ms(token_noise_start, Clock::now());
-        const auto decoded = graph_->decode_chunk(
-            chunk_latent,
-            bottleneck_noise,
-            token_noise,
-            input_upload_ms,
-            graph_compute_ms,
-            output_read_ms);
+        timings.chunk_latent += engine::debug::elapsed_ms(latent_start);
+        const auto decoded = graph_->decode_chunk(chunk_latent, source_latents, seed,
+            rng_offset_blocks, rng_policy_, timings);
         if (static_cast<int64_t>(decoded.size()) != batch * config.audio_channels * frames_per_chunk) {
             throw std::runtime_error("Stable Audio SAME decoder output shape mismatch");
         }
@@ -1317,33 +1257,21 @@ std::vector<runtime::AudioBuffer> StableAudioSameRuntime::decode(
                     if (dst_frame < 0 || dst_frame >= total_frames) {
                         continue;
                     }
-                    channel_major[static_cast<size_t>((b * config.audio_channels + c) * total_frames + dst_frame)] =
+                    out[static_cast<size_t>(b)].samples[static_cast<size_t>(dst_frame * config.audio_channels + c)] =
                         decoded[static_cast<size_t>((b * config.audio_channels + c) * frames_per_chunk + frame)];
                 }
             }
         }
-        output_pack_ms += engine::debug::elapsed_ms(pack_start, Clock::now());
+        timings.output_pack += engine::debug::elapsed_ms(pack_start, Clock::now());
     }
     engine::debug::timing_log_scalar("stable_audio.same_decode.chunk_count", static_cast<double>(starts.size()));
-    engine::debug::timing_log_scalar("stable_audio.same_decode.host.chunk_latent_ms", chunk_latent_ms);
-    engine::debug::timing_log_scalar("stable_audio.same_decode.host.bottleneck_noise_ms", bottleneck_noise_ms);
-    engine::debug::timing_log_scalar("stable_audio.same_decode.host.token_noise_ms", token_noise_ms);
-    engine::debug::timing_log_scalar("stable_audio.same_decode.host.input_upload_ms", input_upload_ms);
-    engine::debug::timing_log_scalar("stable_audio.same_decode.graph.compute_total_ms", graph_compute_ms);
-    engine::debug::timing_log_scalar("stable_audio.same_decode.host.output_read_ms", output_read_ms);
-    engine::debug::timing_log_scalar("stable_audio.same_decode.host.output_pack_ms", output_pack_ms);
-    std::vector<runtime::AudioBuffer> out;
-    out.reserve(static_cast<size_t>(batch));
-    for (int64_t b = 0; b < batch; ++b) {
-        std::vector<float> interleaved(static_cast<size_t>(config.audio_channels * total_frames), 0.0F);
-        for (int64_t frame = 0; frame < total_frames; ++frame) {
-            for (int64_t c = 0; c < config.audio_channels; ++c) {
-                interleaved[static_cast<size_t>(frame * config.audio_channels + c)] =
-                    channel_major[static_cast<size_t>((b * config.audio_channels + c) * total_frames + frame)];
-            }
-        }
-        out.push_back(runtime::AudioBuffer{config.sample_rate, static_cast<int>(config.audio_channels), std::move(interleaved)});
-    }
+    engine::debug::timing_log_scalar("stable_audio.same_decode.host.chunk_latent_ms", timings.chunk_latent);
+    engine::debug::timing_log_scalar("stable_audio.same_decode.host.bottleneck_noise_ms", timings.bottleneck_noise);
+    engine::debug::timing_log_scalar("stable_audio.same_decode.host.token_noise_ms", timings.token_noise);
+    engine::debug::timing_log_scalar("stable_audio.same_decode.host.input_upload_ms", timings.input_upload);
+    engine::debug::timing_log_scalar("stable_audio.same_decode.graph.compute_total_ms", timings.graph_compute);
+    engine::debug::timing_log_scalar("stable_audio.same_decode.host.output_read_ms", timings.output_read);
+    engine::debug::timing_log_scalar("stable_audio.same_decode.host.output_pack_ms", timings.output_pack);
     return out;
 }
 
@@ -1382,11 +1310,11 @@ std::vector<float> StableAudioSameRuntime::encode(
     }
     std::vector<float> out(static_cast<size_t>(config.latent_dim * latent_tokens), 0.0F);
     const int64_t chunk_patch_frames = kSameChunkLatents * config.same_strides.front();
-    std::vector<float> token_noise;
+    std::vector<float> patched(static_cast<size_t>(config.same_encoder_in_channels * chunk_patch_frames));
     for (size_t chunk_index = 0; chunk_index < starts.size(); ++chunk_index) {
         const int64_t latent_start = starts[chunk_index];
         const int64_t patch_start = latent_start * config.same_strides.front();
-        std::vector<float> patched(static_cast<size_t>(config.same_encoder_in_channels * chunk_patch_frames), 0.0F);
+        std::fill(patched.begin(), patched.end(), 0.0F);
         for (int64_t l = 0; l < chunk_patch_frames; ++l) {
             const int64_t src_patch = patch_start + l;
             if (src_patch >= patch_frames) {
@@ -1401,23 +1329,7 @@ std::vector<float> StableAudioSameRuntime::encode(
                 }
             }
         }
-        const size_t token_noise_values = static_cast<size_t>(kSameChunkLatents * (config.same_channels * config.same_c_mults.front()));
-        if (config.same_encoder_mask_noise > 0.0F) {
-            token_noise.resize(token_noise_values);
-            engine::sampling::fill_torch_cuda_tensor_iterator_randn(
-                token_noise.data(),
-                token_noise_values,
-                seed,
-                rng_offset_blocks,
-                rng_policy_,
-                engine::sampling::TorchRandnPrecision::Float32);
-            rng_offset_blocks += engine::sampling::torch_cuda_tensor_iterator_offset_blocks(
-                static_cast<uint64_t>(token_noise_values),
-                rng_policy_);
-        } else {
-            token_noise.clear();
-        }
-        const auto encoded = encoder_graph_->encode_chunk(patched, token_noise);
+        const auto encoded = encoder_graph_->encode_chunk(patched, seed, rng_offset_blocks, rng_policy_);
         if (static_cast<int64_t>(encoded.size()) != config.latent_dim * kSameChunkLatents) {
             throw std::runtime_error("Stable Audio SAME encoder output shape mismatch");
         }

@@ -60,7 +60,7 @@ public:
                 TensorShape::from_dims({conditions.batch, conditioning.frames, config.output_channels}),
                 std::vector<float>(conditioning.latent.size(), 0));
             if (!conditioning.key_mask.empty()) {
-                const auto tokens = conditions.frames + config.memory_tokens;
+                const auto tokens = conditions.frames + config.memory_tokens + int64_t{config.prepend_condition_token};
                 std::vector<ggml_fp16_t> zeros(static_cast<size_t>(rows * tokens * tokens), ggml_fp32_to_fp16(0));
                 state.inputs.attention_mask = state.constants->make_tensor(
                     TensorShape::from_dims({rows, 1, tokens, tokens}), GGML_TYPE_F16,
@@ -72,7 +72,7 @@ public:
             core::write_tensor_f32(reference, conditioning.latent);
             if (!state.inputs.attention_mask.valid()) return;
             const auto rows = state.branches * conditions.batch;
-            const auto tokens = conditions.frames + config.memory_tokens;
+            const auto tokens = conditions.frames + config.memory_tokens + int64_t{config.prepend_condition_token};
             std::vector<ggml_fp16_t> mask(static_cast<size_t>(rows * tokens * tokens));
             for (int64_t b = 0; b < rows; ++b)
                 for (int64_t q = 0; q < tokens; ++q)
@@ -152,6 +152,10 @@ public:
                 frequencies[static_cast<size_t>(i)] = std::exp(-std::log(static_cast<float>(config.time_period)) *
                     static_cast<float>(i) / denominator);
             }
+        }
+        if (!names.time_frequencies.empty()) {
+            frequencies = source.require_f32(names.time_frequencies, {half, 1});
+            for (auto & frequency : frequencies) frequency *= 2.f * kPi;
         }
         if (config.modulation_storage_type != GGML_TYPE_F32 && config.modulation_storage_type != GGML_TYPE_F16 &&
             config.modulation_storage_type != GGML_TYPE_BF16)
@@ -233,7 +237,7 @@ public:
             (in.context_tokens <= 0 || in.context.size() != static_cast<size_t>(rows * in.context_tokens * c.context_dim))) ||
             (c.global_dim && in.global.size() != static_cast<size_t>(rows * c.global_dim)))
             throw std::invalid_argument(config.label + " conditioning feature shape mismatch");
-        if ((!in.value_mask.empty() && in.value_mask.size() != static_cast<size_t>(rows * (in.frames + c.memory_tokens))) ||
+        if ((!in.value_mask.empty() && in.value_mask.size() != static_cast<size_t>(rows * (in.frames + c.memory_tokens + int64_t{c.prepend_condition_token}))) ||
             (!in.latent_mask.empty() && in.latent_mask.size() != static_cast<size_t>(in.batch * in.frames)) ||
             (config.guidance == DitGuidance::AdaptiveProjected && in.branches > 1 && in.latent_mask.empty()))
             throw std::invalid_argument(config.label + " conditioning mask shape mismatch");
@@ -242,7 +246,7 @@ public:
         if constexpr (FixedPrefix) {
             if (fixed->frames <= 0 || fixed->frames >= in.frames ||
                 fixed->latent.size() != static_cast<size_t>(fixed->frames * in.batch * c.output_channels) ||
-                (!fixed->key_mask.empty() && fixed->key_mask.size() != static_cast<size_t>(rows * (in.frames + c.memory_tokens))))
+                (!fixed->key_mask.empty() && fixed->key_mask.size() != static_cast<size_t>(rows * (in.frames + c.memory_tokens + int64_t{c.prepend_condition_token}))))
                 throw std::invalid_argument(config.label + " invalid fixed reference prefix");
             if (config.guidance == DitGuidance::AdaptiveProjected)
                 throw std::invalid_argument(config.label + " fixed reference prefix does not support APG");
@@ -285,8 +289,8 @@ public:
         if (state->inputs.local_condition.valid()) core::write_tensor_f32_slice(state->inputs.local_condition, 0,
             conditions.local_condition.data() + branch * conditions.batch * conditions.frames * config.model.local_condition_dim, static_cast<size_t>(count * conditions.frames * config.model.local_condition_dim));
         if (state->inputs.global.valid()) core::write_tensor_f32_slice(state->inputs.global, 0, conditions.global.data() + branch * conditions.batch * config.model.global_dim, static_cast<size_t>(count * config.model.global_dim));
-        if (state->inputs.value_mask.valid()) core::write_tensor_f32_slice(state->inputs.value_mask, 0, conditions.value_mask.data() + branch * conditions.batch * (conditions.frames + config.model.memory_tokens),
-            static_cast<size_t>(count * (conditions.frames + config.model.memory_tokens)));
+        if (state->inputs.value_mask.valid()) core::write_tensor_f32_slice(state->inputs.value_mask, 0, conditions.value_mask.data() + branch * conditions.batch * (conditions.frames + config.model.memory_tokens + int64_t{config.model.prepend_condition_token}),
+            static_cast<size_t>(count * (conditions.frames + config.model.memory_tokens + int64_t{config.model.prepend_condition_token})));
         state->condition_branch = branch;
     }
 
@@ -336,7 +340,7 @@ public:
         const auto rows = branches * conditions.batch;
         const auto & c = config.model;
         const auto constant = [&](const TensorShape & shape) { return s.constants->make_f32(shape, std::vector<float>(static_cast<size_t>(shape.num_elements()), 0)); };
-        const auto tokens = conditions.frames + c.memory_tokens;
+        const auto tokens = conditions.frames + c.memory_tokens + int64_t{c.prepend_condition_token};
         {
             for (const auto width : conditions.frame_channels) s.inputs.frame_conditions.push_back(constant(TensorShape::from_dims({rows, conditions.frames, width})));
             for (const auto width : conditions.vector_channels) s.inputs.vector_conditions.push_back(constant(TensorShape::from_dims({rows, width})));
@@ -459,6 +463,8 @@ TensorValue DitRuntime::Impl::embed_time(core::ModuleBuildContext & ctx, const T
 
 DitModulationBank DitRuntime::Impl::prepare_modulations(const std::vector<float> & times,
     const std::vector<float> & durations, const std::vector<float> & global, DitOperationStats * stats) {
+    if (config.model.prepend_condition_token)
+        throw std::invalid_argument(config.label + " condition tokens require direct timestep conditioning, not a modulation bank");
     const auto rows = static_cast<int64_t>(times.size());
     const auto & c = config.model;
     const auto global_rows = c.global_dim ? static_cast<int64_t>(global.size() / c.global_dim) : 0;
@@ -522,6 +528,8 @@ DitModulationBank DitRuntime::Impl::prepare_modulations(const std::vector<float>
 }
 
 std::vector<float> DitRuntime::Impl::predict_sequence(const DitSequenceRequest & request, DitOperationStats * stats) {
+    if (config.model.prepend_condition_token)
+        throw std::invalid_argument(config.label + " condition-token composition uses prepare_conditioning and predict/predict_cfg, not hidden-token sequence execution");
     const auto & c = config.model;
     const bool precomputed = request.modulation_start >= 0;
     const bool has_duration = request.durations && !request.durations->empty();
@@ -621,6 +629,8 @@ std::vector<float> DitRuntime::Impl::predict_sequence(const DitSequenceRequest &
 }
 
 void DitRuntime::Impl::reserve_prefix_cache(DitPrefixCacheConfig requested) {
+    if (config.model.prepend_condition_token)
+        throw std::invalid_argument(config.label + " changing condition tokens cannot use the hidden-token prefix cache");
     const int64_t maximum = std::numeric_limits<int32_t>::max();
     if (requested.capacity <= 0 || requested.banks <= 0 || requested.batch <= 0 ||
         requested.branches <= 0 || requested.branches > 2 || requested.unit_tokens <= 0 ||

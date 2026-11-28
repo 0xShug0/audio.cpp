@@ -339,6 +339,73 @@ void test_peak_policy() {
     std::filesystem::remove(quiet_limit_path);
 }
 
+// The writer hands samples to the stream in 64 KiB blocks, so check every byte
+// of the data chunk for lengths that end just before, on and after a block edge.
+void check_block_boundary(engine::audio::WavSampleFormat format, size_t count) {
+    const std::string label = std::string(engine::audio::wav_sample_format_name(format)) +
+                              " block boundary, " + std::to_string(count) + " samples";
+    auto audio = make_test_signal(count, 1);
+    // Out-of-range values at both ends and around the first block edge.
+    const size_t bytes_per_sample = static_cast<size_t>(engine::audio::wav_sample_format_bit_depth(format)) / 8U;
+    const size_t edge = (65536U + bytes_per_sample - 1U) / bytes_per_sample;
+    for (const size_t index : {size_t{0}, edge - 1U, edge, count - 1U}) {
+        if (index < count) {
+            audio[index] = index % 2 == 0 ? 1.5F : -1.5F;
+        }
+    }
+
+    std::vector<char> expected;
+    expected.reserve(count * bytes_per_sample);
+    for (const float sample : audio) {
+        char raw[4] = {};
+        if (format == engine::audio::WavSampleFormat::Float32) {
+            std::memcpy(raw, &sample, sizeof(sample));
+        } else {
+            const float full_scale = format == engine::audio::WavSampleFormat::Pcm16 ? 32767.0F : 8388607.0F;
+            const long code = std::lrint(std::max(-1.0F, std::min(1.0F, sample)) * full_scale);
+            for (size_t byte = 0; byte < bytes_per_sample; ++byte) {
+                raw[byte] = static_cast<char>((static_cast<uint32_t>(code) >> (8U * byte)) & 0xFFU);
+            }
+        }
+        expected.insert(expected.end(), raw, raw + bytes_per_sample);
+    }
+
+    const auto path = scratch_dir() / "block_boundary.wav";
+    engine::audio::WavWriteOptions options;
+    options.format = format;
+    engine::audio::write_wav(path, 44100, 1, audio, options);
+    const auto bytes = read_file_bytes(path);
+
+    const size_t header = format == engine::audio::WavSampleFormat::Float32 ? 58U : 44U;
+    engine::test::require_eq(bytes.size(), header + expected.size(), label + " file size");
+    engine::test::require_eq(
+        static_cast<size_t>(read_le<uint32_t>(bytes, header - 4U)), expected.size(), label + " data chunk size");
+    engine::test::require(
+        std::equal(expected.begin(), expected.end(), bytes.begin() + static_cast<std::ptrdiff_t>(header)),
+        label + " data bytes differ");
+
+    std::filesystem::remove(path);
+}
+
+void test_block_boundaries() {
+    const engine::audio::WavSampleFormat formats[] = {
+        engine::audio::WavSampleFormat::Pcm16,
+        engine::audio::WavSampleFormat::Pcm24,
+        engine::audio::WavSampleFormat::Float32,
+    };
+    for (const auto format : formats) {
+        const size_t bytes_per_sample = static_cast<size_t>(engine::audio::wav_sample_format_bit_depth(format)) / 8U;
+        // First sample count that fills a block. A 24-bit sample straddles it.
+        const size_t edge = (65536U + bytes_per_sample - 1U) / bytes_per_sample;
+        for (const size_t blocks : {size_t{1}, size_t{2}, size_t{3}}) {
+            for (const size_t count : {blocks * edge - 1U, blocks * edge, blocks * edge + 1U}) {
+                check_block_boundary(format, count);
+            }
+        }
+        check_block_boundary(format, 1);
+    }
+}
+
 void test_format_metadata_helpers() {
     engine::test::require_eq(
         engine::audio::wav_sample_format_bit_depth(engine::audio::WavSampleFormat::Pcm16), 16, "pcm16 depth");
@@ -361,6 +428,7 @@ int main() {
         test_dither_is_opt_in_and_bounded();
         test_peak_policy();
         test_format_metadata_helpers();
+        test_block_boundaries();
         std::cout << "wav_writer_formats_test passed\n";
     } catch (const std::exception & ex) {
         std::cerr << "wav_writer_formats_test failed: " << ex.what() << "\n";

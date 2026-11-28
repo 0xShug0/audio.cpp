@@ -132,6 +132,7 @@ add_engine_test(dit_runtime_test
     --log ${CMAKE_CURRENT_BINARY_DIR}/dit_runtime_test.log)
 
 # encoder_module
+
 add_engine_test(encoder_module_test tests/unittests/test_encoder_modules.cpp)
 
 # espeak
@@ -186,6 +187,11 @@ add_engine_test(hf_tokenizer_vocab_bounds_test tests/unittests/test_hf_tokenizer
 # Request validation (IndexTTS2)
 if (index_tts2 IN_LIST AUDIOCPP_LINKED_MODELS)
     add_engine_test(index_tts2_request_test tests/index_tts2/request_test.cpp)
+endif()
+
+# Text tokenization (Irodori-TTS)
+if (irodori_tts IN_LIST AUDIOCPP_LINKED_MODELS)
+    add_engine_test(irodori_text_tokenizer_test tests/irodori_tts/test_text_tokenizer.cpp)
 endif()
 
 # kaldi_fbank_sparse
@@ -545,6 +551,10 @@ endif()
 
 # torch_bin_storage_offset
 add_engine_test(torch_bin_storage_offset_test tests/unittests/test_torch_bin_storage_offset.cpp)
+
+# Shared T5 encoder execution and resource lifecycle (synthetic weights only).
+add_engine_test(t5_encoder_runtime_test tests/unittests/test_t5_encoder_runtime.cpp
+    --log ${CMAKE_CURRENT_BINARY_DIR}/t5_encoder_runtime_test.log)
 
 # torch_random
 add_engine_test(torch_random_test tests/unittests/test_torch_random.cpp)
