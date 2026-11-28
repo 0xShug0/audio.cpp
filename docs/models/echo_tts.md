@@ -78,6 +78,7 @@ checkpoint or session setting, or leaves the optional value unset as described.
 |---|---|---|---|
 | `echo_tts.reference_duration_sec` | `float` | `15` | Trim the speaker reference to at most this many seconds before encoding. Shorter references are cheaper and often clone better; upstream's guidance favours around 10 s. Defaults to 15 s. Values above the trained maximum of 297.1 s are clamped. Set per request, or as a session default from CLI or server config. Must be positive. |
 | `echo_tts.reference_cache_slots` | `int` | Model/session default | How many encoded speaker references to keep. Encoding is linear in reference length, so reusing a voice across requests avoids repeating it. 0 disables caching; default 4. |
+| `echo_tts.reference_cache_dir` | `string` | Unset | Directory for encoded reference speakers retained across restarts. Unset: use only the existing in-memory cache. See [Reference disk cache](#reference-disk-cache). |
 | `echo_tts.mem_saver` | `bool` | `false` | Release Fish S1-DAC decode graph space before encoding reference speaker audio and encode graph space after. Avoids having both allocations resident simulaneously at the cost of rebuilding the graphs when a speaker cache-miss occurs. |
 | `echo_tts.cfg_mode` | `independent`, `joint` | `independent` | Type of classifier free guidance used. |
 
