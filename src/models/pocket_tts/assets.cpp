@@ -19,6 +19,7 @@ struct PocketTTSDescriptor {
     bool pad_with_spaces_for_short_inputs = false;
     bool remove_semicolons = false;
     bool capitalize_first_letter = true;
+    bool append_terminal_punctuation = true;
     std::vector<std::pair<std::string, std::string>> replace_characters;
     bool insert_bos_before_voice = false;
     std::optional<int> model_recommended_frames_after_eos;
@@ -54,6 +55,7 @@ PocketTTSDescriptor descriptor_from_yaml(const io::yaml::FlattenedDocument & par
         io::yaml::optional_bool(parsed, "pad_with_spaces_for_short_inputs", false);
     descriptor.remove_semicolons = io::yaml::optional_bool(parsed, "remove_semicolons", false);
     descriptor.capitalize_first_letter = io::yaml::optional_bool(parsed, "capitalize_first_letter", true);
+    descriptor.append_terminal_punctuation = io::yaml::optional_bool(parsed, "append_terminal_punctuation", true);
     // The reference builds str.maketrans(replace_characters), which takes single characters only.
     const std::string replace_prefix = "replace_characters.";
     for (const auto & [key, value] : parsed.scalars) {
@@ -190,6 +192,7 @@ PocketTTSModelConfig make_model_config(const PocketTTSDescriptor & descriptor) {
     config.pad_with_spaces_for_short_inputs = descriptor.pad_with_spaces_for_short_inputs;
     config.remove_semicolons = descriptor.remove_semicolons;
     config.capitalize_first_letter = descriptor.capitalize_first_letter;
+    config.append_terminal_punctuation = descriptor.append_terminal_punctuation;
     config.replace_characters = descriptor.replace_characters;
     config.insert_bos_before_voice = descriptor.insert_bos_before_voice;
     config.model_recommended_frames_after_eos = descriptor.model_recommended_frames_after_eos;

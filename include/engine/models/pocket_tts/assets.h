@@ -42,6 +42,9 @@ struct PocketTTSModelConfig {
     bool remove_semicolons = false;
     // upstream `capitalize_first_letter` (false for models that read IPA or other lowercase input)
     bool capitalize_first_letter = true;
+    // upstream `append_terminal_punctuation` (false for Greek, where ";" is the question mark and the
+    // reference's terminal punctuation step would turn every final question into a statement)
+    bool append_terminal_punctuation = true;
     // upstream `replace_characters`: characters absent from the training data, each mapped to its
     // replacement (often empty), as UTF-8 strings of one code point.
     std::vector<std::pair<std::string, std::string>> replace_characters;
