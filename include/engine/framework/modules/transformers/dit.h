@@ -63,6 +63,11 @@ struct DitConfig {
     int64_t position_kernel = 0;
     int64_t position_groups = 1;
     bool additive_frame_conditioning = false;
+    // Prepend the projected timestep + global condition as one hidden token.
+    // This token participates in self-attention and is removed before output.
+    // DitRuntime exposes this composition through prepare_conditioning and
+    // predict/predict_cfg/sample, rather than its hidden-token sequence API.
+    bool prepend_condition_token = false;
 };
 
 // Checkpoint naming belongs to binding, not architecture or graph dispatch.
@@ -99,11 +104,16 @@ struct DitWeightNames {
     int final_shift_plane = 0;
     int final_scale_plane = 1;
     std::vector<DitLinearNames> input_embedding{}, output_embedding{}, frame_embedding{};
+    // Optional learned Fourier frequencies [time_features/2, 1].
+    std::string time_frequencies;
+    // Optional checkpoint inverse RoPE frequencies [self_attention.rotary.dimensions/2].
+    std::string rotary_inv_frequencies;
 };
 
 struct DitAttentionWeights {
     LinearWeights query, key, value, output, qkv, kv;
     NormWeights query_norm, key_norm;
+    core::TensorValue rope_frequency_factors{};
 };
 struct DitLayerWeights {
     NormWeights self_norm, cross_norm, feed_forward_norm;

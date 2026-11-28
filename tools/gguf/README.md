@@ -43,6 +43,7 @@ Reference runners, fixture generators and parity/lifecycle tests belong under `t
 | [echo_tts/echo_tts_manifest.py](echo_tts/echo_tts_manifest.py) | Inspect checkpoint tensors |
 | [f5_tts_convert.py](f5_tts_convert.py) | Model weights to GGUF |
 | [firered_vad_convert.py](firered_vad_convert.py) | Model weights to GGUF |
+| [foundation_1_convert.py](foundation_1_convert.py) | Package Foundation-1 and T5-base as GGUF |
 | [fish_drama3_convert.py](fish_drama3_convert.py) | Model weights to GGUF |
 | [gigaam_asr_convert.py](gigaam_asr_convert.py) | Model weights to GGUF |
 | [glm_tts_weights_prepare.py](glm_tts_weights_prepare.py) | Prepare source weights or package assets |

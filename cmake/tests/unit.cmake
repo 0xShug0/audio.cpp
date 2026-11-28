@@ -132,6 +132,7 @@ add_engine_test(dit_runtime_test
     --log ${CMAKE_CURRENT_BINARY_DIR}/dit_runtime_test.log)
 
 # encoder_module
+
 add_engine_test(encoder_module_test tests/unittests/test_encoder_modules.cpp)
 
 # espeak
