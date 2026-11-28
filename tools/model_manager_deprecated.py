@@ -599,6 +599,22 @@ CATALOG: tuple[ModelPackage, ...] = (
         ),
     ),
     ModelPackage(
+        id="qwen3_tts_0_6b_custom_voice",
+        display_name="Qwen3 TTS 12Hz 0.6B Custom Voice",
+        target_directory="Qwen3-TTS-12Hz-0.6B-CustomVoice",
+        source=SnapshotSource(repo_id="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"),
+        required_files=(
+            "config.json",
+            "generation_config.json",
+            "model.safetensors",
+            "speech_tokenizer/config.json",
+            "speech_tokenizer/model.safetensors",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+        ),
+    ),
+    ModelPackage(
         id="vieneu_v3_turbo_v3_turbo",
         display_name="VieNeu-TTS v3 Turbo Base",
         target_directory="VieNeu-TTS-v3-Turbo",
