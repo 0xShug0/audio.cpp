@@ -2,6 +2,7 @@
 
 #include "engine/models/gigaam_asr/conformer.h"
 #include "engine/models/gigaam_asr/frontend.h"
+#include "engine/models/gigaam_asr/zapformer.h"
 #include "engine/framework/assets/resource_bundle.h"
 #include "engine/framework/core/backend_weight_store.h"
 #include "engine/framework/core/execution_context.h"
@@ -24,12 +25,22 @@ struct GigaAMAssets {
     std::vector<std::string> characters;
     std::vector<tokenizers::SentencePiecePiece> pieces;
     std::unique_ptr<GigaAMFrontend> frontend;
-    std::string decode(const std::vector<int32_t> & ids) const;
+    // GigaAM-v4: Zapformer encoder with several heads sharing it ("e2e", "raw").
+    bool zapformer = false;
+    ZapformerConfig zapformer_encoder;
+    std::vector<std::string> head_names;
+    std::vector<std::vector<tokenizers::SentencePiecePiece>> head_pieces;
+    // Index into head_names for a requested head; v3 checkpoints have a single unnamed head.
+    size_t head_index(const std::string & name) const;
+    const std::vector<tokenizers::SentencePiecePiece> & pieces_for(size_t head) const;
+    std::string decode(const std::vector<int32_t> & ids, size_t head = 0) const;
 };
 
 struct GigaAMWeights {
     std::unique_ptr<core::BackendWeightStore> store;
     ConformerWeights encoder;
+    ZapformerWeights zapformer;
+    size_t head = 0;
     modules::LinearWeights ctc, joint_encoder, joint_predictor, joint_output;
     modules::LSTMCellWeights predictor;
     core::TensorValue embedding;
@@ -37,7 +48,7 @@ struct GigaAMWeights {
 
 std::shared_ptr<const GigaAMAssets> load_gigaam_assets(const std::filesystem::path & path);
 std::unique_ptr<GigaAMWeights> load_gigaam_weights(
-    const GigaAMAssets & assets, core::ExecutionContext & execution, assets::TensorStorageType type);
+    const GigaAMAssets & assets, core::ExecutionContext & execution, assets::TensorStorageType type, size_t head = 0);
 
 struct GigaAMDecodedTokens {
     std::vector<int32_t> ids;

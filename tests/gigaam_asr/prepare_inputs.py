@@ -14,6 +14,8 @@ def main():
     parser.add_argument("output", type=Path)
     parser.add_argument("--seed", type=int, default=1729)
     parser.add_argument("--long-repeat", type=int, default=1)
+    parser.add_argument("--model", default="GigaAM-ASR-GGUF/gigaam-v3-ctc-f16.gguf",
+                        help="Package path written into the generated case, e.g. GigaAM-ASR-GGUF/gigaam-v4-rnnt-f16.gguf")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     with wave.open(str(args.source), "rb") as source:
@@ -55,7 +57,7 @@ def main():
     requests.append({"id": "longform_auto_repeat", "audio": str(long_path)})
     requests.append({"id": "repeat_after_long", "audio": manifest[0]["audio"]})
     case = {"id": "gigaam_random_longform", "family": "gigaam_asr", "task": "asr",
-            "model": "GigaAM-ASR-GGUF/gigaam-v3-ctc-f16.gguf", "outputs": ["text"],
+            "model": args.model, "outputs": ["text"],
             "coverage": "Random speech crops, fixed-boundary longform, and short-after-long reuse.",
             "requests": requests}
     (args.output / "path_cases.json").write_text(json.dumps({"cases": [case]}, indent=2) + "\n")

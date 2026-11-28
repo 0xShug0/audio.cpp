@@ -12,7 +12,7 @@ For Qwen3-ASR adapter loading and merged GGUF export, see the [LoRA guide](lora.
 | CrisperWhisper 2.0 Large | `crisperwhisper` | offline, streaming | [CrisperWhisper 2.0](models/crisperwhisper.md) |
 | Edda v0.2 Large (experimental) | `edda_asr` | offline, streaming | [Edda ASR](models/edda_asr.md) |
 | Fun-ASR-Nano | `fun_asr_nano` | offline | [Fun-ASR-Nano](#fun-asr-nano) |
-| GigaAM v3 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |
+| GigaAM v3 / v4 / Multilingual | `gigaam_asr` | offline | [GigaAM ASR](models/gigaam_asr.md) |
 | Granite Speech 5.0 TurboCTC | `granite5asr` | offline | [Granite Speech 5.0 TurboCTC](models/granite5asr.md) |
 | Granite Speech 5.0 2B | `granite_speech5` | offline | [Granite Speech 5.0 2B](models/granite_speech5.md) |
 | Haas Japanese ASR | `haas_asr` | offline, streaming | [Haas-ja-v1.0](models/haas.md) |

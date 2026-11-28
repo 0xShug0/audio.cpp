@@ -2252,6 +2252,7 @@ audiocpp_add_model(gigaam_asr
         src/models/gigaam_asr/frontend.cpp
         src/models/gigaam_asr/weights.cpp
         src/models/gigaam_asr/runtime.cpp
+        src/models/gigaam_asr/zapformer.cpp
         src/models/gigaam_asr/session.cpp
     INCLUDES
         engine/models/gigaam_asr/model.h

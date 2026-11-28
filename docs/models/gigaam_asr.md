@@ -1,8 +1,9 @@
 # GigaAM ASR
 
-[GigaAM v3](https://huggingface.co/ai-sage/GigaAM-v3) and
-[GigaAM Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual)
-use the `gigaam_asr` family. Both are released under the MIT license.
+[GigaAM v3](https://huggingface.co/ai-sage/GigaAM-v3),
+[GigaAM Multilingual](https://huggingface.co/ai-sage/GigaAM-Multilingual) and
+[GigaAM-v4](https://huggingface.co/ai-sage/GigaAM-v4)
+use the `gigaam_asr` family. All are released under the MIT license.
 
 | Field | Value |
 |---|---|
@@ -10,7 +11,7 @@ use the `gigaam_asr` family. Both are released under the MIT license.
 | Mode | `offline` |
 | Output | Transcript text, longform segments, optional word timestamps |
 | Long-form audio | Automatic quiet-energy chunking |
-| Languages | v3: Russian; Multilingual: Russian, Kazakh, Kyrgyz, Uzbek, English |
+| Languages | v3: Russian; Multilingual: Russian, Kazakh, Kyrgyz, Uzbek, English; v4: Russian, English |
 
 ## Variants
 
@@ -24,8 +25,15 @@ use the `gigaam_asr` family. Both are released under the MIT license.
 | `ai-sage/GigaAM-Multilingual` | `ctc` | `gigaam-multilingual-ctc-f16.gguf` |
 | `ai-sage/GigaAM-Multilingual` | `large_ctc` | `gigaam-multilingual-large-ctc-f32.gguf` |
 | `ai-sage/GigaAM-Multilingual` | `large_ctc` | `gigaam-multilingual-large-ctc-f16.gguf` |
+| `ai-sage/GigaAM-v4` | `rnnt` | `gigaam-v4-rnnt-f16.gguf` (encoder F16 as stored, heads F32: `--type orig`) |
+| `ai-sage/GigaAM-v4` | `rnnt` | `gigaam-v4-rnnt-q8_0.gguf` (encoder matrices Q8_0, heads F32: `--type q8_0`) |
 
-E2E variants restore punctuation and capitalization. Select the checkpoint by
+E2E variants restore punctuation and capitalization. GigaAM-v4 uses a Zapformer
+encoder shared by two RNN-T heads in one package: `e2e` (punctuation and
+capitalization, default) and `raw` (normalized lowercase text); select one with
+`--session-option gigaam_asr.head=raw`. Only the full-context mode of v4 is
+ported; streaming (160/320/640 ms future context) and the `ctc` revision are not. GigaAM-v4 packages are
+not published for the model manager yet; convert them locally as shown below. Select the checkpoint by
 passing its GGUF file directly. Language is inferred from the audio, not selected
 by a request option.
 
@@ -40,7 +48,22 @@ python tools/gguf/gigaam_asr_convert.py models/GigaAM-v3-ctc \
   --staging-dir models/GigaAM-v3-ctc/converted
 ```
 
-The converter requires PyTorch, safetensors, and `build/debug/bin/audiocpp_gguf`.
+The converter requires PyTorch, safetensors, and `build/debug/bin/audiocpp_gguf`
+(pass another binary with `--converter`). The GigaAM-v4 path needs only NumPy and
+safetensors on the Python side and does not import the checkpoint's model code:
+
+```bash
+hf download ai-sage/GigaAM-v4 --revision rnnt \
+  --include config.json model.safetensors e2e_tokenizer.model raw_tokenizer.model \
+  --local-dir models/GigaAM-v4-rnnt
+python tools/gguf/gigaam_asr_convert.py models/GigaAM-v4-rnnt \
+  models/GigaAM-ASR-GGUF/gigaam-v4-rnnt-f16.gguf \
+  --staging-dir models/GigaAM-v4-rnnt/converted --converter build/bin/audiocpp_gguf
+```
+
+Add `--type q8_0` and use `-q8_0.gguf` for the Q8_0 package: only encoder
+matrices are quantized, the frontend, depthwise convolutions and both heads keep
+their checkpoint precision. One GGUF holds both heads and both tokenizers.
 It preserves checkpoint tensor dtypes and embeds configuration, model spec, and
 the SentencePiece tokenizer where needed. In v3 packages, the encoder is F16
 while frontend and decoder tensors retain their original precision.
@@ -102,7 +125,26 @@ JSON request above to select timestamp or chunking options.
 | Option | Default | Meaning |
 |---|---|---|
 | `weight_type` | `native` | Weight storage override. |
+| `gigaam_asr.head` | `e2e` | GigaAM-v4 head: `e2e` or `raw`. Single-head v3 and Multilingual packages ignore it. |
 | `gigaam_asr.vad_model_path` | Empty | Offline VAD model path, required only for `audio_chunk_mode=vad`. Legacy unprefixed `vad_model_path` remains accepted. |
 
 Translation, speaker labels, and live audio streaming are not
 exposed by this port.
+
+## Validation
+
+`tests/gigaam_asr/python_reference.py` runs the checkpoint's own
+`modeling_gigaam.py` (Transformers 4.57.1, PyTorch CPU, float32). For GigaAM-v4
+the snapshot directory needs `modeling_gigaam.py` next to the files above; pick
+the head with `--head e2e|raw`:
+
+```bash
+hf download ai-sage/GigaAM-v4 --revision rnnt --local-dir models/GigaAM-v4-rnnt
+python tests/gigaam_asr/python_reference.py --model models/GigaAM-v4-rnnt \
+  --audio assets/resources/sample_16k.wav --backend cpu --threads 8 --repeat 1 \
+  --head e2e --out-dir build/logs/gigaam_asr/v4-e2e --log
+python tools/audiocpp_cli/run_audiocpp_cli_path_tests.py \
+  --cases tests/gigaam_asr/path_cases.json --backend cpu --threads 8
+```
+
+The path cases cover both v4 heads with repeated requests in one session.

@@ -29,7 +29,9 @@ public:
         }
         const auto type = assets::parse_tensor_storage_type(
             runtime::find_option(options.options, {"gigaam_asr.weight_type", "weight_type"}).value_or("native"));
-        weights_ = load_gigaam_weights(*assets_, execution_context(), type);
+        const auto head = runtime::find_option(options.options, {"gigaam_asr.head", "head"}).value_or("e2e");
+        head_ = assets_->head_index(head);
+        weights_ = load_gigaam_weights(*assets_, execution_context(), type, head_);
         runtime_ = std::make_unique<GigaAMRuntime>(*assets_, *weights_, execution_context());
     }
 
@@ -112,7 +114,7 @@ public:
             const auto decoded = runtime_->transcribe(features, timestamps);
             encoder_ms += decoded.encoder_ms;
             inference_ms += decoded.inference_ms;
-            const auto text = assets_->decode(decoded.ids);
+            const auto text = assets_->decode(decoded.ids, head_);
             if (!result.text_output->text.empty() && !text.empty()) {
                 result.text_output->text += ' ';
             }
@@ -146,7 +148,8 @@ public:
                 };
                 for (size_t i = 0; i < decoded.ids.size(); ++i) {
                     const auto id = static_cast<size_t>(decoded.ids[i]);
-                    auto piece = assets_->pieces.empty() ? assets_->characters.at(id) : assets_->pieces.at(id).text;
+                    const auto & pieces = assets_->pieces_for(head_);
+                    auto piece = pieces.empty() ? assets_->characters.at(id) : pieces.at(id).text;
                     if (piece.compare(0, 3, "\xE2\x96\x81") == 0) {
                         commit_word();
                         piece.erase(0, 3);
@@ -193,6 +196,7 @@ private:
 
     std::shared_ptr<const GigaAMAssets> assets_;
     std::shared_ptr<const model_spec::ModelContract> contract_;
+    size_t head_ = 0;
     std::unique_ptr<GigaAMWeights> weights_;
     std::unique_ptr<GigaAMRuntime> runtime_;
     std::unique_ptr<runtime::ILoadedVoiceModel> vad_model_;
