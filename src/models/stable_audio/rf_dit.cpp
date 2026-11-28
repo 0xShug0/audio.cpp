@@ -7,12 +7,11 @@
 
 namespace engine::models::stable_audio {
 namespace {
-modules::DitRuntimeConfig runtime_config(const StableAudioConfig & c, assets::TensorStorageType storage) {
+modules::DitRuntimeConfig runtime_config(const StableAudioConfig & c, assets::TensorStorageType storage,
+    core::BackendType backend) {
     modules::DitRuntimeConfig out;
     out.label = "stable_audio.rf_dit";
     out.weight_type = storage;
-    out.graph_metadata_bytes = 512ull * 1024 * 1024;
-    out.graph_nodes = 1048576;
     out.time_features = modules::DitTimeFeatures::Fourier;
     out.guidance = modules::DitGuidance::AdaptiveProjected;
     out.conditioning_cache = modules::DitConditioningCache::Unprojected;
@@ -28,6 +27,9 @@ modules::DitRuntimeConfig runtime_config(const StableAudioConfig & c, assets::Te
     const auto dim = c.embed_dim / c.num_heads;
     m.self_attention = {c.num_heads, c.num_heads, dim, modules::DitQKNorm::Heads, 1e-6f,
         {(std::max)(dim / 2, int64_t{32}), GGML_ROPE_TYPE_NEOX, 10000.f}};
+    m.self_attention.lowering = backend == core::BackendType::Metal
+        ? modules::ScaledDotProductAttentionLowering::Flash
+        : modules::ScaledDotProductAttentionLowering::FlashPreserveViews;
     m.self_attention.differential = c.differential_attention;
     m.cross_attention = m.self_attention;
     m.cross_attention.rotary.dimensions = 0;
@@ -76,7 +78,7 @@ StableAudioRFDiTRuntime::~StableAudioRFDiTRuntime() = default;
 
 void StableAudioRFDiTRuntime::prepare(const StableAudioSamplingState &, float) const {
     if (!runtime_) runtime_ = std::make_unique<modules::DitRuntime>(*execution_, *assets_->model_weights,
-        runtime_config(assets_->config, weight_storage_type_), weight_names());
+        runtime_config(assets_->config, weight_storage_type_, execution_->backend_type()), weight_names());
 }
 
 std::vector<float> StableAudioRFDiTRuntime::sample(const StableAudioSamplingState & sampling,

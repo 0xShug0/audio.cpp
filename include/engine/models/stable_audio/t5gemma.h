@@ -4,6 +4,7 @@
 #include "engine/framework/core/execution_context.h"
 #include "engine/framework/core/module.h"
 #include "engine/framework/modules/text_encoders/t5_gemma_encoder.h"
+#include "engine/framework/modules/text_encoders/t5_encoder_runtime.h"
 #include "engine/models/stable_audio/assets.h"
 #include "engine/models/stable_audio/conditioner.h"
 
@@ -31,14 +32,6 @@ StableAudioT5Weights load_stable_audio_t5_weights(
     size_t weight_context_bytes,
     assets::TensorStorageType weight_storage_type);
 
-core::TensorValue build_stable_audio_t5_encoder(
-    core::ModuleBuildContext & ctx,
-    const core::TensorValue & input_ids,
-    const core::TensorValue & positions,
-    const core::TensorValue & additive_attention_mask,
-    const StableAudioT5Weights & weights,
-    const StableAudioConfig & config);
-
 struct StableAudioT5Encoding {
     int64_t batch = 0;
     int64_t tokens = 0;
@@ -51,8 +44,7 @@ public:
     StableAudioT5EncoderRuntime(
         core::ExecutionContext & execution,
         std::shared_ptr<const StableAudioAssets> assets,
-        assets::TensorStorageType weight_storage_type,
-        int64_t max_batch);
+        assets::TensorStorageType weight_storage_type);
     ~StableAudioT5EncoderRuntime();
 
     StableAudioT5EncoderRuntime(const StableAudioT5EncoderRuntime &) = delete;
@@ -63,13 +55,10 @@ public:
     void release_runtime_graphs() const;
 
 private:
-    class Graph;
-
     core::ExecutionContext * execution_ = nullptr;
     std::shared_ptr<const StableAudioAssets> assets_;
     assets::TensorStorageType weight_storage_type_ = assets::TensorStorageType::Native;
-    int64_t max_batch_ = 1;
-    mutable std::unique_ptr<Graph> graph_;
+    mutable std::unique_ptr<modules::T5EncoderRuntime> encoder_;
 };
 
 }  // namespace engine::models::stable_audio

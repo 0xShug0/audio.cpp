@@ -34,10 +34,9 @@ void validate_batch_seconds(const StableAudioTokenBatch & tokens, const std::vec
 StableAudioConditionerRuntime::StableAudioConditionerRuntime(
     core::ExecutionContext & execution,
     std::shared_ptr<const StableAudioAssets> assets,
-    assets::TensorStorageType weight_storage_type,
-    int64_t max_batch)
+    assets::TensorStorageType weight_storage_type)
     : assets_(require_assets(std::move(assets))),
-      t5_(execution, assets_, weight_storage_type, max_batch),
+      t5_(execution, assets_, weight_storage_type),
       prompt_padding_embedding_(assets_->model_weights->require_f32(
           "conditioner.conditioners.prompt.padding_embedding",
           {assets_->config.cond_dim})),

@@ -142,7 +142,7 @@
       {
         "name": "max_batch",
         "type": "int",
-        "description": "Maximum prompt batch size.",
+        "description": "Deprecated compatibility option; ignored with a warning. Batch size is determined by the request.",
         "required": false,
         "min": 1,
         "default": 1

@@ -562,6 +562,23 @@ void depth_frame_end_cuda(
     check_cuda(cudaStreamSynchronize(cuda_stream), "cudaStreamSynchronize depth frame");
 }
 
+void fill_torch_cuda_tensor_iterator_randn_device(
+    float * output, size_t count, uint64_t seed, uint64_t offset_blocks,
+    const TorchCudaSamplingPolicy & policy, TorchRandnPrecision precision,
+    void * stream) {
+    if (policy.multiprocessor_count <= 0 || policy.max_threads_per_multiprocessor <= 0)
+        throw std::invalid_argument("torch CUDA TensorIterator randn requires CUDA device properties");
+    const auto total = static_cast<uint64_t>(count);
+    const auto stride = tensor_iterator_stride(total, policy);
+    const auto loops = (total + stride * 4 - 1) / (stride * 4);
+    constexpr int threads = 256;
+    const int blocks = static_cast<int>((stride + threads - 1) / threads);
+    check_cuda(cudaSetDevice(policy.cuda_device_index), "cudaSetDevice");
+    fill_tensor_iterator_randn_kernel<<<blocks, threads, 0, static_cast<cudaStream_t>(stream)>>>(
+        output, total, seed, offset_blocks, stride, loops, static_cast<int>(precision));
+    check_cuda(cudaGetLastError(), "fill_tensor_iterator_randn_kernel");
+}
+
 void fill_torch_cuda_tensor_iterator_randn_cuda(
     float * output,
     size_t count,

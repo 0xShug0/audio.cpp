@@ -58,7 +58,6 @@ struct StableAudioConfig {
     std::string diffusion_objective;
     std::string diffusion_type;
     std::string transformer_type;
-    bool stable_audio_open_v1 = false;
     std::string distribution_shift_type = "logsnr";
     float distribution_shift_base_shift = 0.5F;
     float distribution_shift_max_shift = 1.15F;

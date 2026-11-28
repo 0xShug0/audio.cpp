@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <stdexcept>
 #include <utility>
@@ -188,10 +189,6 @@ StableAudioSession::StableAudioSession(
     : runtime::RuntimeSessionBase(options),
       task_(task),
       assets_(require_assets(std::move(assets))) {
-    max_batch_ = runtime::parse_int_option(options.options, {"stable_audio.max_batch"}).value_or(max_batch_);
-    if (max_batch_ <= 0) {
-        throw std::runtime_error("stable_audio.max_batch must be positive");
-    }
     if (const auto it = this->options().options.find("stable_audio.weight_type"); it != this->options().options.end()) {
         weight_storage_type_ = engine::assets::parse_tensor_storage_type(it->second);
         validate_weight_storage(weight_storage_type_, "stable_audio.weight_type");
@@ -200,7 +197,17 @@ StableAudioSession::StableAudioSession(
         mem_saver_ = runtime::parse_bool_option(*mem_saver, "stable_audio.mem_saver");
     }
     for (const auto & [key, value] : this->options().options) {
-        if (key == "stable_audio.max_batch" || key == "stable_audio.weight_type" || key == "stable_audio.mem_saver") {
+        if (key == "stable_audio.max_batch") {
+            constexpr const char * warning =
+                "stable_audio.max_batch is deprecated and ignored; batch size is determined by the request.";
+            if (engine::debug::log_enabled()) {
+                engine::debug::log_message(engine::debug::LogLevel::Warning, "stable_audio", warning);
+            } else {
+                std::fprintf(stderr, "[warning][stable_audio] %s\n", warning);
+            }
+            continue;
+        }
+        if (key == "stable_audio.weight_type" || key == "stable_audio.mem_saver") {
             (void) value;
             continue;
         }
@@ -232,8 +239,7 @@ void StableAudioSession::prepare(const runtime::SessionPreparationRequest & requ
         conditioner_runtime_ = std::make_unique<StableAudioConditionerRuntime>(
             execution_context(),
             assets_,
-            weight_storage_type_,
-            max_batch_);
+            weight_storage_type_);
     }
     if (!rf_dit_) {
         rf_dit_ = std::make_unique<StableAudioRFDiTRuntime>(
