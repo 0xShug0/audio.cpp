@@ -186,10 +186,12 @@ bool is_special_output_target(const std::filesystem::path & path) {
 
 void write_wav_output(
     const std::filesystem::path & path,
-    const engine::audio::AudioBuffer & audio,
+    int sample_rate,
+    int channels,
+    const std::vector<float> & samples,
     const engine::audio::WavWriteOptions & wav_options) {
     if (is_special_output_target(path)) {
-        engine::audio::WavSink(wav_options).write(path, audio);
+        engine::audio::write_wav(path, sample_rate, channels, samples, wav_options);
         return;
     }
     if (!path.parent_path().empty()) {
@@ -197,7 +199,7 @@ void write_wav_output(
     }
     const auto tmp = path.parent_path() / (path.filename().string() + ".tmp");
     std::filesystem::remove(tmp);
-    engine::audio::WavSink(wav_options).write(tmp, audio);
+    engine::audio::write_wav(tmp, sample_rate, channels, samples, wav_options);
     if (std::filesystem::exists(path)) {
         std::filesystem::remove(path);
     }
@@ -359,22 +361,16 @@ void emit_task_result(
     const std::optional<std::filesystem::path> & words_out,
     const engine::audio::WavWriteOptions & wav_options) {
     if (result.audio_output.has_value() && audio_out.has_value()) {
-        write_wav_output(*audio_out, engine::audio::AudioBuffer{
-            result.audio_output->sample_rate,
-            result.audio_output->channels,
-            result.audio_output->samples,
-        }, wav_options);
+        write_wav_output(*audio_out, result.audio_output->sample_rate, result.audio_output->channels,
+            result.audio_output->samples, wav_options);
         std::cout << "audio_out=" << audio_out->string() << "\n";
     } else if (!result.named_audio_outputs.empty() && audio_out.has_value()) {
         if (result.named_audio_outputs.size() != 1) {
             throw std::runtime_error("--out requires exactly one audio output");
         }
         const auto & audio = result.named_audio_outputs.front().audio;
-        write_wav_output(*audio_out, engine::audio::AudioBuffer{
-            audio.sample_rate,
-            audio.channels,
-            audio.samples,
-        }, wav_options);
+        write_wav_output(*audio_out, audio.sample_rate, audio.channels,
+            audio.samples, wav_options);
         std::cout << "audio_out=" << audio_out->string() << "\n";
     } else if (result.artifact_output.has_value() && audio_out.has_value()) {
         write_artifact_output(*audio_out, *result.artifact_output);
@@ -386,11 +382,8 @@ void emit_task_result(
             std::filesystem::create_directories(*audio_out_dir);
             for (const auto & output : result.named_audio_outputs) {
                 const auto path = *audio_out_dir / (output.id + ".wav");
-                write_wav_output(path, engine::audio::AudioBuffer{
-                    output.audio.sample_rate,
-                    output.audio.channels,
-                    output.audio.samples,
-                }, wav_options);
+                write_wav_output(path, output.audio.sample_rate, output.audio.channels,
+                    output.audio.samples, wav_options);
                 std::cout << "audio_out[" << output.id << "]=" << path.string() << "\n";
             }
         } else {
@@ -504,11 +497,8 @@ void emit_batch_summary(
         if (!policy.audio_out.has_value()) {
             throw std::runtime_error("merged batch audio requires --out");
         }
-        write_wav_output(*policy.audio_out, engine::audio::AudioBuffer{
-            batch.merged_audio->sample_rate,
-            batch.merged_audio->channels,
-            batch.merged_audio->samples,
-        }, policy.wav_options);
+        write_wav_output(*policy.audio_out, batch.merged_audio->sample_rate, batch.merged_audio->channels,
+            batch.merged_audio->samples, policy.wav_options);
         std::cout << "merged_audio_out=" << policy.audio_out->string() << "\n";
     }
 
