@@ -10584,14 +10584,15 @@ kernel void kernel_mul_mm(
     const int strideB = args.nb11 / sizeof(T1);
     auto tB = tensor(ptrB, dextents<int32_t, 2>(K, N), array<int, 2>({1, strideB}));
 
-    // Configure matmul operation
+    // Configure matmul operation. Relaxed precision lets the tensor cores narrow the
+    // operands; the explicit F32-input kernels (SA = float) must keep full precision.
     mpp::tensor_ops::matmul2d<
         mpp::tensor_ops::matmul2d_descriptor(
-            NRB, NRA, N_MM_NK_TOTAL, false, true, true,
+            NRB, NRA, N_MM_NK_TOTAL, false, true, !metal::is_same_v<SA, float>,
             mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate),
         execution_simdgroups<N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y>> mm;
 
-    auto cT = mm.get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
+    auto cT = mm.template get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
 
     // Accumulate partial results over K dimension
     for (int loop_k = 0; loop_k < K; loop_k += N_MM_NK_TOTAL) {
@@ -10712,14 +10713,15 @@ kernel void kernel_mul_mm_acc(
     const int strideB = args.nb11 / sizeof(T1);
     auto tB = tensor(ptrB, dextents<int32_t, 2>(K, N), array<int, 2>({1, strideB}));
 
-    // Configure matmul operation
+    // Configure matmul operation. Relaxed precision lets the tensor cores narrow the
+    // operands; the explicit F32-input kernels (SA = float) must keep full precision.
     mpp::tensor_ops::matmul2d<
         mpp::tensor_ops::matmul2d_descriptor(
-            NRB, NRA, N_MM_NK_TOTAL, false, true, true,
+            NRB, NRA, N_MM_NK_TOTAL, false, true, !metal::is_same_v<SA, float>,
             mpp::tensor_ops::matmul2d_descriptor::mode::multiply_accumulate),
         execution_simdgroups<N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y>> mm;
 
-    auto cT = mm.get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
+    auto cT = mm.template get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
 
     // Accumulate partial results over K dimension
     for (int loop_k = 0; loop_k < K; loop_k += N_MM_NK_TOTAL) {
@@ -10785,7 +10787,7 @@ kernel void kernel_mul_mm_acc(
     auto tD = tensor(dstBatch, dextents<int32_t, 2>(M, N), array<int, 2>({1, M}));
     auto tDst = tD.slice(ra, rb);
 
-    auto cAcc = mm.get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
+    auto cAcc = mm.template get_destination_cooperative_tensor<decltype(tB), decltype(tA), float>();
     cAcc.load(tDst);
 
     for (auto it = cT.begin(), jt = cAcc.begin(); it != cT.end(); ++it, ++jt) {
